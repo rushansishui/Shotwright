@@ -1,0 +1,335 @@
+"""HTTP API（/api/v2）与前端静态文件。
+
+启动：``shotwright serve``，或 ``uvicorn shotwright.api.app:create_app --factory``。
+"""
+
+from __future__ import annotations
+
+import mimetypes
+import tempfile
+from collections.abc import Callable
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import APIRouter, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+from shotwright import __version__
+from shotwright.api.jobs import JobManager
+from shotwright.api.schemas import AddShot, CreateProject, ReorderShots, UpdateProject, UpdateShot
+from shotwright.config import ROOT_DIR, Settings, load_settings
+from shotwright.core.models import Project, Shot, ShotVisual, validate_id
+from shotwright.core.store import ProjectNotFound, ProjectStore, read_json
+from shotwright.media import ffmpeg
+from shotwright.providers import registry
+from shotwright.providers.base import ProviderError
+from shotwright.providers.tts.edge import VOICES
+from shotwright.services import storyboard, visuals
+
+MAX_UPLOAD = 500 * 1024 * 1024
+WEB_DIST = ROOT_DIR / "web" / "dist"
+
+
+def create_app(settings: Settings | None = None, *, job_manager: JobManager | None = None) -> FastAPI:
+    settings = settings or load_settings()
+    ffmpeg.configure(settings.ffmpeg, settings.ffprobe)
+    store = ProjectStore(settings.storage_dir)
+    jobs = job_manager or JobManager(store, settings)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        yield
+        jobs.shutdown()
+
+    app = FastAPI(title="Shotwright", version=__version__, lifespan=lifespan)
+    app.state.settings, app.state.store, app.state.jobs = settings, store, jobs
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @app.exception_handler(ProjectNotFound)
+    async def _not_found(request: Request, exc: ProjectNotFound):
+        return JSONResponse(status_code=404, content={"detail": "项目不存在"})
+
+    @app.exception_handler(ProviderError)
+    async def _provider_error(request: Request, exc: ProviderError):
+        return JSONResponse(status_code=502, content={"detail": str(exc)})
+
+    api = APIRouter(prefix="/api/v2")
+
+    def _id(value: str) -> str:
+        try:
+            return validate_id(value)
+        except ValueError:
+            raise HTTPException(400, "无效的 id") from None
+
+    def _mutate(project_id: str, change: Callable[[Project], object]) -> Project:
+        """在项目锁内读取、修改、保存，避免并发编辑互相覆盖。"""
+        with store.lock(_id(project_id)):
+            project = store.load(project_id)
+            try:
+                change(project)
+                Project.model_validate(project.model_dump())
+            except KeyError:
+                raise HTTPException(404, "镜头或素材不存在") from None
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from None
+            return store.save(project)
+
+    # ---- 基础 ---------------------------------------------------------------
+
+    @api.get("/health")
+    def health():
+        return {"status": "ok", "version": __version__}
+
+    @api.get("/providers")
+    def providers():
+        result: dict[str, list[dict]] = {}
+        for spec in registry.specs():
+            result.setdefault(spec.kind, []).append(
+                {
+                    "id": spec.id,
+                    "name": spec.name,
+                    "paid": spec.paid,
+                    "offline": spec.offline,
+                    "docs_url": spec.docs_url,
+                    "configured": registry.is_configured(spec, settings),
+                    "default": settings.default_provider(spec.kind) == spec.id,
+                    "fields": [
+                        {"key": f.key, "label": f.label, "required": f.required, "secret": f.secret}
+                        for f in spec.fields
+                    ],
+                }
+            )
+        return result
+
+    @api.get("/voices")
+    def voices():
+        return [{"id": key, "name": name} for key, name in VOICES.items()]
+
+    # ---- 项目 ---------------------------------------------------------------
+
+    @api.get("/projects")
+    def list_projects():
+        return [
+            {
+                "id": p.id,
+                "title": p.title or p.subject or "未命名项目",
+                "shots": len(p.shots),
+                "aspect": p.canvas.aspect,
+                "updated_at": p.updated_at,
+            }
+            for p in store.list()
+        ]
+
+    @api.post("/projects", status_code=201)
+    def create_project(body: CreateProject):
+        project = Project(title=body.title, subject=body.subject)
+        if body.canvas:
+            project.canvas = body.canvas
+        if body.voice:
+            project.voice = body.voice
+        if body.mode == "llm":
+            if not body.subject.strip():
+                raise HTTPException(422, "请填写视频主题")
+            llm = registry.create("llm", None, settings)
+            title, shots = storyboard.generate_storyboard(
+                llm,
+                body.subject.strip(),
+                language=body.language,
+                shots=body.shots,  # type: ignore[arg-type]
+            )
+            project.title = project.title or title
+            project.shots = shots
+        elif body.mode == "split":
+            if not body.script.strip():
+                raise HTTPException(422, "请填写视频文案")
+            project.shots = storyboard.split_script(body.script)
+        project.title = project.title or body.subject[:40] or "未命名项目"
+        return store.create(project)
+
+    @api.get("/projects/{project_id}")
+    def get_project(project_id: str):
+        return store.load(_id(project_id))
+
+    @api.patch("/projects/{project_id}")
+    def update_project(project_id: str, body: UpdateProject):
+        def change(project: Project) -> None:
+            for name in ("title", "subject", "canvas", "voice", "subtitle", "bgm"):
+                value = getattr(body, name)
+                if value is not None:
+                    setattr(project, name, value)
+            if project.bgm.asset_id and project.bgm.asset_id not in project.assets:
+                raise ValueError("背景音乐素材不存在")
+
+        return _mutate(project_id, change)
+
+    @api.delete("/projects/{project_id}", status_code=204)
+    def delete_project(project_id: str):
+        store.delete(_id(project_id))
+
+    # ---- 镜头 ---------------------------------------------------------------
+
+    @api.post("/projects/{project_id}/shots", status_code=201)
+    def add_shot(project_id: str, body: AddShot):
+        def change(project: Project) -> None:
+            shot = Shot(text=body.text, visual=ShotVisual())
+            ids = [s.id for s in project.shots]
+            index = ids.index(body.after) + 1 if body.after in ids else len(ids)
+            project.shots.insert(index, shot)
+
+        return _mutate(project_id, change)
+
+    @api.put("/projects/{project_id}/shots/order")
+    def reorder_shots(project_id: str, body: ReorderShots):
+        def change(project: Project) -> None:
+            current = {s.id: s for s in project.shots}
+            if sorted(body.order) != sorted(current):
+                raise ValueError("新顺序必须包含全部镜头且不能重复")
+            project.shots = [current[shot_id] for shot_id in body.order]
+
+        return _mutate(project_id, change)
+
+    @api.patch("/projects/{project_id}/shots/{shot_id}")
+    def update_shot(project_id: str, shot_id: str, body: UpdateShot):
+        def change(project: Project) -> None:
+            shot = project.shot(_id(shot_id))
+            if body.text is not None:
+                shot.text = body.text
+            if body.clear_duration:
+                shot.duration = None
+            elif body.duration is not None:
+                shot.duration = body.duration
+            if body.clear_voice:
+                shot.voice = None
+            elif body.voice is not None:
+                shot.voice = body.voice
+            if body.visual is not None:
+                patch = body.visual.model_dump(exclude_unset=True)
+                if patch.get("selected") and patch["selected"] not in project.assets:
+                    raise ValueError("所选素材不存在")
+                if "terms" in patch:
+                    patch["terms"] = [t.strip()[:80] for t in patch["terms"] if t.strip()]
+                if patch.get("selected") and patch["selected"] not in shot.visual.candidates:
+                    patch["candidates"] = [*shot.visual.candidates, patch["selected"]][-12:]
+                shot.visual = shot.visual.model_copy(update=patch)
+                ShotVisual.model_validate(shot.visual.model_dump())
+            shot.status, shot.error = "draft", None
+
+        return _mutate(project_id, change)
+
+    @api.delete("/projects/{project_id}/shots/{shot_id}")
+    def delete_shot(project_id: str, shot_id: str):
+        def change(project: Project) -> None:
+            project.shots.remove(project.shot(_id(shot_id)))
+
+        return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/shots/{shot_id}/candidates")
+    def refresh_candidates(project_id: str, shot_id: str):
+        """检索（stock）或生成（ai）新的候选素材。可能耗时较长。"""
+        _id(project_id)
+        project = store.load(project_id)
+        shot = project.shot(_id(shot_id)) if any(s.id == shot_id for s in project.shots) else None
+        if shot is None:
+            raise HTTPException(404, "镜头不存在")
+        if shot.visual.locked:
+            raise HTTPException(409, "镜头已锁定，请先解锁")
+        visuals.refresh_candidates(store, settings, project, shot)
+
+        def change(latest: Project) -> None:
+            for asset_id, asset in project.assets.items():
+                latest.assets.setdefault(asset_id, asset)
+            target = latest.shot(shot_id)
+            target.visual.candidates = shot.visual.candidates
+            if target.visual.selected is None or target.visual.selected not in latest.assets:
+                target.visual.selected = shot.visual.selected
+
+        return _mutate(project_id, change)
+
+    # ---- 素材 ---------------------------------------------------------------
+
+    @api.post("/projects/{project_id}/assets", status_code=201)
+    def upload_asset(project_id: str, file: UploadFile = File(...)):
+        _id(project_id)
+        if not store.exists(project_id):
+            raise ProjectNotFound(project_id)
+        filename = Path(file.filename or "upload").name
+        with tempfile.TemporaryDirectory(prefix="shotwright-upload-") as temp:
+            path = Path(temp) / ("upload" + Path(filename).suffix.lower()[:8])
+            size = 0
+            with path.open("wb") as handle:
+                while chunk := file.file.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > MAX_UPLOAD:
+                        raise HTTPException(413, "文件超过 500MB")
+                    handle.write(chunk)
+            with store.lock(project_id):
+                project = store.load(project_id)
+                asset = visuals.add_upload(store, project, path, filename=filename)
+                store.save(project)
+        return asset
+
+    @api.get("/projects/{project_id}/assets/{asset_id}")
+    def asset_file(project_id: str, asset_id: str):
+        project = store.load(_id(project_id))
+        if _id(asset_id) not in project.assets:
+            raise HTTPException(404, "素材不存在")
+        path = store.asset_path(project, asset_id)
+        media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        return FileResponse(path, media_type=media_type)
+
+    # ---- 渲染 ---------------------------------------------------------------
+
+    @api.post("/projects/{project_id}/renders", status_code=202)
+    def start_render(project_id: str):
+        if not store.exists(_id(project_id)):
+            raise ProjectNotFound(project_id)
+        return jobs.submit(project_id).to_dict()
+
+    @api.get("/projects/{project_id}/renders")
+    def list_renders(project_id: str):
+        directory = store.project_dir(_id(project_id)) / "renders"
+        finished = []
+        if directory.is_dir():
+            for child in directory.iterdir():
+                data = read_json(child / "render.json")
+                if data:
+                    finished.append({**data, "created_at": child.stat().st_mtime})
+        finished.sort(key=lambda item: item["created_at"], reverse=True)
+        return {"jobs": [j.to_dict() for j in jobs.list(project_id)], "renders": finished}
+
+    @api.get("/renders/{job_id}")
+    def get_job(job_id: str):
+        job = jobs.get(_id(job_id))
+        if job is None:
+            raise HTTPException(404, "任务不存在")
+        return job.to_dict()
+
+    @api.post("/renders/{job_id}/cancel")
+    def cancel_job(job_id: str):
+        if not jobs.cancel(_id(job_id)):
+            raise HTTPException(409, "任务已结束或不存在")
+        return {"ok": True}
+
+    @api.get("/projects/{project_id}/renders/{render_id}/{name}")
+    def render_file(project_id: str, render_id: str, name: str):
+        if name not in ("video.mp4", "subtitles.srt"):
+            raise HTTPException(404, "文件不存在")
+        path = store.project_dir(_id(project_id)) / "renders" / _id(render_id) / name
+        if not path.is_file():
+            raise HTTPException(404, "文件不存在")
+        media_type = "video/mp4" if name.endswith(".mp4") else "application/x-subrip"
+        return FileResponse(path, media_type=media_type, filename=f"shotwright-{render_id}-{name}")
+
+    app.include_router(api)
+
+    if WEB_DIST.is_dir():
+        app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")
+
+    return app

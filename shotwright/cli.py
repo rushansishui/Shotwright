@@ -1,0 +1,199 @@
+"""命令行入口：``shotwright <命令>``。
+
+shotwright serve                         启动 API 和网页界面
+shotwright new --script-file a.txt       按句子把文案拆成镜头，新建项目
+shotwright new --subject "主题" --llm    让大模型写文案并拆镜头
+shotwright list                          列出项目
+shotwright show <项目>                   查看镜头
+shotwright shot <项目> <序号> --text …   修改某个镜头
+shotwright render <项目>                 渲染（只重做有改动的镜头）
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+from shotwright import __version__
+from shotwright.config import load_settings
+from shotwright.core.models import Canvas, Project, VoiceSettings
+from shotwright.core.store import ProjectStore
+from shotwright.media import ffmpeg
+from shotwright.pipeline.render import Renderer
+from shotwright.providers import registry
+from shotwright.services import storyboard
+
+
+def _store(args) -> tuple:
+    settings = load_settings(args.config)
+    ffmpeg.configure(settings.ffmpeg, settings.ffprobe)
+    return settings, ProjectStore(settings.storage_dir)
+
+
+def cmd_serve(args) -> int:
+    import uvicorn
+
+    from shotwright.api.app import create_app
+
+    app = create_app(load_settings(args.config))
+    print(f"Shotwright 已启动：http://{args.host}:{args.port}")
+    uvicorn.run(app, host=args.host, port=args.port)
+    return 0
+
+
+def cmd_new(args) -> int:
+    settings, store = _store(args)
+    project = Project(subject=args.subject or "", canvas=Canvas(aspect=args.aspect))
+    if args.voice:
+        project.voice = VoiceSettings(provider=args.tts or "edge", voice=args.voice)
+    elif args.tts:
+        project.voice = VoiceSettings(provider=args.tts)
+    if args.llm:
+        if not args.subject:
+            print("使用 --llm 时需要 --subject", file=sys.stderr)
+            return 2
+        title, shots = storyboard.generate_storyboard(
+            registry.create("llm", None, settings),
+            args.subject,
+            shots=args.shots,  # type: ignore[arg-type]
+        )
+        project.title, project.shots = title, shots
+    else:
+        script = Path(args.script_file).read_text(encoding="utf-8") if args.script_file else args.script
+        if not script:
+            print("请提供 --script、--script-file，或使用 --llm", file=sys.stderr)
+            return 2
+        project.shots = storyboard.split_script(script)
+        project.title = args.subject or project.shots[0].text[:20]
+    store.create(project)
+    print(project.id)
+    _print_shots(project)
+    return 0
+
+
+def _print_shots(project: Project) -> None:
+    print(f"《{project.title}》 {project.canvas.aspect}  {len(project.shots)} 个镜头")
+    for index, shot in enumerate(project.shots, start=1):
+        visual = shot.visual
+        source = visual.mode + ("（已锁定）" if visual.locked else "")
+        terms = ", ".join(visual.terms)
+        print(f"  {index:>2}. [{source}] {shot.text}")
+        if terms:
+            print(f"      检索词：{terms}")
+
+
+def cmd_list(args) -> int:
+    _, store = _store(args)
+    for project in store.list():
+        print(f"{project.id}  {project.canvas.aspect:>5}  {len(project.shots):>2} 个镜头  {project.title}")
+    return 0
+
+
+def cmd_show(args) -> int:
+    _, store = _store(args)
+    _print_shots(store.load(args.project))
+    return 0
+
+
+def cmd_shot(args) -> int:
+    _, store = _store(args)
+    with store.lock(args.project):
+        project = store.load(args.project)
+        if not 1 <= args.index <= len(project.shots):
+            print(f"镜头序号应在 1–{len(project.shots)} 之间", file=sys.stderr)
+            return 2
+        shot = project.shots[args.index - 1]
+        if args.text is not None:
+            shot.text = args.text
+        if args.terms is not None:
+            shot.visual.terms = [t.strip() for t in args.terms.split(",") if t.strip()]
+        if args.mode:
+            shot.visual.mode = args.mode
+        if args.lock:
+            shot.visual.locked = True
+        if args.unlock:
+            shot.visual.locked = False
+        store.save(project)
+    _print_shots(project)
+    return 0
+
+
+def cmd_render(args) -> int:
+    settings, store = _store(args)
+    if args.offline:
+        settings.auto_fetch_visuals = False
+
+    def progress(value: float, message: str) -> None:
+        print(f"\r[{value * 100:5.1f}%] {message:<24}", end="", flush=True)
+
+    result = Renderer(store, settings, progress=progress).render(args.project)
+    print()
+    reused = sum(1 for s in result.stages if s.reused)
+    print(f"完成：{result.duration:.1f} 秒，{len(result.stages)} 个阶段中复用了 {reused} 个")
+    for warning in result.warnings:
+        print(f"提示：{warning}")
+    print(store.render_dir(result.project_id, result.render_id) / result.video)
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="shotwright", description="Shotwright 镜匠：以分镜为核心的短视频生成工具"
+    )
+    parser.add_argument("--version", action="version", version=__version__)
+    parser.add_argument("--config", help="配置文件路径（默认 ./config.toml）")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    serve = sub.add_parser("serve", help="启动 API 和网页界面")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8000)
+    serve.set_defaults(func=cmd_serve)
+
+    new = sub.add_parser("new", help="新建项目")
+    new.add_argument("--subject", help="视频主题")
+    new.add_argument("--script", help="视频文案")
+    new.add_argument("--script-file", help="从文件读取文案（UTF-8）")
+    new.add_argument("--llm", action="store_true", help="让大模型根据主题写文案并拆镜头")
+    new.add_argument("--shots", type=int, default=6, help="期望的镜头数量（--llm 时有效）")
+    new.add_argument("--aspect", choices=["9:16", "16:9", "1:1"], default="9:16")
+    new.add_argument("--tts", help="配音服务，例如 edge、silent")
+    new.add_argument("--voice", help="配音声音，例如 zh-CN-YunxiNeural")
+    new.set_defaults(func=cmd_new)
+
+    sub.add_parser("list", help="列出项目").set_defaults(func=cmd_list)
+
+    show = sub.add_parser("show", help="查看项目的镜头")
+    show.add_argument("project")
+    show.set_defaults(func=cmd_show)
+
+    shot = sub.add_parser("shot", help="修改某个镜头")
+    shot.add_argument("project")
+    shot.add_argument("index", type=int, help="镜头序号，从 1 开始")
+    shot.add_argument("--text")
+    shot.add_argument("--terms", help="英文检索词，用逗号分隔")
+    shot.add_argument("--mode", choices=["stock", "ai", "image", "upload", "color"])
+    shot.add_argument("--lock", action="store_true")
+    shot.add_argument("--unlock", action="store_true")
+    shot.set_defaults(func=cmd_shot)
+
+    render = sub.add_parser("render", help="渲染项目")
+    render.add_argument("project")
+    render.add_argument("--offline", action="store_true", help="不自动检索素材，缺画面的镜头用纯色")
+    render.set_defaults(func=cmd_render)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return args.func(args)
+    except KeyboardInterrupt:
+        return 130
+    except Exception as exc:  # noqa: BLE001 - 命令行只展示可读的错误
+        print(f"\n错误：{exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

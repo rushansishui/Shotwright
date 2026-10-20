@@ -1,0 +1,40 @@
+# Shotwright 配置模板。复制为 config.toml 后按需填写。
+# config.toml 已在 .gitignore 中，不会被提交。
+
+[app]
+# 项目与渲染结果的存放目录
+storage_dir = "storage/projects"
+# FFmpeg 不在 PATH 中时，填写完整路径，例如 "C:/ffmpeg/bin/ffmpeg.exe"
+# ffmpeg = ""
+# ffprobe = ""
+# 访问外网需要代理时填写，例如 "http://127.0.0.1:7890"
+# proxy = ""
+# 渲染时为没有画面的镜头自动检索一次素材
+auto_fetch_visuals = true
+
+# 各类别默认使用的 Provider
+[defaults]
+llm = "openai"
+tts = "edge"        # 改成 "silent" 可离线预览
+stock = "pexels"
+
+# ---- 大模型：任何 OpenAI 兼容接口 -------------------------------------------
+[providers.llm.openai]
+api_key = ""
+base_url = "https://api.openai.com/v1"
+model = "gpt-4o-mini"
+# DeepSeek 示例：
+# base_url = "https://api.deepseek.com/v1"
+# model = "deepseek-chat"
+# 本地 Ollama 示例（api_key 留空）：
+# base_url = "http://127.0.0.1:11434/v1"
+# model = "qwen2.5:7b"
+
+# ---- 配音 --------------------------------------------------------------------
+[providers.tts.edge]
+timeout = "60"
+
+# ---- 素材库 ------------------------------------------------------------------
+# 免费申请：https://www.pexels.com/api/
+[providers.stock.pexels]
+api_key = ""

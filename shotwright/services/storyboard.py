@@ -1,0 +1,99 @@
+"""分镜生成：主题 → 文案 → 镜头列表。
+
+两种方式：
+
+* :func:`split_script` 不联网，把现成文案按句子切成镜头；
+* :func:`generate_storyboard` 调用大模型，一次产出标题、每个镜头的文案、
+  英文检索词和画面提示词。
+"""
+
+from __future__ import annotations
+
+import json
+import re
+
+from shotwright.core.models import Shot, ShotVisual
+from shotwright.providers.base import LLMProvider, ProviderError
+
+_SENTENCE_END = re.compile(r"(?<=[。！？!?；;…\.])\s*|\n+")
+_CJK = re.compile(r"[㐀-䶿一-鿿]")
+
+
+def _length(text: str) -> int:
+    """中文按字计，其他语言按词计（约 2 个字符宽度算一个单位）。"""
+    cjk = len(_CJK.findall(text))
+    words = len(re.findall(r"[A-Za-z0-9']+", text))
+    return cjk + words * 2
+
+
+def split_script(script: str, *, max_units: int = 28) -> list[Shot]:
+    """按句切分，并把短句合并，让每个镜头大约 3–8 秒。"""
+    sentences = [part.strip() for part in _SENTENCE_END.split(script) if part and part.strip()]
+    chunks: list[str] = []
+    current = ""
+    for sentence in sentences:
+        joined = f"{current}{'' if _CJK.search(sentence) else ' '}{sentence}".strip() if current else sentence
+        if current and _length(joined) > max_units:
+            chunks.append(current)
+            current = sentence
+        else:
+            current = joined
+    if current:
+        chunks.append(current)
+    return [Shot(text=chunk, visual=ShotVisual(mode="stock")) for chunk in chunks]
+
+
+SYSTEM_PROMPT = """你是短视频编导。根据用户给的主题，写一条短视频的口播文案，并拆成分镜。
+要求：
+- 用 {language} 写文案，口语化，开头 1–2 句要抓人。
+- 一共 {shots} 个镜头左右，每个镜头 1–2 句话，朗读 3–8 秒。
+- 每个镜头给出 2–3 个英文素材检索词（用于 Pexels 之类的图库，具体、可拍到的画面，例如 "city night traffic"）。
+- 每个镜头给出一句英文画面提示词，用于 AI 视频生成（描述主体、动作、镜头运动、光线）。
+- 只输出 JSON，不要任何解释，格式：
+{{"title": "标题", "shots": [{{"text": "文案", "terms": ["..."], "prompt": "..."}}]}}"""
+
+
+def _extract_json(text: str) -> dict:
+    cleaned = text.strip()
+    fence = re.search(r"```(?:json)?\s*(.*?)```", cleaned, re.DOTALL)
+    if fence:
+        cleaned = fence.group(1)
+    start, end = cleaned.find("{"), cleaned.rfind("}")
+    if start == -1 or end <= start:
+        raise ProviderError("大模型没有返回 JSON")
+    try:
+        return json.loads(cleaned[start : end + 1])
+    except ValueError as exc:
+        raise ProviderError("大模型返回的 JSON 无法解析") from exc
+
+
+def generate_storyboard(
+    llm: LLMProvider,
+    subject: str,
+    *,
+    language: str = "简体中文",
+    shots: int = 6,
+) -> tuple[str, list[Shot]]:
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT.format(language=language, shots=shots)},
+        {"role": "user", "content": f"主题：{subject}"},
+    ]
+    data = _extract_json(llm.complete(messages, json_mode=True))
+    title = str(data.get("title") or subject)[:120]
+    result: list[Shot] = []
+    for item in data.get("shots") or []:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        terms = [str(t).strip() for t in item.get("terms") or [] if str(t).strip()][:5]
+        result.append(
+            Shot(
+                text=text[:500],
+                visual=ShotVisual(mode="stock", terms=terms, prompt=str(item.get("prompt") or "")[:1000]),
+            )
+        )
+    if not result:
+        raise ProviderError("大模型没有返回任何镜头")
+    return title, result

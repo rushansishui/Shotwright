@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# 本地配置与数据（含密钥和生成的视频，不要提交）
+config.toml
+.env
+storage/
+
+# 前端
+web/node_modules/
+web/dist/
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.tsbuildinfo
