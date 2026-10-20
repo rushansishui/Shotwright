@@ -138,3 +138,64 @@ def test_failed_render_reports_reason(client):
     status = client.get(f"/api/v2/renders/{job['id']}").json()
     assert status["state"] == "failed"
     assert "镜头" in status["error"]
+
+
+def test_paid_generation_needs_confirm_charge(client):
+    pid = _create(client)["id"]
+    shot = client.get(f"/api/v2/projects/{pid}").json()["shots"][0]["id"]
+    r = client.patch(
+        f"/api/v2/projects/{pid}/shots/{shot}", json={"visual": {"mode": "image", "prompt": "猫"}}
+    )
+    assert r.status_code == 200
+    r = client.post(f"/api/v2/projects/{pid}/shots/{shot}/candidates")
+    assert r.status_code == 402 and r.json()["code"] == "confirm_charge"
+    r = client.post(f"/api/v2/projects/{pid}/shots/{shot}/candidates", json={"confirm_charge": True})
+    assert r.status_code == 200
+    visual = r.json()["shots"][0]["visual"]
+    assert visual["selected"] and r.json()["assets"][visual["selected"]]["kind"] == "image"
+
+    job = client.post(f"/api/v2/projects/{pid}/renders", json={"confirm_charge": True}).json()
+    assert job["allow_paid"] is True
+    assert client.get(f"/api/v2/renders/{job['id']}").json()["state"] == "done"
+
+
+def test_providers_lists_ai_kinds(client):
+    providers = client.get("/api/v2/providers").json()
+    assert any(p["id"] == "seedance" and p["paid"] for p in providers["video_gen"])
+    assert any(p["id"] == "seedream" for p in providers["image_gen"])
+
+
+def test_new_project_uses_configured_tts(client):
+    project = _create(client)
+    assert project["voice"]["provider"] == "silent"
+
+
+def test_generation_in_progress_is_visible_and_not_resubmitted(client, monkeypatch):
+    import threading
+
+    from conftest import FakeImageGen
+
+    started, release = threading.Event(), threading.Event()
+    original = FakeImageGen.generate
+
+    def slow(self, prompt, *, aspect, output):
+        started.set()
+        release.wait(10)
+        return original(self, prompt, aspect=aspect, output=output)
+
+    monkeypatch.setattr(FakeImageGen, "generate", slow)
+    pid = _create(client)["id"]
+    shot = client.get(f"/api/v2/projects/{pid}").json()["shots"][0]["id"]
+    client.patch(f"/api/v2/projects/{pid}/shots/{shot}", json={"visual": {"mode": "image", "prompt": "猫"}})
+    url = f"/api/v2/projects/{pid}/shots/{shot}/candidates"
+    result = {}
+    worker = threading.Thread(target=lambda: result.update(r=client.post(url, json={"confirm_charge": True})))
+    worker.start()
+    assert started.wait(10)
+    progress = client.get(f"/api/v2/projects/{pid}/in-progress").json()
+    assert progress[shot]["mode"] == "image"
+    assert client.post(url, json={"confirm_charge": True}).status_code == 409
+    release.set()
+    worker.join(10)
+    assert result["r"].status_code == 200
+    assert client.get(f"/api/v2/projects/{pid}/in-progress").json() == {}

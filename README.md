@@ -4,12 +4,13 @@
 
 Shotwright 以"镜头"为核心：文案被拆成一个个镜头，每个镜头可以单独选择画面来源（素材库检索、AI 生成、上传图片或视频），可以替换、锁定、单独重做。改一个镜头，只会重新渲染这个镜头，再加上最后的拼接导出。
 
-> 当前版本：v0.1.0（开发中）。路线图见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+> 当前版本：v0.2.0（开发中）。路线图见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 ## 功能
 
 - **分镜编辑**：按句子拆分镜头，或者让大模型根据主题写文案、拆镜头，并给出检索词和画面提示词。
-- **画面混用**：同一个视频里，有的镜头用 Pixabay / Pexels 素材，有的用 AI 生成，有的用自己上传的图片或视频。
+- **画面混用**：同一个视频里，有的镜头用 Pixabay / Pexels 素材，有的用 AI 视频（Seedance）或 AI 图片（Seedream + 慢推镜头），有的用自己上传的图片或视频。AI 图片还可以作为 AI 视频的首帧。
+- **收费确认**：所有收费生成都需要在界面上确认后才会提交；提交结果无法确认时不会自动重试，避免重复扣费。
 - **增量渲染**：每个阶段按输入计算指纹并缓存，没改的镜头直接复用。
 - **配音与字幕**：免费的 Edge 在线语音；字幕按真实字体宽度自动换行，行长均衡。
 - **三种入口**：网页界面、REST API（`/api/v2`）、命令行，共用同一套服务和渲染队列。
@@ -35,7 +36,7 @@ cd web && npm install && npm run build && cd ..
 shotwright serve
 ```
 
-打开 <http://127.0.0.1:8000> 即可使用。开发前端时可以另开终端运行 `cd web && npm run dev`，访问 <http://localhost:5173>。
+打开 <http://127.0.0.1:8000> 即可使用。Windows 上可以直接双击 `start.bat` 启动、双击 `restart.bat` 重启（会先关闭占用 8000 端口的旧服务）。开发前端时可以另开终端运行 `cd web && npm run dev`，访问 <http://localhost:5173>。
 
 ### 命令行
 
@@ -45,6 +46,7 @@ shotwright new --subject "人工智能如何改变日常生活" --llm   # 让大
 shotwright show <项目id>
 shotwright shot <项目id> 2 --text "新的文案" --terms "city night,traffic"
 shotwright render <项目id>                                # 只重做有改动的镜头
+shotwright render <项目id> --allow-paid                   # 允许为缺画面的 AI 镜头调用收费生成
 ```
 
 ## 配置
@@ -58,6 +60,8 @@ SHOTWRIGHT_LLM_DEEPSEEK_API_KEY=sk-xxxx
 ```
 
 大模型内置了豆包 Seed、DeepSeek、Kimi、通义千问四个预设，选好后只需填写 API Key；其他 OpenAI 兼容接口用 `openai` 小节自定义 Base URL 和模型。
+
+AI 视频（Seedance）和 AI 图片（Seedream）与豆包同属火山方舟，填好 `[providers.llm.doubao]` 的 Key 并在方舟控制台开通对应模型即可使用，不需要再填一遍。
 
 密钥只保存在配置文件或环境变量中，不会写进项目文件，项目文件可以放心分享。
 

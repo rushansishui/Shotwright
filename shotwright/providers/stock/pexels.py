@@ -38,7 +38,7 @@ class PexelsStock:
             timeout=self.timeout,
             proxy=self.proxy,
             follow_redirects=True,
-            headers={"User-Agent": "Shotwright/0.1"},
+            headers={"User-Agent": "Shotwright/0.2"},
         )
 
     def search(self, query: str, *, aspect: str, min_duration: float, limit: int) -> list[StockCandidate]:

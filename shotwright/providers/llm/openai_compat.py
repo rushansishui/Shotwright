@@ -56,7 +56,7 @@ PRESETS: tuple[dict, ...] = (
         "id": "doubao",
         "name": "豆包 Seed（火山方舟）",
         "base_url": "https://ark.cn-beijing.volces.com/api/v3",
-        "model": "doubao-seed-2-0-pro-260215",
+        "model": "doubao-seed-2-1-pro-260915",
         "timeout": "300",
         "docs_url": "https://www.volcengine.com/docs/82379/1330626",
     },

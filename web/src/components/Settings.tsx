@@ -7,6 +7,7 @@ const KIND_NAMES: Record<string, string> = {
   tts: "配音",
   stock: "素材库",
   video_gen: "AI 视频生成",
+  image_gen: "AI 图片生成",
 };
 
 export function Settings() {
