@@ -137,8 +137,9 @@ def generate_ai_candidate(
     if not shot.visual.prompt.strip():
         raise ProviderError("这个镜头没有画面提示词")
     provider_id = _provider_id(settings, "video_gen", shot)
-    require_charge_confirmation(settings, "video_gen", provider_id, confirm_charge)
+    # 先实例化（只检查配置，不发请求），未配置时报"缺少配置"而不是"需要确认"。
     provider: VideoGenProvider = registry.create("video_gen", provider_id, settings)  # type: ignore[assignment]
+    require_charge_confirmation(settings, "video_gen", provider_id, confirm_charge)
     first_frame = _first_frame(store, project, shot)
     meta = {"prompt": shot.visual.prompt[:500]}
     if first_frame is not None:
@@ -168,8 +169,8 @@ def generate_image_candidate(
     if not shot.visual.prompt.strip():
         raise ProviderError("这个镜头没有画面提示词")
     provider_id = _provider_id(settings, "image_gen", shot)
-    require_charge_confirmation(settings, "image_gen", provider_id, confirm_charge)
     provider: ImageGenProvider = registry.create("image_gen", provider_id, settings)  # type: ignore[assignment]
+    require_charge_confirmation(settings, "image_gen", provider_id, confirm_charge)
     with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
         path = provider.generate(shot.visual.prompt, aspect=project.canvas.aspect, output=Path(temp) / "gen")
         asset = _register_media(

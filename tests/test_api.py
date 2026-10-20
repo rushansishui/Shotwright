@@ -163,3 +163,8 @@ def test_providers_lists_ai_kinds(client):
     providers = client.get("/api/v2/providers").json()
     assert any(p["id"] == "seedance" and p["paid"] for p in providers["video_gen"])
     assert any(p["id"] == "seedream" for p in providers["image_gen"])
+
+
+def test_new_project_uses_configured_tts(client):
+    project = _create(client)
+    assert project["voice"]["provider"] == "silent"

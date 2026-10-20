@@ -12,18 +12,19 @@ from __future__ import annotations
 
 import base64
 import math
-import mimetypes
 from pathlib import Path
 
 import httpx
 
 from shotwright.providers import paid_task, registry
 from shotwright.providers.base import ConfigField, ProviderError, ProviderSpec
+from shotwright.providers.paid_task import sniff_image_type
 
 LABEL = "Seedance"
 ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 MAX_FIRST_FRAME = 30 * 1024 * 1024
 _RATIOS = {"9:16": "9:16", "16:9": "16:9", "1:1": "1:1"}
+RESOLUTIONS = ("480p", "720p", "1080p")
 
 
 def _flag(value: str | None) -> bool:
@@ -40,10 +41,11 @@ def image_data_url(path: Path) -> str:
     size = path.stat().st_size
     if size > MAX_FIRST_FRAME:
         raise ProviderError("首帧图片超过 30MB")
-    mime = mimetypes.guess_type(path.name)[0] or "image/png"
+    data = path.read_bytes()
+    mime = sniff_image_type(data) or ""
     if not mime.startswith("image/"):
-        raise ProviderError("首帧必须是图片")
-    return f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode('ascii')}"
+        raise ProviderError("首帧必须是 PNG、JPEG、WebP 等常见图片格式")
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
 
 
 class SeedanceVideo:
@@ -51,9 +53,14 @@ class SeedanceVideo:
         self.api_key = settings["api_key"]
         self.base_url = (settings.get("base_url") or ARK_BASE_URL).rstrip("/")
         self.model = settings.get("model") or "doubao-seedance-2-5-260628"
-        self.resolution = settings.get("resolution") or "1080p"
+        self.resolution = (settings.get("resolution") or "1080p").strip().lower()
+        if self.resolution not in RESOLUTIONS:
+            # 分辨率决定价格，填错时直接报错，不悄悄换成别的档位。
+            raise ValueError(f"resolution 只能是 {' / '.join(RESOLUTIONS)}")
         self.min_duration = int(settings.get("min_duration") or 4)
         self.max_duration = int(settings.get("max_duration") or 30)
+        if not 1 <= self.min_duration <= self.max_duration:
+            raise ValueError("min_duration 必须大于 0 且不大于 max_duration")
         self.watermark = _flag(settings.get("watermark"))
         self.generate_audio = _flag(settings.get("generate_audio"))
         self.poll = paid_task.PollSettings(

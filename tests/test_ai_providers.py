@@ -231,3 +231,42 @@ def test_image_then_video_uses_first_frame(store, settings):
     assert FakeVideoGen.calls[0]["first_frame"] == store.asset_path(project, image_id)
     assert project.assets[video_id].meta["first_frame"] == image_id
     assert shot.visual.selected == video_id
+
+
+def test_seedance_rejects_bad_config(settings):
+    settings.providers.setdefault("llm", {})["doubao"] = {"api_key": "k"}
+    settings.providers.setdefault("video_gen", {})["seedance"] = {"resolution": "4k"}
+    with pytest.raises(ProviderError, match="配置有误"):
+        registry.create("video_gen", "seedance", settings)
+    settings.providers["video_gen"]["seedance"] = {"max_duration": "abc"}
+    with pytest.raises(ProviderError, match="配置有误"):
+        registry.create("video_gen", "seedance", settings)
+
+
+def test_first_frame_mime_is_sniffed(tmp_path):
+    jpeg = tmp_path / "frame.png"  # 扩展名和内容不一致
+    from shotwright.media.ffmpeg import run_ffmpeg
+
+    run_ffmpeg(
+        ["-f", "lavfi", "-i", "testsrc2=size=64x64:rate=1", "-frames:v", "1", "-f", "mjpeg", str(jpeg)]
+    )
+    from shotwright.providers.video_gen.seedance import image_data_url
+
+    assert image_data_url(jpeg).startswith("data:image/jpeg;base64,")
+    bad = tmp_path / "x.png"
+    bad.write_bytes(b"not an image")
+    with pytest.raises(ProviderError):
+        image_data_url(bad)
+
+
+def test_seedream_requests_a_single_image():
+    payload = _images().build_payload("猫", "9:16")
+    assert payload["sequential_image_generation"] == "disabled" and "n" not in payload
+
+
+def test_unconfigured_generator_reports_missing_config(store, settings):
+    settings.defaults["video_gen"] = "seedance"
+    settings.providers.pop("llm", None)
+    project, shot = _shot_project(store, "ai")
+    with pytest.raises(ProviderError, match="缺少配置"):
+        visuals.refresh_candidates(store, settings, project, shot)

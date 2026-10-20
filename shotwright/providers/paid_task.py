@@ -25,6 +25,22 @@ from shotwright.providers.base import ProviderError, UnconfirmedTaskError
 
 RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
 MAX_DOWNLOAD = 500 * 1024 * 1024
+_IMAGE_MAGIC = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF8", "image/gif"),
+    (b"BM", "image/bmp"),
+)
+
+
+def sniff_image_type(data: bytes) -> str | None:
+    """按文件头判断图片类型；扩展名可能和内容不一致。"""
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    for magic, mime in _IMAGE_MAGIC:
+        if data.startswith(magic):
+            return mime
+    return None
 
 
 def redact(value: object, secret: str) -> str:

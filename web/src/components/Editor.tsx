@@ -153,7 +153,13 @@ export function Editor({ projectId }: { projectId: string }) {
                 aiImage={aiImage}
                 onFocus={() => setActiveIndex(index)}
                 onUpdate={(body: { text?: string; visual?: Partial<ShotVisual> }) => run(() => api.updateShot(id, shot.id, body))}
-                onCandidates={(confirmCharge) => run(() => api.candidates(id, shot.id, confirmCharge), shot.id)}
+                onCandidates={(confirmCharge, prompt) =>
+                  run(async () => {
+                    // 还没失焦保存的提示词先存好，再生成，避免用旧提示词花钱。
+                    if (prompt !== undefined) await api.updateShot(id, shot.id, { visual: { prompt } });
+                    return api.candidates(id, shot.id, confirmCharge);
+                  }, shot.id)
+                }
                 onUpload={(file) => uploadForShot(shot.id, file)}
                 onMove={(delta) => moveShot(index, delta)}
                 onInsert={() => run(() => api.addShot(id, shot.id))}

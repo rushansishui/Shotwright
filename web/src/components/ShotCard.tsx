@@ -40,7 +40,7 @@ export function ShotCard(props: {
   aiImage: ProviderInfo | null;
   onFocus: () => void;
   onUpdate: (body: { text?: string; visual?: Partial<ShotVisual> }) => void;
-  onCandidates: (confirmCharge?: boolean) => void;
+  onCandidates: (confirmCharge?: boolean, prompt?: string) => void;
   onUpload: (file: File) => void;
   onMove: (delta: number) => void;
   onInsert: () => void;
@@ -62,11 +62,9 @@ export function ShotCard(props: {
   const firstFrame = visual.mode === "ai" && selectedAsset?.kind === "image";
   const generate = async () => {
     if (!generator) return;
-    // 先保存还没失焦的提示词，再生成。
-    if (prompt !== visual.prompt) props.onUpdate({ visual: { prompt } });
     const what = visual.mode === "ai" ? (firstFrame ? "以选中的图片为首帧生成一段视频" : "生成一段视频") : "生成一张图片";
     const cost = generator.paid ? `\n${generator.name} 按次收费，提交后即使失败也可能扣费。` : "";
-    if (window.confirm(`为镜头 ${index + 1} ${what}？${cost}`)) props.onCandidates(true);
+    if (window.confirm(`为镜头 ${index + 1} ${what}？${cost}`)) props.onCandidates(true, prompt !== visual.prompt ? prompt : undefined);
   };
 
   const seconds = estimateSeconds({ ...shot, text }, (shot.voice ?? project.voice).rate);

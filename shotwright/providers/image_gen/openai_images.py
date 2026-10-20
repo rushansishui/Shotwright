@@ -42,10 +42,11 @@ class OpenAIImages:
             "prompt": prompt.strip(),
             "size": self.size_override or self.sizes.get(aspect, self.sizes["9:16"]),
             "response_format": "url",
-            "n": 1,
         }
         if self.extra_watermark:
+            # 方舟 Seedream：关闭组图，保证一次只生成（并只计费）一张。
             payload["watermark"] = self.watermark
+            payload["sequential_image_generation"] = "disabled"
         return payload
 
     def generate(self, prompt: str, *, aspect: str, output: Path) -> Path:
@@ -81,6 +82,8 @@ class OpenAIImages:
                     raise ProviderError(f"{self.label} 返回的图片数据损坏") from exc
                 if not data or len(data) > MAX_IMAGE:
                     raise ProviderError(f"{self.label} 返回的图片大小异常")
+                if paid_task.sniff_image_type(data) == "image/jpeg":
+                    output = output.with_suffix(".jpg")
                 output.write_bytes(data)
                 return output
             url = str(item.get("url") or "")

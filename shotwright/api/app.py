@@ -27,7 +27,7 @@ from shotwright.api.schemas import (
     UpdateShot,
 )
 from shotwright.config import ROOT_DIR, Settings, load_settings
-from shotwright.core.models import Project, Shot, ShotVisual, validate_id
+from shotwright.core.models import Project, Shot, ShotVisual, VoiceSettings, validate_id
 from shotwright.core.store import ProjectNotFound, ProjectStore, read_json
 from shotwright.media import ffmpeg
 from shotwright.providers import registry
@@ -145,6 +145,9 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             project.canvas = body.canvas
         if body.voice:
             project.voice = body.voice
+        elif settings.default_provider("tts"):
+            # 没指定配音时用配置里 [defaults] tts 的服务，而不是固定用 Edge。
+            project.voice = VoiceSettings(provider=settings.default_provider("tts"))
         if body.mode == "llm":
             if not body.subject.strip():
                 raise HTTPException(422, "请填写视频主题")

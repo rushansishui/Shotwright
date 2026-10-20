@@ -45,10 +45,11 @@ def cmd_serve(args) -> int:
 def cmd_new(args) -> int:
     settings, store = _store(args)
     project = Project(subject=args.subject or "", canvas=Canvas(aspect=args.aspect))
+    tts = args.tts or settings.default_provider("tts") or "edge"
     if args.voice:
-        project.voice = VoiceSettings(provider=args.tts or "edge", voice=args.voice)
-    elif args.tts:
-        project.voice = VoiceSettings(provider=args.tts)
+        project.voice = VoiceSettings(provider=tts, voice=args.voice)
+    else:
+        project.voice = VoiceSettings(provider=tts)
     if args.llm:
         if not args.subject:
             print("使用 --llm 时需要 --subject", file=sys.stderr)

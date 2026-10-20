@@ -90,7 +90,10 @@ def create(kind: str, provider_id: str | None, settings: Settings) -> object:
     missing = entry.spec.missing_fields(values)
     if missing:
         raise ProviderNotConfigured(f"{entry.spec.name} 缺少配置：{', '.join(missing)}")
-    return entry.factory(values)
+    try:
+        return entry.factory(values)
+    except (ValueError, TypeError, KeyError) as exc:
+        raise ProviderError(f"{entry.spec.name} 的配置有误：{exc}") from exc
 
 
 def _values(spec_: ProviderSpec, settings: Settings) -> dict[str, str]:
