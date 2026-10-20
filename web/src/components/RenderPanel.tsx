@@ -16,7 +16,7 @@ function Preview({ project, shotIndex }: { project: Project; shotIndex: number }
 
   const style = project.subtitle;
   const scale = height / (project.canvas.aspect === "16:9" ? 1080 : project.canvas.aspect === "1:1" ? 1080 : 1920);
-  const asset = shot?.visual.selected ? project.assets[shot.visual.selected] : undefined;
+  const asset = shot?.visual.selected && shot.visual.mode !== "color" ? project.assets[shot.visual.selected] : undefined;
   const position = { top: "flex-start", middle: "center", bottom: "flex-end" }[style.position];
   const fit = shot?.visual.fit === "contain" ? "contain" : "cover";
 

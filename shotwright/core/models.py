@@ -110,7 +110,10 @@ class ShotVisual(_Model):
     provider: str | None = None
     """为空时使用配置里该类别的默认 Provider。"""
     candidates: list[str] = Field(default_factory=list)
+    """所有来源的候选素材；界面按当前画面来源筛选显示。"""
     selected: str | None = None
+    first_frame: str | None = None
+    """ai 模式的首帧图片（图生视频）；为空时纯文字生成。"""
     color: str = "#1F2937"
     """color 模式或没有可用素材时的纯色画面。"""
     fit: Literal["cover", "contain"] = "cover"
@@ -122,7 +125,7 @@ class ShotVisual(_Model):
     def _check_candidates(cls, value: list[str]) -> list[str]:
         return [validate_id(item) for item in value]
 
-    @field_validator("selected")
+    @field_validator("selected", "first_frame")
     @classmethod
     def _check_selected(cls, value: str | None) -> str | None:
         return None if value is None else validate_id(value)

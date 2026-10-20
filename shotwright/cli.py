@@ -22,7 +22,7 @@ from shotwright.core.store import ProjectStore
 from shotwright.media import ffmpeg
 from shotwright.pipeline.render import Renderer
 from shotwright.providers import registry
-from shotwright.services import storyboard
+from shotwright.services import storyboard, visuals
 
 
 def _store(args) -> tuple:
@@ -110,7 +110,7 @@ def cmd_shot(args) -> int:
         if args.terms is not None:
             shot.visual.terms = [t.strip() for t in args.terms.split(",") if t.strip()]
         if args.mode:
-            shot.visual.mode = args.mode
+            visuals.switch_mode(project, shot, args.mode)
         if args.lock:
             shot.visual.locked = True
         if args.unlock:

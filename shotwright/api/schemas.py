@@ -40,6 +40,9 @@ class VisualPatch(_Body):
     prompt: str | None = Field(None, max_length=2000)
     provider: str | None = None
     selected: str | None = None
+    first_frame: str | None = None
+    clear_first_frame: bool = False
+    """为真时取消首帧，改为纯文字生成视频。"""
     color: str | None = None
     fit: Literal["cover", "contain"] | None = None
     locked: bool | None = None

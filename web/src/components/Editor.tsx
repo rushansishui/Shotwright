@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import type { Aspect, Project, Providers, ShotVisual, SubtitleStyle, VoiceSettings } from "../types";
+import type { Aspect, Project, Providers, SubtitleStyle, VisualMode, VisualPatch, VoiceSettings } from "../types";
 import { Section, Segmented, Slider } from "./Controls";
 import { RenderPanel } from "./RenderPanel";
 import { ShotCard } from "./ShotCard";
@@ -115,6 +115,15 @@ export function Editor({ projectId }: { projectId: string }) {
     const found = (providers?.[kind] ?? []).find((p) => p.default);
     return found?.configured ? found : null;
   };
+  // 素材的 source（服务 id）→ 它属于哪种画面来源，用于按来源筛选候选素材。
+  const sourceModes: Record<string, VisualMode> = { upload: "upload" };
+  for (const [kind, mode] of [
+    ["stock", "stock"],
+    ["video_gen", "ai"],
+    ["image_gen", "image"],
+  ] as const) {
+    for (const p of providers?.[kind] ?? []) sourceModes[p.id] ??= mode;
+  }
   const aiVideo = defaultProvider("video_gen");
   const aiImage = defaultProvider("image_gen");
   const updateVoice = (patch: Partial<VoiceSettings>) => run(() => api.updateProject(id, { voice: { ...project.voice, ...patch } }));
@@ -204,8 +213,9 @@ export function Editor({ projectId }: { projectId: string }) {
                 busySeconds={shot.id in busy ? Math.max(0, Math.round((now - busy[shot.id]) / 1000)) : 0}
                 aiVideo={aiVideo}
                 aiImage={aiImage}
+                sourceModes={sourceModes}
                 onFocus={() => setActiveIndex(index)}
-                onUpdate={(body: { text?: string; visual?: Partial<ShotVisual> }) => run(() => api.updateShot(id, shot.id, body))}
+                onUpdate={(body: { text?: string; visual?: VisualPatch }) => run(() => api.updateShot(id, shot.id, body))}
                 onCandidates={(confirmCharge, prompt) =>
                   run(async () => {
                     // 还没失焦保存的提示词先存好，再生成，避免用旧提示词花钱。

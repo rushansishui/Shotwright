@@ -227,12 +227,23 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 shot.voice = body.voice
             if body.visual is not None:
                 patch = body.visual.model_dump(exclude_unset=True)
-                if patch.get("selected") and patch["selected"] not in project.assets:
-                    raise ValueError("所选素材不存在")
+                if patch.pop("clear_first_frame", False):
+                    patch["first_frame"] = None
+                for field in ("selected", "first_frame"):
+                    if patch.get(field) and patch[field] not in project.assets:
+                        raise ValueError("所选素材不存在")
+                if patch.get("first_frame") and project.assets[patch["first_frame"]].kind != "image":
+                    raise ValueError("首帧必须是图片")
                 if "terms" in patch:
                     patch["terms"] = [t.strip()[:80] for t in patch["terms"] if t.strip()]
                 if patch.get("selected") and patch["selected"] not in shot.visual.candidates:
-                    patch["candidates"] = [*shot.visual.candidates, patch["selected"]][-12:]
+                    patch["candidates"] = [*shot.visual.candidates, patch["selected"]][
+                        -visuals.MAX_CANDIDATES :
+                    ]
+                mode = patch.pop("mode", None)
+                if mode is not None:
+                    # 切换来源时自动选中该来源的素材（显式传了 selected 时以它为准）。
+                    visuals.switch_mode(project, shot, mode)
                 shot.visual = shot.visual.model_copy(update=patch)
                 ShotVisual.model_validate(shot.visual.model_dump())
             shot.status, shot.error = "draft", None

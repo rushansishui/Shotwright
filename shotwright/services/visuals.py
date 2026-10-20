@@ -117,9 +117,58 @@ def require_charge_confirmation(
         raise ChargeConfirmationRequired(f"{spec.name} 按次收费，需要确认后才会提交")
 
 
+MAX_CANDIDATES = 30
+_MODE_KINDS = (("stock", "stock"), ("ai", "video_gen"), ("image", "image_gen"))
+
+
+def asset_mode(asset: Asset) -> str | None:
+    """素材来自哪种画面来源：stock / ai / image / upload；无法判断时返回 None。"""
+    if asset.source == "upload":
+        return "upload"
+    for mode, kind in _MODE_KINDS:
+        try:
+            registry.spec(kind, asset.source)
+        except ProviderError:
+            continue
+        # video_gen 只产出视频、image_gen 只产出图片，用类型排除同名的不同服务。
+        if (mode == "ai" and asset.kind != "video") or (mode == "image" and asset.kind != "image"):
+            continue
+        return mode
+    return None
+
+
+def candidates_for_mode(project: Project, shot: Shot, mode: str) -> list[str]:
+    return [
+        asset_id
+        for asset_id in shot.visual.candidates
+        if asset_id in project.assets and asset_mode(project.assets[asset_id]) == mode
+    ]
+
+
+def switch_mode(project: Project, shot: Shot, mode: str) -> None:
+    """切换画面来源：选中该来源最近的候选素材；没有时清空，渲染时再自动检索或生成。
+
+    从图片切到 AI 视频时，把原来选中的图片作为首帧，方便"先生成图片、再图生视频"。
+    纯色模式保留原选择，切回来时不丢。
+    """
+    visual = shot.visual
+    if mode == visual.mode:
+        return
+    current = project.assets.get(visual.selected) if visual.selected else None
+    if mode == "ai" and current is not None and current.kind == "image" and visual.first_frame is None:
+        visual.first_frame = current.id
+    visual.mode = mode  # type: ignore[assignment]
+    if mode == "color":
+        return
+    if current is not None and asset_mode(current) == mode:
+        return
+    matching = candidates_for_mode(project, shot, mode)
+    visual.selected = matching[-1] if matching else None
+
+
 def _first_frame(store: ProjectStore, project: Project, shot: Shot) -> Path | None:
-    selected = shot.visual.selected
-    asset = project.assets.get(selected) if selected else None
+    first = shot.visual.first_frame
+    asset = project.assets.get(first) if first else None
     if asset is None or asset.kind != "image":
         return None
     return store.asset_path(project, asset.id)
@@ -143,7 +192,7 @@ def generate_ai_candidate(
     first_frame = _first_frame(store, project, shot)
     meta = {"prompt": shot.visual.prompt[:500]}
     if first_frame is not None:
-        meta["first_frame"] = shot.visual.selected or ""
+        meta["first_frame"] = shot.visual.first_frame or ""
     with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
         path = provider.generate(
             shot.visual.prompt,
@@ -202,7 +251,7 @@ def _attach(shot: Shot, asset_ids: list[str], *, select: bool = False) -> None:
     for asset_id in asset_ids:
         if asset_id not in candidates:
             candidates.append(asset_id)
-    shot.visual.candidates = candidates[-12:]
+    shot.visual.candidates = candidates[-MAX_CANDIDATES:]
     if asset_ids and (
         select or shot.visual.selected is None or shot.visual.selected not in shot.visual.candidates
     ):

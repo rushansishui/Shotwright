@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { assetUrl, estimateSeconds } from "../api";
-import type { Project, ProviderInfo, Shot, ShotVisual, VisualMode } from "../types";
+import type { Asset, Project, ProviderInfo, Shot, VisualMode, VisualPatch } from "../types";
 import { Icon, Segmented } from "./Controls";
 
 export function Thumb(props: { project: Project; assetId: string | null; color: string; className?: string }) {
@@ -40,8 +40,10 @@ export function ShotCard(props: {
   busySeconds?: number;
   aiVideo: ProviderInfo | null;
   aiImage: ProviderInfo | null;
+  /** 服务 id → 画面来源，用来按当前来源筛选候选素材。 */
+  sourceModes: Record<string, VisualMode>;
   onFocus: () => void;
-  onUpdate: (body: { text?: string; visual?: Partial<ShotVisual> }) => void;
+  onUpdate: (body: { text?: string; visual?: VisualPatch }) => void;
   onCandidates: (confirmCharge?: boolean, prompt?: string) => void;
   onUpload: (file: File) => void;
   onMove: (delta: number) => void;
@@ -60,8 +62,24 @@ export function ShotCard(props: {
   useEffect(() => setPrompt(visual.prompt), [visual.prompt]);
 
   const generator = visual.mode === "ai" ? props.aiVideo : visual.mode === "image" ? props.aiImage : null;
-  const selectedAsset = visual.selected ? project.assets[visual.selected] : undefined;
-  const firstFrame = visual.mode === "ai" && selectedAsset?.kind === "image";
+  const modeOf = (asset: Asset | undefined): VisualMode | undefined => {
+    if (!asset) return undefined;
+    const mode = props.sourceModes[asset.source];
+    // 视频服务只产出视频、图片服务只产出图片，同名服务用素材类型区分。
+    if (mode === "ai" && asset.kind !== "video") return undefined;
+    if (mode === "image" && asset.kind !== "image") return undefined;
+    return mode;
+  };
+  const shown = visual.mode === "color" ? [] : visual.candidates.filter((id) => modeOf(project.assets[id]) === visual.mode);
+  // AI 视频的首帧可以从这个镜头的任意图片里选（AI 图片或上传的图片）。
+  const frameChoices = visual.mode === "ai" ? visual.candidates.filter((id) => project.assets[id]?.kind === "image") : [];
+  const firstFrame = visual.mode === "ai" && !!visual.first_frame && !!project.assets[visual.first_frame];
+  const emptyHint: Partial<Record<VisualMode, string>> = {
+    stock: "还没有检索结果，填好检索词后点\"检索素材\"。",
+    ai: "还没有 AI 视频，写好提示词后点\"生成\"。",
+    image: "还没有 AI 图片，写好提示词后点\"生成\"。",
+    upload: "还没有上传过素材。",
+  };
   const generate = async () => {
     if (!generator) return;
     const what = visual.mode === "ai" ? (firstFrame ? "以选中的图片为首帧生成一段视频" : "生成一段视频") : "生成一张图片";
@@ -88,7 +106,7 @@ export function ShotCard(props: {
       <div className="shot-side">
         <span className="shot-index">{index + 1}</span>
         <div className="shot-thumb-wrap">
-          <Thumb project={project} assetId={visual.selected} color={visual.color} className={`shot-thumb a${project.canvas.aspect.replace(":", "-")}`} />
+          <Thumb project={project} assetId={visual.mode === "color" ? null : visual.selected} color={visual.color} className={`shot-thumb a${project.canvas.aspect.replace(":", "-")}`} />
           {props.busy && (
             <div className="shot-busy" role="status" aria-live="polite">
               <span className="spinner" aria-hidden="true" />
@@ -154,7 +172,7 @@ export function ShotCard(props: {
             />
             <button type="button" className="btn" disabled={props.busy || visual.locked} onClick={() => props.onCandidates()}>
               <Icon name="refresh" />
-              {props.busy ? `${busyLabel}…` : visual.candidates.length ? "换一批" : "检索素材"}
+              {props.busy ? `${busyLabel}…` : shown.length ? "换一批" : "检索素材"}
             </button>
           </div>
         )}
@@ -193,8 +211,37 @@ export function ShotCard(props: {
             </button>
           </div>
         )}
-        {firstFrame && !visual.locked && (
-          <p className="muted small">将以选中的图片作为首帧；想纯文字生成，先选中一段视频或清空选择。</p>
+        {frameChoices.length > 0 && (
+          <div className="first-frame">
+            <span className="label">首帧</span>
+            <div className="candidates small" role="listbox" aria-label="首帧图片">
+              <button
+                type="button"
+                role="option"
+                aria-selected={!firstFrame}
+                className={`candidate none ${!firstFrame ? "on" : ""}`}
+                disabled={visual.locked || props.busy}
+                onClick={() => props.onUpdate({ visual: { clear_first_frame: true } })}
+              >
+                不用
+              </button>
+              {frameChoices.map((id) => (
+                <button
+                  type="button"
+                  key={id}
+                  role="option"
+                  aria-selected={visual.first_frame === id}
+                  className={`candidate ${visual.first_frame === id ? "on" : ""}`}
+                  disabled={visual.locked || props.busy}
+                  onClick={() => props.onUpdate({ visual: { first_frame: id } })}
+                  title="以这张图作为视频的第一帧"
+                >
+                  <Thumb project={project} assetId={id} color={visual.color} className="candidate-media" />
+                </button>
+              ))}
+            </div>
+            <span className="muted small">{firstFrame ? "图生视频：从这张图开始动起来" : "纯文字生成视频"}</span>
+          </div>
         )}
 
         {visual.mode === "upload" && (
@@ -231,9 +278,12 @@ export function ShotCard(props: {
           </div>
         )}
 
-        {visual.mode !== "color" && visual.candidates.length > 0 && (
+        {visual.mode !== "color" && shown.length === 0 && !props.busy && (
+          <p className="muted small">{emptyHint[visual.mode]}</p>
+        )}
+        {shown.length > 0 && (
           <div className="candidates" role="listbox" aria-label="候选素材">
-            {visual.candidates.map((id) => (
+            {shown.map((id) => (
               <button
                 type="button"
                 key={id}

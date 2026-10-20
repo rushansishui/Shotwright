@@ -199,3 +199,20 @@ def test_generation_in_progress_is_visible_and_not_resubmitted(client, monkeypat
     worker.join(10)
     assert result["r"].status_code == 200
     assert client.get(f"/api/v2/projects/{pid}/in-progress").json() == {}
+
+
+def test_first_frame_can_be_set_and_cleared(client):
+    pid = _create(client)["id"]
+    shot = client.get(f"/api/v2/projects/{pid}").json()["shots"][0]["id"]
+    base = f"/api/v2/projects/{pid}/shots/{shot}"
+    client.patch(base, json={"visual": {"mode": "image", "prompt": "猫"}})
+    image = client.post(f"{base}/candidates", json={"confirm_charge": True}).json()["shots"][0]["visual"][
+        "selected"
+    ]
+    visual = client.patch(base, json={"visual": {"mode": "ai"}}).json()["shots"][0]["visual"]
+    assert visual["first_frame"] == image and visual["selected"] is None
+    visual = client.patch(base, json={"visual": {"clear_first_frame": True}}).json()["shots"][0]["visual"]
+    assert visual["first_frame"] is None
+    assert client.patch(base, json={"visual": {"first_frame": image}}).json()["shots"][0]["visual"][
+        "first_frame"
+    ]

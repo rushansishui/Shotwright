@@ -341,7 +341,7 @@ class Renderer:
     ) -> tuple[str, Path]:
         canvas = project.canvas
         visual = shot.visual
-        asset = project.assets.get(visual.selected) if visual.selected else None
+        asset = project.assets.get(visual.selected) if visual.selected and visual.mode != "color" else None
         if asset is not None and asset.kind not in ("video", "image"):
             asset = None
         visual_key = asset.sha256 if asset else f"color:{visual.color}"

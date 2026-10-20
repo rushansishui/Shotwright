@@ -26,6 +26,7 @@ export interface ShotVisual {
   provider: string | null;
   candidates: string[];
   selected: string | null;
+  first_frame: string | null;
   color: string;
   fit: "cover" | "contain";
   locked: boolean;
@@ -106,3 +107,6 @@ export interface Job {
   result: RenderResult | null;
   allow_paid: boolean;
 }
+
+/** 修改镜头画面时可以传的字段；clear_first_frame 取消首帧。 */
+export type VisualPatch = Partial<ShotVisual> & { clear_first_frame?: boolean };

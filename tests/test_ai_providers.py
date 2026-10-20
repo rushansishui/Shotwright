@@ -226,7 +226,8 @@ def test_image_then_video_uses_first_frame(store, settings):
     assert project.assets[image_id].kind == "image" and FakeImageGen.calls == ["a cat"]
     assert shot.visual.selected == image_id
 
-    shot.visual.mode = "ai"
+    visuals.switch_mode(project, shot, "ai")
+    assert shot.visual.first_frame == image_id and shot.visual.selected is None
     [video_id] = visuals.refresh_candidates(store, settings, project, shot, confirm_charge=True)
     assert FakeVideoGen.calls[0]["first_frame"] == store.asset_path(project, image_id)
     assert project.assets[video_id].meta["first_frame"] == image_id
@@ -283,3 +284,22 @@ def test_model_not_opened_gives_console_hint(tmp_path, monkeypatch):
     with pytest.raises(ProviderError, match="开通管理") as info:
         _images().generate("x", aspect="9:16", output=tmp_path / "gen")
     assert not isinstance(info.value, UnconfirmedTaskError)
+
+
+def test_switching_mode_selects_that_sources_candidate(store, settings):
+    project, shot = _shot_project(store, "image")
+    [image_id] = visuals.refresh_candidates(store, settings, project, shot, confirm_charge=True)
+    visuals.switch_mode(project, shot, "stock")
+    assert shot.visual.selected is None
+    shot.visual.terms = ["sea"]
+    [stock_id, *_] = visuals.refresh_candidates(store, settings, project, shot)
+    assert visuals.candidates_for_mode(
+        project, shot, "stock"
+    ) and image_id not in visuals.candidates_for_mode(project, shot, "stock")
+    visuals.switch_mode(project, shot, "image")
+    assert shot.visual.selected == image_id
+    visuals.switch_mode(project, shot, "color")
+    assert shot.visual.selected == image_id  # 纯色模式不丢原选择
+    visuals.switch_mode(project, shot, "stock")
+    assert visuals.asset_mode(project.assets[shot.visual.selected]) == "stock"
+    assert stock_id in shot.visual.candidates

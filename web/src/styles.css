@@ -859,3 +859,29 @@ input[type="color"] {
     animation-duration: 2.4s;
   }
 }
+
+/* AI 视频的首帧选择 */
+.first-frame {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.candidates.small .candidate-media {
+  width: 44px;
+  height: 44px;
+}
+
+.candidate.none {
+  width: 48px;
+  height: 48px;
+  border: 1px dashed var(--line);
+  color: var(--muted, #6b6b66);
+  font-size: 12px;
+}
+
+.candidate.none.on {
+  border: 2px solid var(--accent);
+  color: var(--accent-ink);
+}
