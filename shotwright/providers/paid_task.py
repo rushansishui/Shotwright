@@ -48,6 +48,17 @@ def redact(value: object, secret: str) -> str:
     return text.replace(secret, "***") if secret else text
 
 
+def rejection_message(label: str, response: httpx.Response, secret: str, model: str = "") -> str:
+    """4xx 拒绝的提示；模型不存在或未开通时告诉用户怎么处理。"""
+    detail = error_detail(response, secret)
+    message = f"{label} 拒绝了请求：HTTP {response.status_code}，{detail}"
+    lowered = detail.lower()
+    if response.status_code == 404 or "does not exist" in lowered or "modelnotopen" in lowered:
+        target = f"模型 {model} " if model else "该模型"
+        message += f"。请先在火山方舟控制台的「开通管理」里开通{target}，或在 config.toml 中换成已开通的模型"
+    return message
+
+
 def error_detail(response: httpx.Response, secret: str) -> str:
     try:
         body = response.json()
@@ -85,7 +96,7 @@ def submit(
             f"{label} 提交返回 HTTP {status}，远端可能已经创建任务并扣费，请到服务商控制台确认"
         )
     if status >= 400:
-        raise ProviderError(f"{label} 拒绝了请求：HTTP {status}，{error_detail(response, secret)}")
+        raise ProviderError(rejection_message(label, response, secret, str(payload.get("model") or "")))
     try:
         body = response.json()
     except ValueError as exc:

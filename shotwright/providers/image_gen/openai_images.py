@@ -44,9 +44,8 @@ class OpenAIImages:
             "response_format": "url",
         }
         if self.extra_watermark:
-            # 方舟 Seedream：关闭组图，保证一次只生成（并只计费）一张。
+            # 方舟 Seedream 默认不开组图，一次只生成一张；5.0 pro / flash 不支持组图参数，所以不传。
             payload["watermark"] = self.watermark
-            payload["sequential_image_generation"] = "disabled"
         return payload
 
     def generate(self, prompt: str, *, aspect: str, output: Path) -> Path:
@@ -67,7 +66,7 @@ class OpenAIImages:
                 raise UnconfirmedTaskError(f"{self.label} 返回 HTTP {status}，可能已经扣费")
             if status >= 400:
                 raise ProviderError(
-                    f"{self.label} 拒绝了请求：HTTP {status}，{paid_task.error_detail(response, self.api_key)}"
+                    paid_task.rejection_message(self.label, response, self.api_key, self.model)
                 )
             try:
                 items = response.json().get("data") or []
@@ -108,7 +107,7 @@ registry.register(
             ConfigField(
                 "api_key", "方舟 API Key", required=True, secret=True, help="留空时使用豆包大模型的 Key"
             ),
-            ConfigField("model", "模型", default="doubao-seedream-4-0-250828"),
+            ConfigField("model", "模型", default="doubao-seedream-5-0-pro-260628"),
             ConfigField("base_url", "Base URL", default=ARK_BASE_URL),
             ConfigField("size", "尺寸", help="留空时按画布比例自动选择，例如 1440x2560"),
             ConfigField("watermark", "加水印", default="false"),

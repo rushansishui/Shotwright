@@ -141,7 +141,7 @@ AI 视频镜头已选中一张图片时（例如先用 AI 图片生成、或上�
 
 | 预设 | Base URL | 推荐模型 |
 | --- | --- | --- |
-| `doubao` 豆包 Seed（默认） | `https://ark.cn-beijing.volces.com/api/v3` | `doubao-seed-2-0-pro-260215` |
+| `doubao` 豆包 Seed（默认） | `https://ark.cn-beijing.volces.com/api/v3` | `doubao-seed-2-1-pro-260915` |
 | `deepseek` | `https://api.deepseek.com` | `deepseek-flash` |
 | `kimi` | `https://api.moonshot.cn/v1` | `kimi-k3` |
 | `qwen` 通义千问 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` |

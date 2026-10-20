@@ -149,7 +149,7 @@ def test_poll_deadline():
 def _images() -> OpenAIImages:
     settings = {
         "api_key": KEY,
-        "model": "doubao-seedream-4-0-250828",
+        "model": "doubao-seedream-5-0-pro-260628",
         "base_url": "https://ark.example/api/v3",
     }
     return OpenAIImages(settings, label="Seedream", sizes=SEEDREAM_SIZES)
@@ -261,7 +261,8 @@ def test_first_frame_mime_is_sniffed(tmp_path):
 
 def test_seedream_requests_a_single_image():
     payload = _images().build_payload("猫", "9:16")
-    assert payload["sequential_image_generation"] == "disabled" and "n" not in payload
+    assert "n" not in payload and "sequential_image_generation" not in payload
+    assert payload["model"] == "doubao-seedream-5-0-pro-260628"
 
 
 def test_unconfigured_generator_reports_missing_config(store, settings):
@@ -270,3 +271,15 @@ def test_unconfigured_generator_reports_missing_config(store, settings):
     project, shot = _shot_project(store, "ai")
     with pytest.raises(ProviderError, match="缺少配置"):
         visuals.refresh_candidates(store, settings, project, shot)
+
+
+def test_model_not_opened_gives_console_hint(tmp_path, monkeypatch):
+    real = httpx.Client
+    body = {"error": {"code": "InvalidEndpointOrModel.NotFound", "message": "The model does not exist"}}
+    monkeypatch.setattr(
+        "shotwright.providers.image_gen.openai_images.httpx.Client",
+        lambda **kw: real(transport=httpx.MockTransport(lambda r: httpx.Response(404, json=body))),
+    )
+    with pytest.raises(ProviderError, match="开通管理") as info:
+        _images().generate("x", aspect="9:16", output=tmp_path / "gen")
+    assert not isinstance(info.value, UnconfirmedTaskError)

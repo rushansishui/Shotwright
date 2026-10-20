@@ -27,7 +27,7 @@ image_gen = "seedream"  # AI 图片（收费）；也可以用 "openai"
 # 豆包 Seed：https://console.volcengine.com/ark（API Key 管理 + 开通模型）
 [providers.llm.doubao]
 api_key = ""
-# model = "doubao-seed-2-0-pro-260215"
+# model = "doubao-seed-2-1-pro-260915"
 
 # DeepSeek：https://platform.deepseek.com
 [providers.llm.deepseek]
@@ -83,7 +83,7 @@ api_key = ""
 # AI 图片：https://www.volcengine.com/docs/82379/1541523
 [providers.image_gen.seedream]
 # api_key = ""
-# model = "doubao-seedream-4-0-250828"
+# model = "doubao-seedream-5-0-pro-260628"   # 或更便宜的 doubao-seedream-5-0-flash-260915
 # size = ""                   # 留空按画布比例自动选择
 
 # 其他兼容 OpenAI Images 接口的文生图服务
