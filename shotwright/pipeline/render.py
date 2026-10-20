@@ -208,7 +208,14 @@ class Renderer:
             if visual.locked or visual.mode not in ("stock", "ai") or self._has_visual(project, shot):
                 continue
             try:
-                visuals.refresh_candidates(self.store, self.settings, project, shot)
+                try:
+                    visuals.refresh_candidates(self.store, self.settings, project, shot)
+                except ProviderError as exc:
+                    # AI 生成不可用时，有检索词就退回素材检索，而不是直接用纯色。
+                    if visual.mode != "ai" or not visual.terms:
+                        raise
+                    visuals.fetch_stock_candidates(self.store, self.settings, project, shot)
+                    self.warnings.append(f"镜头 {index + 1} 的 AI 生成不可用（{exc}），已改用素材检索")
                 changed[shot.id] = (list(visual.candidates), visual.selected)
             except ProviderError as exc:
                 self.warnings.append(f"镜头 {index + 1} 没有拿到素材，已使用纯色画面：{exc}")
