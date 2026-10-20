@@ -177,13 +177,12 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         project = Project(title=body.title, subject=body.subject)
         if body.canvas:
             project.canvas = body.canvas
-        if body.voice:
-            project.voice = body.voice
-        elif settings.default_provider("tts"):
+        if not body.voice and settings.default_provider("tts"):
             # 没指定配音时用配置里 [defaults] tts 的服务，而不是固定用 Edge。
             project.voice = VoiceSettings(provider=settings.default_provider("tts"))
         localize.apply_language(project, lang.code)
         if body.voice:
+            # 用户显式指定的配音优先于语言默认值。
             project.voice = body.voice
         if body.mode == "llm":
             if not body.subject.strip():
