@@ -23,10 +23,12 @@ if not exist ".venv\Scripts\python.exe" (
   )
 )
 
-if not exist ".venv\.installed" (
+rem Reinstall dependencies whenever pyproject.toml changes (new versions may add packages).
+fc /b "pyproject.toml" ".venv\.installed" >nul 2>nul
+if errorlevel 1 (
   echo [Shotwright] Installing Python dependencies...
   ".venv\Scripts\python.exe" -m pip install -e ".[dev]" || goto :fail
-  echo ok> ".venv\.installed"
+  copy /y "pyproject.toml" ".venv\.installed" >nul
 )
 
 if not exist "config.toml" (
