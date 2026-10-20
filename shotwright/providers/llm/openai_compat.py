@@ -16,7 +16,11 @@ from shotwright.providers.base import ConfigField, ProviderError, ProviderSpec
 class OpenAICompatibleLLM:
     def __init__(self, settings: dict[str, str]):
         self.api_key = settings.get("api_key", "")
-        self.base_url = settings.get("base_url", "https://api.openai.com/v1").rstrip("/")
+        base_url = settings.get("base_url", "https://api.openai.com/v1").strip().rstrip("/")
+        # 常见误填：把完整的接口地址当成 Base URL。
+        if base_url.endswith("/chat/completions"):
+            base_url = base_url[: -len("/chat/completions")]
+        self.base_url = base_url
         self.model = settings.get("model", "gpt-4o-mini")
         self.timeout = float(settings.get("timeout", "120"))
         self.proxy = settings.get("proxy") or None

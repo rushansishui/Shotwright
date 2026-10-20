@@ -104,3 +104,12 @@ def test_ass_escapes_override_braces():
 
 def test_font_family_is_read_from_file():
     assert subs.font_family(FONT) == "Noto Sans SC"
+
+
+def test_llm_base_url_tolerates_full_endpoint():
+    from shotwright.providers.llm.openai_compat import OpenAICompatibleLLM
+
+    llm = OpenAICompatibleLLM(
+        {"base_url": "https://ark.cn-beijing.volces.com/api/v3/chat/completions/", "model": "m"}
+    )
+    assert llm.base_url == "https://ark.cn-beijing.volces.com/api/v3"
