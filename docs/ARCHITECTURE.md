@@ -35,6 +35,7 @@ shotwright/
 │   ├── llm/openai_compat.py
 │   ├── tts/edge.py      Edge 在线语音（免费）
 │   ├── tts/silent.py    静音配音（离线预览、测试）
+│   ├── stock/pixabay.py
 │   └── stock/pexels.py
 ├── services/
 │   ├── storyboard.py    主题 → 文案 → 镜头（大模型或按句切分）

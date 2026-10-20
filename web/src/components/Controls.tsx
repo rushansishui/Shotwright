@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 export function Segmented<T extends string>(props: {
   label: string;
   value: T;
-  options: { value: T; label: string }[];
+  options: { value: T; label: string; disabled?: boolean; title?: string }[];
   onChange: (value: T) => void;
   disabled?: boolean;
 }) {
@@ -16,7 +16,8 @@ export function Segmented<T extends string>(props: {
           role="radio"
           aria-checked={props.value === option.value}
           className={props.value === option.value ? "on" : ""}
-          disabled={props.disabled}
+          disabled={props.disabled || option.disabled}
+          title={option.title}
           onClick={() => props.onChange(option.value)}
         >
           {option.label}

@@ -91,7 +91,11 @@ export function ShotCard(props: {
           <Segmented
             label="画面来源"
             value={visual.mode === "image" ? "upload" : visual.mode}
-            options={MODES}
+            options={MODES.map((m) =>
+              m.value === "ai" && !props.aiAvailable && visual.mode !== "ai"
+                ? { ...m, disabled: true, title: "还没有配置 AI 视频服务（v0.2 支持）" }
+                : m,
+            )}
             disabled={visual.locked}
             onChange={(mode) => props.onUpdate({ visual: { mode } })}
           />

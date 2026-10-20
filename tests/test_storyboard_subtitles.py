@@ -104,3 +104,24 @@ def test_ass_escapes_override_braces():
 
 def test_font_family_is_read_from_file():
     assert subs.font_family(FONT) == "Noto Sans SC"
+
+
+def test_llm_base_url_tolerates_full_endpoint():
+    from shotwright.providers.llm.openai_compat import OpenAICompatibleLLM
+
+    llm = OpenAICompatibleLLM(
+        {"base_url": "https://ark.cn-beijing.volces.com/api/v3/chat/completions/", "model": "m"}
+    )
+    assert llm.base_url == "https://ark.cn-beijing.volces.com/api/v3"
+
+
+def test_llm_presets_only_need_a_key(settings):
+    from shotwright.providers import registry
+
+    ids = [s.id for s in registry.specs("llm")]
+    assert ids[:4] == ["doubao", "deepseek", "kimi", "qwen"] and "openai" in ids
+    settings.providers["llm"] = {"deepseek": {"api_key": "k"}}
+    llm = registry.create("llm", "deepseek", settings)
+    assert llm.base_url == "https://api.deepseek.com" and llm.model == "deepseek-flash"
+    settings.providers["llm"]["kimi"] = {"api_key": "k", "model": "kimi-custom"}
+    assert registry.create("llm", "kimi", settings).model == "kimi-custom"

@@ -69,7 +69,7 @@ export function Home() {
             />
             {providers && !llmReady && (
               <p className="hint warn">
-                还没有配置大模型。请在 config.toml 中填写 [providers.llm.openai]，或者改用"粘贴现成文案"。
+                还没有配置大模型。请在 config.toml 的 [defaults] 里选择大模型（doubao、deepseek、kimi、qwen），并在对应小节填写 API Key；也可以改用"粘贴现成文案"。
               </p>
             )}
           </div>

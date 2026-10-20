@@ -9,7 +9,7 @@ Shotwright 以"镜头"为核心：文案被拆成一个个镜头，每个镜头�
 ## 功能
 
 - **分镜编辑**：按句子拆分镜头，或者让大模型根据主题写文案、拆镜头，并给出检索词和画面提示词。
-- **画面混用**：同一个视频里，有的镜头用 Pexels 素材，有的用 AI 生成，有的用自己上传的图片或视频。
+- **画面混用**：同一个视频里，有的镜头用 Pixabay / Pexels 素材，有的用 AI 生成，有的用自己上传的图片或视频。
 - **增量渲染**：每个阶段按输入计算指纹并缓存，没改的镜头直接复用。
 - **配音与字幕**：免费的 Edge 在线语音；字幕按真实字体宽度自动换行，行长均衡。
 - **三种入口**：网页界面、REST API（`/api/v2`）、命令行，共用同一套服务和渲染队列。
@@ -25,7 +25,7 @@ python -m venv .venv
 .venv\Scripts\activate          # macOS / Linux：source .venv/bin/activate
 pip install -e ".[dev]"
 
-# 2. 配置（可选）：复制模板后填写 Pexels、大模型的 API Key
+# 2. 配置（可选）：复制模板后填写 Pixabay、大模型的 API Key
 copy config.example.toml config.toml   # macOS / Linux：cp
 
 # 3. 构建网页界面
@@ -52,11 +52,12 @@ shotwright render <项目id>                                # 只重做有改动
 见 [config.example.toml](config.example.toml)。所有 Provider 字段也可以用环境变量覆盖，格式为 `SHOTWRIGHT_<类别>_<ID>_<字段>`，例如：
 
 ```bash
-SHOTWRIGHT_STOCK_PEXELS_API_KEY=xxxx
-SHOTWRIGHT_LLM_OPENAI_API_KEY=sk-xxxx
-SHOTWRIGHT_LLM_OPENAI_BASE_URL=https://api.deepseek.com/v1
-SHOTWRIGHT_LLM_OPENAI_MODEL=deepseek-chat
+SHOTWRIGHT_STOCK_PIXABAY_API_KEY=xxxx
+SHOTWRIGHT_DEFAULT_LLM=deepseek
+SHOTWRIGHT_LLM_DEEPSEEK_API_KEY=sk-xxxx
 ```
+
+大模型内置了豆包 Seed、DeepSeek、Kimi、通义千问四个预设，选好后只需填写 API Key；其他 OpenAI 兼容接口用 `openai` 小节自定义 Base URL 和模型。
 
 密钥只保存在配置文件或环境变量中，不会写进项目文件，项目文件可以放心分享。
 

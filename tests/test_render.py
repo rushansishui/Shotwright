@@ -126,3 +126,13 @@ def test_unknown_tts_provider_fails_with_shot_number(store, settings):
     project = store.create(Project(voice=VoiceSettings(provider="nope"), shots=[Shot(text="你好")]))
     with pytest.raises(RenderError, match="镜头 1"):
         Renderer(store, settings).render(project.id)
+
+
+def test_ai_shot_falls_back_to_stock_when_ai_unavailable(store, settings):
+    settings.auto_fetch_visuals = True
+    shot = Shot(text="城市夜景。", visual=ShotVisual(mode="ai", prompt="city", terms=["city night"]))
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=[shot]))
+    result = Renderer(store, settings).render(project.id)
+    saved = store.load(project.id)
+    assert saved.shots[0].visual.selected in saved.assets
+    assert "已改用素材检索" in result.warnings[0]
