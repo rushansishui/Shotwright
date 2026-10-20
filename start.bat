@@ -47,6 +47,14 @@ if not exist "web\dist\index.html" (
   )
 )
 
+netstat -ano | findstr /r /c:":8000 .*LISTENING" >nul
+if not errorlevel 1 (
+  echo [Shotwright] Port 8000 is already in use - an older Shotwright window is probably still running.
+  echo [Shotwright] Close that window first ^(or press Ctrl+C in it^), then run start.bat again.
+  pause
+  exit /b 1
+)
+
 echo [Shotwright] Starting at http://127.0.0.1:8000  (press Ctrl+C to stop)
 start "" "http://127.0.0.1:8000"
 ".venv\Scripts\shotwright.exe" serve
