@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -37,12 +38,61 @@ def font_family(path: Path) -> str:
     return _font(str(path), 32).getname()[0]
 
 
+_SPACED_WORD = re.compile(
+    r"[^\W\d_\u0e00-\u0e7f\u3040-\u30ff\u3400-\u9fff]+(?:['’\-][^\W\d_]+)*\s*|\d+[\d.,]*\s*|\s+|.", re.UNICODE
+)
+
+
 def _tokens(text: str) -> list[str]:
-    """中日韩逐字成词，拉丁文字按词（保留后面的空格）。"""
+    """可以断行的最小单位：中日韩、泰文逐字；拉丁、西里尔等按词（带后面的空格）。
+
+    组合符号（泰文元音和声调、越南语附加符号）始终跟在前一个字后面，不会被拆到下一行。
+    """
     tokens: list[str] = []
-    for match in re.finditer(r"[A-Za-z0-9'’\-]+\s*|\s+|.", text):
-        tokens.append(match.group(0))
+    for match in _SPACED_WORD.finditer(text):
+        token = match.group(0)
+        if tokens and unicodedata.category(token[0]) in ("Mn", "Mc", "Me"):
+            tokens[-1] += token
+        else:
+            tokens.append(token)
     return tokens
+
+
+@lru_cache(maxsize=16)
+def _codepoints(path: str) -> frozenset[int]:
+    from fontTools.ttLib import TTFont
+
+    with TTFont(path, lazy=True) as font:
+        return frozenset(font.getBestCmap() or {})
+
+
+def missing_glyphs(font_path: Path, text: str) -> str:
+    """字体里没有的字符（去重，忽略空白和控制字符）。"""
+    cmap = _codepoints(str(font_path))
+    seen: dict[str, None] = {}
+    for char in text:
+        if char.isspace() or unicodedata.category(char).startswith("C"):
+            continue
+        if ord(char) not in cmap:
+            seen[char] = None
+    return "".join(seen)
+
+
+def pick_font(preferred: Path, fonts_dir: Path, text: str) -> tuple[Path, str]:
+    """优先用指定字体；缺字时换成目录里能完整显示的字体。返回 (字体, 仍然缺的字)。"""
+    missing = missing_glyphs(preferred, text)
+    if not missing:
+        return preferred, ""
+    best, best_missing = preferred, missing
+    for candidate in sorted(fonts_dir.glob("*.[ot]tf")):
+        if candidate == preferred:
+            continue
+        left = missing_glyphs(candidate, text)
+        if len(left) < len(best_missing):
+            best, best_missing = candidate, left
+            if not left:
+                break
+    return best, best_missing
 
 
 def wrap(text: str, font_path: Path, size: int, max_width: int) -> list[str]:
@@ -84,7 +134,11 @@ def _greedy_wrap(text: str, font_path: Path, size: int, max_width: int) -> list[
 
 
 def _units(text: str) -> int:
-    return len(_CJK_CHAR.findall(text)) + len(re.findall(r"[A-Za-z0-9]+", text)) * 2 or 1
+    """朗读时长的粗略权重：中日韩每字 1，拼音文字每词 2，泰文约 3 个字符 1。"""
+    cjk = len(_CJK_CHAR.findall(text))
+    thai = len(re.findall(r"[\u0e00-\u0e7f]", text))
+    words = len(re.findall(r"[^\W\d_\u0e00-\u0e7f]+|\d+", _CJK_CHAR.sub(" ", text)))
+    return cjk + words * 2 + thai // 3 or 1
 
 
 def split_cues(

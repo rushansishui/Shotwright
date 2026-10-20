@@ -13,14 +13,16 @@ from shotwright.providers import registry
 from shotwright.providers.base import ProviderSpec, SpeechResult
 
 _CJK = re.compile(r"[぀-ヿ㐀-䶿一-鿿가-힯]")
-_WORD = re.compile(r"[A-Za-z0-9']+")
+_WORD = re.compile(r"[^\W\d_]+|\d+", re.UNICODE)
+_THAI = re.compile(r"[\u0e00-\u0e7f]")
 
 
 def estimate_seconds(text: str, rate: float = 1.0) -> float:
-    """中文约每秒 4.5 字，英文约每秒 2.6 个词，最短 1.5 秒。"""
+    """中日韩约每秒 4.5 字，拼音文字约每秒 2.6 个词，泰文约每秒 12 个字符，最短 1.5 秒。"""
     cjk = len(_CJK.findall(text))
-    words = len(_WORD.findall(_CJK.sub(" ", text)))
-    seconds = cjk / 4.5 + words / 2.6
+    thai = len(_THAI.findall(text))
+    words = len(_WORD.findall(_THAI.sub(" ", _CJK.sub(" ", text))))
+    seconds = cjk / 4.5 + words / 2.6 + thai / 12
     return round(max(1.5, seconds / max(rate, 0.1)), 2)
 
 

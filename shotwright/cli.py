@@ -2,7 +2,8 @@
 
 shotwright serve                         启动 API 和网页界面
 shotwright new --script-file a.txt       按句子把文案拆成镜头，新建项目
-shotwright new --subject "主题" --llm    让大模型写文案并拆镜头
+shotwright new --subject "主题" --llm    让大模型写文案并拆镜头（--language en-US 生成英文视频）
+shotwright translate <项目> en-US        生成英文版本（新项目，画面共用）
 shotwright list                          列出项目
 shotwright show <项目>                   查看镜头
 shotwright shot <项目> <序号> --text …   修改某个镜头
@@ -17,16 +18,19 @@ from pathlib import Path
 
 from shotwright import __version__
 from shotwright.config import load_settings
+from shotwright.core import languages
 from shotwright.core.models import Canvas, Project, VoiceSettings
 from shotwright.core.store import ProjectStore
+from shotwright.logs import setup_logging
 from shotwright.media import ffmpeg
 from shotwright.pipeline.render import Renderer
 from shotwright.providers import registry
-from shotwright.services import storyboard, visuals
+from shotwright.services import localize, storyboard, visuals
 
 
 def _store(args) -> tuple:
     settings = load_settings(args.config)
+    setup_logging(settings, console=False)
     ffmpeg.configure(settings.ffmpeg, settings.ffprobe)
     return settings, ProjectStore(settings.storage_dir)
 
@@ -46,10 +50,10 @@ def cmd_new(args) -> int:
     settings, store = _store(args)
     project = Project(subject=args.subject or "", canvas=Canvas(aspect=args.aspect))
     tts = args.tts or settings.default_provider("tts") or "edge"
+    project.voice = VoiceSettings(provider=tts)
+    localize.apply_language(project, args.language)
     if args.voice:
-        project.voice = VoiceSettings(provider=tts, voice=args.voice)
-    else:
-        project.voice = VoiceSettings(provider=tts)
+        project.voice = project.voice.model_copy(update={"voice": args.voice})
     if args.llm:
         if not args.subject:
             print("使用 --llm 时需要 --subject", file=sys.stderr)
@@ -57,6 +61,7 @@ def cmd_new(args) -> int:
         title, shots = storyboard.generate_storyboard(
             registry.create("llm", None, settings),
             args.subject,
+            language=languages.get(args.language).prompt_name,
             shots=args.shots,  # type: ignore[arg-type]
         )
         project.title, project.shots = title, shots
@@ -138,6 +143,19 @@ def cmd_render(args) -> int:
     return 0
 
 
+def cmd_translate(args) -> int:
+    settings, store = _store(args)
+    project = store.load(args.project)
+    version = localize.create_language_version(
+        store,
+        registry.create("llm", None, settings),  # type: ignore[arg-type]
+        project,
+        args.language,
+    )
+    print(f"已生成{languages.get(version.language).name_zh}版本：{version.id}  {version.title}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="shotwright", description="Shotwright 镜匠：以分镜为核心的短视频生成工具"
@@ -158,6 +176,9 @@ def build_parser() -> argparse.ArgumentParser:
     new.add_argument("--llm", action="store_true", help="让大模型根据主题写文案并拆镜头")
     new.add_argument("--shots", type=int, default=6, help="期望的镜头数量（--llm 时有效）")
     new.add_argument("--aspect", choices=["9:16", "16:9", "1:1"], default="9:16")
+    new.add_argument(
+        "--language", choices=list(languages.LANGUAGES), default=languages.DEFAULT_LANGUAGE, help="视频语言"
+    )
     new.add_argument("--tts", help="配音服务，例如 edge、silent")
     new.add_argument("--voice", help="配音声音，例如 zh-CN-YunxiNeural")
     new.set_defaults(func=cmd_new)
@@ -177,6 +198,11 @@ def build_parser() -> argparse.ArgumentParser:
     shot.add_argument("--lock", action="store_true")
     shot.add_argument("--unlock", action="store_true")
     shot.set_defaults(func=cmd_shot)
+
+    translate = sub.add_parser("translate", help="把项目翻译成另一种语言的版本（新项目）")
+    translate.add_argument("project")
+    translate.add_argument("language", choices=list(languages.LANGUAGES))
+    translate.set_defaults(func=cmd_translate)
 
     render = sub.add_parser("render", help="渲染项目")
     render.add_argument("project")

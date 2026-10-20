@@ -15,15 +15,17 @@ import re
 from shotwright.core.models import Shot, ShotVisual
 from shotwright.providers.base import LLMProvider, ProviderError
 
-_SENTENCE_END = re.compile(r"(?<=[。！？!?；;…\.])\s*|\n+")
-_CJK = re.compile(r"[㐀-䶿一-鿿]")
+_SENTENCE_END = re.compile(r"(?<=[。！？!?；;…])\s*|(?<=\.)\s+|\n+")
+_CJK = re.compile(r"[぀-ヿ㐀-䶿一-鿿가-힯]")
+_THAI = re.compile(r"[\u0e00-\u0e7f]")
 
 
 def _length(text: str) -> int:
-    """中文按字计，其他语言按词计（约 2 个字符宽度算一个单位）。"""
+    """中日韩按字计，拼音文字按词计（一个词约 2 个单位），泰文约 3 个字符一个单位。"""
     cjk = len(_CJK.findall(text))
-    words = len(re.findall(r"[A-Za-z0-9']+", text))
-    return cjk + words * 2
+    thai = len(_THAI.findall(text))
+    words = len(re.findall(r"[^\W\d_]+|\d+", _THAI.sub(" ", _CJK.sub(" ", text))))
+    return cjk + words * 2 + thai // 3
 
 
 def split_script(script: str, *, max_units: int = 28) -> list[Shot]:

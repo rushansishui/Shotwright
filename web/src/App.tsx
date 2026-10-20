@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Editor } from "./components/Editor";
 import { Home } from "./components/Home";
 import { Settings } from "./components/Settings";
+import { useI18n } from "./i18n";
 
 type Route = { page: "home" } | { page: "settings" } | { page: "project"; id: string };
 
@@ -15,6 +16,7 @@ function parseHash(): Route {
 
 export function App() {
   const [route, setRoute] = useState<Route>(parseHash);
+  const { t, lang, setLang } = useI18n();
 
   useEffect(() => {
     const onChange = () => setRoute(parseHash());
@@ -29,16 +31,25 @@ export function App() {
           <a className="brand" href="#/">
             <span className="brand-mark" aria-hidden="true" />
             <span className="brand-name">Shotwright</span>
-            <span className="brand-cn">镜匠</span>
+            <span className="brand-cn">{t("app.brandSub")}</span>
           </a>
-          <nav className="nav" aria-label="主导航">
+          <nav className="nav" aria-label={t("nav.main")}>
             <a href="#/" className={route.page !== "settings" ? "active" : ""}>
-              创作
+              {t("nav.create")}
             </a>
             <a href="#/settings" className={route.page === "settings" ? "active" : ""}>
-              服务状态
+              {t("nav.status")}
             </a>
           </nav>
+          <button
+            type="button"
+            className="btn ghost lang-switch"
+            title={t("nav.switchLang")}
+            aria-label={t("nav.switchLang")}
+            onClick={() => setLang(lang === "zh" ? "en" : "zh")}
+          >
+            {lang === "zh" ? "EN" : "中文"}
+          </button>
         </div>
       </header>
       {route.page === "home" && <Home />}

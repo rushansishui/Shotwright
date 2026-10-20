@@ -8,21 +8,14 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from shotwright.core.languages import LANGUAGES
 from shotwright.media.ffmpeg import MediaError, probe
 from shotwright.providers import registry
 from shotwright.providers.base import ConfigField, ProviderError, ProviderSpec, SpeechResult
 
-# 常用声音，界面下拉框使用。完整列表见 `edge-tts --list-voices`。
+# 各语言的常用声音（见 core/languages.py），界面下拉框使用。完整列表见 `edge-tts --list-voices`。
 VOICES = {
-    "zh-CN-XiaoxiaoNeural": "晓晓 · 女声（普通话）",
-    "zh-CN-YunxiNeural": "云希 · 男声（普通话）",
-    "zh-CN-YunjianNeural": "云健 · 男声（普通话，有力）",
-    "zh-CN-XiaoyiNeural": "晓伊 · 女声（普通话，活泼）",
-    "zh-TW-HsiaoChenNeural": "曉臻 · 女声（台湾）",
-    "zh-HK-HiuGaaiNeural": "曉佳 · 女声（粤语）",
-    "en-US-JennyNeural": "Jenny · Female (US)",
-    "en-US-GuyNeural": "Guy · Male (US)",
-    "ja-JP-NanamiNeural": "七海 · 女声（日语）",
+    voice_id: f"{label}（{lang.name_zh}）" for lang in LANGUAGES.values() for voice_id, label in lang.voices
 }
 
 

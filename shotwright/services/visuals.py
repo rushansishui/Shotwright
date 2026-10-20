@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import tempfile
 from pathlib import Path
 
@@ -19,6 +20,8 @@ from shotwright.providers.base import (
     VideoGenProvider,
 )
 from shotwright.services.durations import estimated_shot_seconds
+
+log = logging.getLogger(__name__)
 
 
 def _register_media(
@@ -236,6 +239,36 @@ def refresh_candidates(
     shot: Shot,
     *,
     confirm_charge: bool = False,
+) -> list[str]:
+    index = next((i for i, s in enumerate(project.shots) if s.id == shot.id), -1) + 1
+    log.info(
+        "项目 %s 镜头 %d：开始%s（%s）",
+        project.id,
+        index,
+        _ACTIONS.get(shot.visual.mode, "处理"),
+        shot.visual.mode,
+    )
+    try:
+        added = _refresh(store, settings, project, shot, confirm_charge=confirm_charge)
+    except ProviderError as exc:
+        log.warning(
+            "项目 %s 镜头 %d：%s失败：%s", project.id, index, _ACTIONS.get(shot.visual.mode, "处理"), exc
+        )
+        raise
+    log.info("项目 %s 镜头 %d：新增素材 %s", project.id, index, ", ".join(added) or "无")
+    return added
+
+
+_ACTIONS = {"stock": "检索素材", "ai": "生成 AI 视频", "image": "生成 AI 图片"}
+
+
+def _refresh(
+    store: ProjectStore,
+    settings: Settings,
+    project: Project,
+    shot: Shot,
+    *,
+    confirm_charge: bool,
 ) -> list[str]:
     if shot.visual.mode == "stock":
         return fetch_stock_candidates(store, settings, project, shot)

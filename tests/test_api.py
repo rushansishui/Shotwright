@@ -216,3 +216,20 @@ def test_first_frame_can_be_set_and_cleared(client):
     assert client.patch(base, json={"visual": {"first_frame": image}}).json()["shots"][0]["visual"][
         "first_frame"
     ]
+
+
+def test_languages_and_project_language(client):
+    langs = client.get("/api/v2/languages").json()
+    assert {"zh-CN", "en-US", "ja-JP", "ko-KR"} <= {item["code"] for item in langs}
+    voices = client.get("/api/v2/voices", params={"language": "ja-JP"}).json()
+    assert voices and all(v["id"].startswith("ja-JP") for v in voices)
+    project = client.post(
+        "/api/v2/projects",
+        json={"mode": "split", "script": "Hello there. Nice to meet you.", "language": "en-US"},
+    ).json()
+    assert project["language"] == "en-US"
+    patched = client.patch(f"/api/v2/projects/{project['id']}", json={"language": "ko-KR"}).json()
+    assert patched["language"] == "ko-KR" and patched["subtitle"]["font"] == "NotoSansKR-Bold.ttf"
+    assert client.patch(f"/api/v2/projects/{project['id']}", json={"language": "xx"}).status_code == 422
+    versions = client.get(f"/api/v2/projects/{project['id']}/versions").json()
+    assert [v["id"] for v in versions] == [project["id"]]

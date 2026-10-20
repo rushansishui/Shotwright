@@ -1,4 +1,17 @@
-import type { Job, Project, ProjectSummary, Providers, RenderResult, Shot, VisualPatch, VoiceSettings } from "./types";
+import type {
+  Job,
+  LanguageInfo,
+  Project,
+  ProjectSummary,
+  Providers,
+  RenderResult,
+  Shot,
+  VersionInfo,
+  VisualPatch,
+  VoiceSettings,
+} from "./types";
+
+import { currentLang, translate } from "./i18n";
 
 const BASE = "/api/v2";
 
@@ -7,14 +20,17 @@ export class ApiError extends Error {}
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(BASE + path, {
     ...init,
-    headers: init?.body instanceof FormData ? undefined : { "Content-Type": "application/json" },
+    headers: {
+      ...(init?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+      "Accept-Language": currentLang() === "zh" ? "zh-CN" : "en",
+    },
   });
   if (!response.ok) {
-    let message = `请求失败（HTTP ${response.status}）`;
+    let message = translate("common.requestFailed", { status: response.status });
     try {
       const data = await response.json();
       if (typeof data.detail === "string") message = data.detail;
-      else if (Array.isArray(data.detail)) message = data.detail.map((d: { msg: string }) => d.msg).join("；");
+      else if (Array.isArray(data.detail)) message = data.detail.map((d: { msg: string }) => d.msg).join("; ");
     } catch {
       /* 响应不是 JSON */
     }
@@ -31,18 +47,28 @@ const json = (method: string, body?: unknown): RequestInit => ({
 
 export const api = {
   providers: () => request<Providers>("/providers"),
-  voices: () => request<{ id: string; name: string }[]>("/voices"),
+  voices: (language?: string) =>
+    request<{ id: string; name: string; language: string | null }[]>(
+      language ? `/voices?language=${encodeURIComponent(language)}` : "/voices",
+    ),
+  languages: () => request<LanguageInfo[]>("/languages"),
+  versions: (id: string) => request<VersionInfo[]>(`/projects/${id}/versions`),
+  createVersion: (id: string, language: string) => request<Project>(`/projects/${id}/versions`, json("POST", { language })),
   listProjects: () => request<ProjectSummary[]>("/projects"),
   getProject: (id: string) => request<Project>(`/projects/${id}`),
   createProject: (body: {
     mode: "llm" | "split" | "empty";
+    language?: string;
     subject?: string;
     script?: string;
     canvas?: { aspect: string; fps?: number };
     voice?: Partial<VoiceSettings>;
     shots?: number;
   }) => request<Project>("/projects", json("POST", body)),
-  updateProject: (id: string, body: Partial<Pick<Project, "title" | "canvas" | "voice" | "subtitle" | "bgm">>) =>
+  updateProject: (
+    id: string,
+    body: Partial<Pick<Project, "title" | "language" | "canvas" | "voice" | "subtitle" | "bgm">>,
+  ) =>
     request<Project>(`/projects/${id}`, json("PATCH", body)),
   deleteProject: (id: string) => request<void>(`/projects/${id}`, json("DELETE")),
   addShot: (id: string, after?: string) => request<Project>(`/projects/${id}/shots`, json("POST", { text: "", after })),

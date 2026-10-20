@@ -12,6 +12,7 @@ dependencies = [
     "httpx>=0.27",
     "edge-tts>=7.0",
     "pillow>=10.0",
+    "fonttools>=4.40",
     "python-multipart>=0.0.9",
 ]
 

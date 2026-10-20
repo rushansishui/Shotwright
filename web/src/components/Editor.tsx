@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import type { Aspect, Project, Providers, SubtitleStyle, VisualMode, VisualPatch, VoiceSettings } from "../types";
+import type { Aspect, LanguageInfo, Project, Providers, SubtitleStyle, VisualMode, VisualPatch, VoiceSettings } from "../types";
 import { Section, Segmented, Slider } from "./Controls";
+import { useI18n } from "../i18n";
 import { RenderPanel } from "./RenderPanel";
+import { Versions } from "./Versions";
 import { ShotCard } from "./ShotCard";
 
 export function Editor({ projectId }: { projectId: string }) {
@@ -14,6 +16,8 @@ export function Editor({ projectId }: { projectId: string }) {
   const inflight = useRef(new Set<string>());
   const [activeIndex, setActiveIndex] = useState(0);
   const [voices, setVoices] = useState<{ id: string; name: string }[]>([]);
+  const [languages, setLanguages] = useState<LanguageInfo[]>([]);
+  const { t, lang } = useI18n();
   const [providers, setProviders] = useState<Providers | null>(null);
   const [title, setTitle] = useState("");
   // 滑块拖动时只更新本地显示，松手后再保存。
@@ -80,9 +84,16 @@ export function Editor({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     load();
-    api.voices().then(setVoices).catch(() => setVoices([]));
     api.providers().then(setProviders).catch(() => setProviders(null));
+    api.languages().then(setLanguages).catch(() => setLanguages([]));
   }, [load]);
+
+  // 声音下拉框只列当前视频语言的声音。
+  const projectLanguage = project?.language;
+  useEffect(() => {
+    if (!projectLanguage) return;
+    api.voices(projectLanguage).then(setVoices).catch(() => setVoices([]));
+  }, [projectLanguage]);
 
   async function run(action: () => Promise<Project>, shotId?: string) {
     setError("");
@@ -106,7 +117,7 @@ export function Editor({ projectId }: { projectId: string }) {
   }
 
   if (!project) {
-    return <main className="page">{error ? <p className="hint error">{error}</p> : <p className="muted">加载中…</p>}</main>;
+    return <main className="page">{error ? <p className="hint error">{error}</p> : <p className="muted">{t("common.loading")}</p>}</main>;
   }
 
   const id = project.id;
@@ -149,7 +160,7 @@ export function Editor({ projectId }: { projectId: string }) {
   async function uploadBgm(file: File) {
     try {
       const asset = await api.upload(id, file);
-      if (asset.kind !== "audio") throw new Error("请上传音频文件（mp3、m4a、wav 等）");
+      if (asset.kind !== "audio") throw new Error(t("editor.bgmNotAudio"));
       await run(() => api.updateProject(id, { bgm: { ...project!.bgm, asset_id: asset.id } }));
     } catch (e) {
       setError((e as Error).message);
@@ -161,10 +172,10 @@ export function Editor({ projectId }: { projectId: string }) {
       <div className="editor-main">
         <div className="titlebar">
           <a className="btn ghost" href="#/">
-            ← 返回
+            {t("editor.back")}
           </a>
           <label className="sr-only" htmlFor="title">
-            项目标题
+            {t("editor.titleLabel")}
           </label>
           <input
             id="title"
@@ -174,7 +185,7 @@ export function Editor({ projectId }: { projectId: string }) {
             onBlur={() => title !== project.title && run(() => api.updateProject(id, { title }))}
           />
           <Segmented
-            label="画面比例"
+            label={t("editor.aspect")}
             value={project.canvas.aspect}
             onChange={(aspect: Aspect) => run(() => api.updateProject(id, { canvas: { ...project.canvas, aspect } }))}
             options={[
@@ -193,14 +204,14 @@ export function Editor({ projectId }: { projectId: string }) {
 
         <Section
           step={1}
-          title="分镜"
+          title={t("editor.shots")}
           extra={
             <button type="button" className="btn" onClick={() => run(() => api.addShot(id))}>
-              添加镜头
+              {t("editor.addShot")}
             </button>
           }
         >
-          {project.shots.length === 0 && <p className="muted">还没有镜头，点右上角"添加镜头"。</p>}
+          {project.shots.length === 0 && <p className="muted">{t("editor.noShots")}</p>}
           <div className="shots">
             {project.shots.map((shot, index) => (
               <ShotCard
@@ -227,7 +238,7 @@ export function Editor({ projectId }: { projectId: string }) {
                 onMove={(delta) => moveShot(index, delta)}
                 onInsert={() => run(() => api.addShot(id, shot.id))}
                 onDelete={() => {
-                  if (window.confirm(`删除镜头 ${index + 1}？`)) {
+                  if (window.confirm(t("editor.deleteShot", { n: index + 1 }))) {
                     run(() => api.deleteShot(id, shot.id));
                     setActiveIndex(Math.max(0, Math.min(activeIndex, project.shots.length - 2)));
                   }
@@ -237,10 +248,29 @@ export function Editor({ projectId }: { projectId: string }) {
           </div>
         </Section>
 
-        <Section step={2} title="声音">
+        <Section step={2} title={t("editor.audio")}>
+          <div className="field">
+            <div className="field-row">
+              <label htmlFor="language">{t("editor.language")}</label>
+              <span className="muted small">{t("editor.languageHint")}</span>
+            </div>
+            <select
+              id="language"
+              className="input"
+              value={project.language}
+              onChange={(e) => run(() => api.updateProject(id, { language: e.target.value }))}
+            >
+              {!languages.some((l) => l.code === project.language) && <option value={project.language}>{project.language}</option>}
+              {languages.map((l) => (
+                <option key={l.code} value={l.code}>
+                  {lang === "zh" && l.name_zh !== l.name ? `${l.name}（${l.name_zh}）` : l.name}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="grid-2">
             <div className="field">
-              <label htmlFor="tts">配音服务</label>
+              <label htmlFor="tts">{t("editor.tts")}</label>
               <select id="tts" className="input" value={project.voice.provider} onChange={(e) => updateVoice({ provider: e.target.value })}>
                 {ttsProviders.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -250,7 +280,7 @@ export function Editor({ projectId }: { projectId: string }) {
               </select>
             </div>
             <div className="field">
-              <label htmlFor="voice">声音</label>
+              <label htmlFor="voice">{t("editor.voice")}</label>
               <select
                 id="voice"
                 className="input"
@@ -268,7 +298,7 @@ export function Editor({ projectId }: { projectId: string }) {
             </div>
             <Slider
               id="rate"
-              label="语速"
+              label={t("editor.rate")}
               value={draft.rate ?? project.voice.rate}
               min={0.5}
               max={2}
@@ -279,7 +309,7 @@ export function Editor({ projectId }: { projectId: string }) {
             />
             <Slider
               id="volume"
-              label="配音音量"
+              label={t("editor.volume")}
               value={draft.volume ?? project.voice.volume}
               min={0}
               max={2}
@@ -292,7 +322,7 @@ export function Editor({ projectId }: { projectId: string }) {
           <div className="divider" />
           <div className="grid-2">
             <div className="field">
-              <span className="label">背景音乐</span>
+              <span className="label">{t("editor.bgm")}</span>
               <input
                 ref={bgmInput}
                 type="file"
@@ -306,13 +336,13 @@ export function Editor({ projectId }: { projectId: string }) {
               />
               <div className="row">
                 <button type="button" className="btn" onClick={() => bgmInput.current?.click()}>
-                  {bgmAsset ? "更换" : "上传音乐"}
+                  {bgmAsset ? t("editor.bgmReplace") : t("editor.bgmUpload")}
                 </button>
                 {bgmAsset && (
                   <>
-                    <span className="muted small ellipsis">{bgmAsset.meta.filename ?? "已上传"}</span>
+                    <span className="muted small ellipsis">{bgmAsset.meta.filename ?? t("editor.bgmUploaded")}</span>
                     <button type="button" className="btn ghost" onClick={() => run(() => api.updateProject(id, { bgm: { ...project.bgm, asset_id: null } }))}>
-                      移除
+                      {t("editor.bgmRemove")}
                     </button>
                   </>
                 )}
@@ -320,7 +350,7 @@ export function Editor({ projectId }: { projectId: string }) {
             </div>
             <Slider
               id="bgm-volume"
-              label="背景音乐音量"
+              label={t("editor.bgmVolume")}
               value={draft.bgm ?? project.bgm.volume}
               min={0}
               max={1}
@@ -336,32 +366,32 @@ export function Editor({ projectId }: { projectId: string }) {
 
         <Section
           step={3}
-          title="字幕"
+          title={t("editor.subtitles")}
           extra={
             <label className="switch">
               <input type="checkbox" checked={project.subtitle.enabled} onChange={(e) => updateSubtitle({ enabled: e.target.checked })} />
-              启用字幕
+              {t("editor.subtitlesOn")}
             </label>
           }
         >
           {project.subtitle.enabled && (
             <div className="grid-2">
               <div className="field">
-                <span className="label">位置</span>
+                <span className="label">{t("editor.position")}</span>
                 <Segmented
-                  label="字幕位置"
+                  label={t("editor.positionLabel")}
                   value={project.subtitle.position}
                   onChange={(position) => updateSubtitle({ position })}
                   options={[
-                    { value: "top", label: "顶部" },
-                    { value: "middle", label: "中部" },
-                    { value: "bottom", label: "底部" },
+                    { value: "top", label: t("editor.position.top") },
+                    { value: "middle", label: t("editor.position.middle") },
+                    { value: "bottom", label: t("editor.position.bottom") },
                   ]}
                 />
               </div>
               <Slider
                 id="sub-size"
-                label="字号"
+                label={t("editor.size")}
                 value={draft.size ?? project.subtitle.size}
                 min={24}
                 max={120}
@@ -371,11 +401,11 @@ export function Editor({ projectId }: { projectId: string }) {
                 onCommit={(size) => updateSubtitle({ size }).then(() => setDraft({ ...draft, size: undefined }))}
               />
               <div className="field">
-                <span className="label">颜色</span>
+                <span className="label">{t("editor.color")}</span>
                 <div className="row">
                   <label className="color-field">
                     <input type="color" value={project.subtitle.color.toLowerCase()} onChange={(e) => updateSubtitle({ color: e.target.value.toUpperCase() })} />
-                    文字
+                    {t("editor.textColor")}
                   </label>
                   <label className="color-field">
                     <input
@@ -383,13 +413,15 @@ export function Editor({ projectId }: { projectId: string }) {
                       value={project.subtitle.outline_color.toLowerCase()}
                       onChange={(e) => updateSubtitle({ outline_color: e.target.value.toUpperCase() })}
                     />
-                    描边
+                    {t("editor.outlineColor")}
                   </label>
                 </div>
               </div>
             </div>
           )}
         </Section>
+
+        <Versions project={project} languages={languages} />
       </div>
 
       <RenderPanel project={project} paidAvailable={Boolean(aiVideo || aiImage)} shotIndex={activeIndex} onShotIndex={setActiveIndex} onRendered={load} />

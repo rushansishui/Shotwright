@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 import mimetypes
 import tempfile
 import threading
@@ -24,18 +25,23 @@ from shotwright.api.schemas import (
     AddShot,
     ChargeConsent,
     CreateProject,
+    CreateVersion,
     ReorderShots,
     UpdateProject,
     UpdateShot,
 )
 from shotwright.config import ROOT_DIR, Settings, load_settings
+from shotwright.core import languages
 from shotwright.core.models import Project, Shot, ShotVisual, VoiceSettings, validate_id
 from shotwright.core.store import ProjectNotFound, ProjectStore, read_json
+from shotwright.logs import setup_logging
 from shotwright.media import ffmpeg
 from shotwright.providers import registry
 from shotwright.providers.base import ChargeConfirmationRequired, ProviderError
 from shotwright.providers.tts.edge import VOICES
-from shotwright.services import storyboard, visuals
+from shotwright.services import localize, storyboard, visuals
+
+log = logging.getLogger("shotwright.api")
 
 MAX_UPLOAD = 500 * 1024 * 1024
 WEB_DIST = ROOT_DIR / "web" / "dist"
@@ -43,6 +49,8 @@ WEB_DIST = ROOT_DIR / "web" / "dist"
 
 def create_app(settings: Settings | None = None, *, job_manager: JobManager | None = None) -> FastAPI:
     settings = settings or load_settings()
+    log_path = setup_logging(settings)
+    log.info("Shotwright %s 启动，日志写入 %s", __version__, log_path)
     ffmpeg.configure(settings.ffmpeg, settings.ffprobe)
     store = ProjectStore(settings.storage_dir)
     jobs = job_manager or JobManager(store, settings)
@@ -71,6 +79,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
     @app.exception_handler(ProviderError)
     async def _provider_error(request: Request, exc: ProviderError):
+        log.warning("%s %s 失败：%s", request.method, request.url.path, exc)
         return JSONResponse(status_code=502, content={"detail": str(exc)})
 
     api = APIRouter(prefix="/api/v2")
@@ -122,8 +131,28 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         return result
 
     @api.get("/voices")
-    def voices():
-        return [{"id": key, "name": name} for key, name in VOICES.items()]
+    def voices(language: str | None = None):
+        """Edge 配音的可选声音；带 language 时只返回该语言的声音。"""
+        if language:
+            lang = languages.get(language)
+            return [{"id": vid, "name": label, "language": lang.code} for vid, label in lang.voices]
+        return [
+            {"id": key, "name": name, "language": languages.voice_language(key)}
+            for key, name in VOICES.items()
+        ]
+
+    @api.get("/languages")
+    def list_languages():
+        return [
+            {
+                "code": lang.code,
+                "name": lang.name,
+                "name_zh": lang.name_zh,
+                "default_voice": lang.default_voice,
+                "font": lang.font,
+            }
+            for lang in languages.LANGUAGES.values()
+        ]
 
     # ---- 项目 ---------------------------------------------------------------
 
@@ -135,6 +164,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 "title": p.title or p.subject or "未命名项目",
                 "shots": len(p.shots),
                 "aspect": p.canvas.aspect,
+                "language": languages.normalize(p.language),
+                "group": p.group or p.id,
                 "updated_at": p.updated_at,
             }
             for p in store.list()
@@ -142,6 +173,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
     @api.post("/projects", status_code=201)
     def create_project(body: CreateProject):
+        lang = languages.get(body.language)
         project = Project(title=body.title, subject=body.subject)
         if body.canvas:
             project.canvas = body.canvas
@@ -150,6 +182,9 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         elif settings.default_provider("tts"):
             # 没指定配音时用配置里 [defaults] tts 的服务，而不是固定用 Edge。
             project.voice = VoiceSettings(provider=settings.default_provider("tts"))
+        localize.apply_language(project, lang.code)
+        if body.voice:
+            project.voice = body.voice
         if body.mode == "llm":
             if not body.subject.strip():
                 raise HTTPException(422, "请填写视频主题")
@@ -157,7 +192,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             title, shots = storyboard.generate_storyboard(
                 llm,
                 body.subject.strip(),
-                language=body.language,
+                language=lang.prompt_name,
                 shots=body.shots,  # type: ignore[arg-type]
             )
             project.title = project.title or title
@@ -176,6 +211,10 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
     @api.patch("/projects/{project_id}")
     def update_project(project_id: str, body: UpdateProject):
         def change(project: Project) -> None:
+            if body.language is not None:
+                if body.language not in languages.LANGUAGES:
+                    raise ValueError("不支持的语言")
+                localize.apply_language(project, body.language)
             for name in ("title", "subject", "canvas", "voice", "subtitle", "bgm"):
                 value = getattr(body, name)
                 if value is not None:
@@ -184,6 +223,29 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 raise ValueError("背景音乐素材不存在")
 
         return _mutate(project_id, change)
+
+    @api.get("/projects/{project_id}/versions")
+    def list_versions(project_id: str):
+        """同一个视频的所有语言版本（包括自己）。"""
+        project = store.load(_id(project_id))
+        return [
+            {
+                "id": p.id,
+                "title": p.title,
+                "language": languages.normalize(p.language),
+                "updated_at": p.updated_at,
+            }
+            for p in localize.versions(store, project)
+        ]
+
+    @api.post("/projects/{project_id}/versions", status_code=201)
+    def create_version(project_id: str, body: CreateVersion):
+        """调用大模型把文案翻译成另一种语言，生成一个新项目（画面素材共用）。"""
+        project = store.load(_id(project_id))
+        if body.language not in languages.LANGUAGES:
+            raise HTTPException(422, "不支持的语言")
+        llm = registry.create("llm", None, settings)
+        return localize.create_language_version(store, llm, project, body.language)  # type: ignore[arg-type]
 
     @api.delete("/projects/{project_id}", status_code=204)
     def delete_project(project_id: str):

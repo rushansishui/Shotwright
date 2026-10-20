@@ -20,13 +20,16 @@ class CreateProject(_Body):
     mode: Literal["llm", "split", "empty"] = "split"
     """llm：让大模型写文案并拆镜头；split：把 script 按句拆成镜头；empty：空项目。"""
     shots: int = Field(6, ge=1, le=30)
-    language: str = Field("简体中文", max_length=40)
+    language: str = Field("zh-CN", max_length=40)
+    """视频内容的语言代码（见 /api/v2/languages），也接受"简体中文"这类旧写法。"""
     canvas: Canvas | None = None
     voice: VoiceSettings | None = None
 
 
 class UpdateProject(_Body):
     title: str | None = Field(None, max_length=120)
+    language: str | None = Field(None, max_length=40)
+    """切换视频语言：同时换成该语言的默认配音声音和字幕字体（文案不变）。"""
     subject: str | None = Field(None, max_length=500)
     canvas: Canvas | None = None
     voice: VoiceSettings | None = None
@@ -70,3 +73,8 @@ class ReorderShots(_Body):
 class ChargeConsent(_Body):
     confirm_charge: bool = False
     """用户已确认这次操作可以调用收费服务（AI 视频、AI 图片）。"""
+
+
+class CreateVersion(_Body):
+    language: str = Field(..., max_length=40)
+    """要生成的语言版本，例如 en-US。"""

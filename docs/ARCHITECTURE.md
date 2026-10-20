@@ -14,7 +14,7 @@ Shotwright 以**镜头（Shot）**为基本单位：一个视频是一个项目�
 ├──────────────────────────────────────────────────────────────┤
 │ Provider   providers/{llm,tts,stock,video_gen,image_gen}/ + registry.py │
 ├──────────────────────────────────────────────────────────────┤
-│ 核心       core/models.py   core/store.py   core/fingerprint.py      │
+│ 核心       core/models.py  core/store.py  core/fingerprint.py  core/languages.py │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -149,13 +149,26 @@ AI 视频镜头已选中一张图片时（例如先用 AI 图片生成、或上�
 
 Base URL 误填成完整的 `/chat/completions` 地址时会自动纠正。
 
+## 多语种
+
+- **视频语言**：`Project.language` 使用 BCP-47 代码（`zh-CN`、`en-US`、`ja-JP`……），语言目录在 `core/languages.py`：每种语言给大模型的语言名、可选的 Edge 声音、默认字幕字体。切换语言时自动换成该语言的默认声音和字体，文案不变。
+- **字幕**：按可断行的最小单位换行——中日文、泰文逐字，拉丁、西里尔、韩文按词；泰文、越南语的组合符号不会被拆到行首。字体缺字时（例如中文字体显示韩文）渲染会自动换用 `resources/fonts` 里能显示的字体并给出提示。
+- **语言版本**：`POST /projects/{id}/versions` 让大模型翻译标题和每个镜头的文案，生成一个新项目。新项目与原项目共用 `group`，镜头 id、画面素材（硬链接，不额外占磁盘）、锁定状态都相同，配音和字幕换成目标语言。各语言版本独立渲染、独立缓存。
+- **界面**：`web/src/messages.ts` 存中英文界面文字，`web/src/i18n.tsx` 提供切换，选择保存在浏览器里。服务端返回的错误提示目前只有中文。
+
+## 日志
+
+`storage/logs/shotwright.log`（存储目录的上一级），每天零点切分，保留 14 天。记录：收费任务的模型、任务 id、结果和用时；检索 / 生成的开始与结果；渲染任务的开始、完成、提示和失败堆栈；接口报错。所有日志经过脱敏，配置和环境变量里的 API Key 会被替换成 `***`。
+
 ## API
 
 所有接口在 `/api/v2` 下，完整文档见运行时的 `/docs`。
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| GET | `/providers`、`/voices` | 服务状态、可选声音 |
+| GET | `/providers`、`/voices?language=` | 服务状态、某种语言可选的声音 |
+| GET | `/languages` | 支持的视频语言 |
+| GET / POST | `/projects/{id}/versions` | 同一视频的语言版本；POST `{"language": "en-US"}` 翻译出新版本 |
 | GET / POST | `/projects` | 列出、创建项目（`mode`：`llm` / `split` / `empty`） |
 | GET / PATCH / DELETE | `/projects/{id}` | 读取、修改设置、删除 |
 | POST | `/projects/{id}/shots` | 新增镜头（可指定插在哪个镜头之后） |

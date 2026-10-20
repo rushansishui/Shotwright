@@ -14,6 +14,8 @@ Shotwright 以"镜头"为核心：文案被拆成一个个镜头，每个镜头�
 - **增量渲染**：每个阶段按输入计算指纹并缓存，没改的镜头直接复用。
 - **配音与字幕**：免费的 Edge 在线语音；字幕按真实字体宽度自动换行，行长均衡。
 - **三种入口**：网页界面、REST API（`/api/v2`）、命令行，共用同一套服务和渲染队列。
+- **多语种**：视频可以是中文、英语、日语、韩语、西班牙语等 16 种语言，自动匹配配音声音和字幕字体；一个视频可以一键翻译出其他语言版本（画面共用，只换文案、配音和字幕）。网页界面支持中文 / English 切换。
+- **日志**：`storage/logs/shotwright.log` 记录收费任务的模型、任务 id 和结果，以及每次生成、渲染的过程，按天切分保留 14 天，API Key 自动脱敏。
 - **离线可用**：不配置任何服务也能跑通（静音配音 + 纯色画面），方便先调分镜节奏。
 
 ## 快速开始
@@ -47,6 +49,8 @@ shotwright show <项目id>
 shotwright shot <项目id> 2 --text "新的文案" --terms "city night,traffic"
 shotwright render <项目id>                                # 只重做有改动的镜头
 shotwright render <项目id> --allow-paid                   # 允许为缺画面的 AI 镜头调用收费生成
+shotwright new --subject "AI in daily life" --llm --language en-US   # 生成英文视频
+shotwright translate <项目id> ja-JP                        # 生成日语版本（新项目，画面共用）
 ```
 
 ## 配置

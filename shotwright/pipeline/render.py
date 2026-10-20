@@ -140,6 +140,7 @@ class Renderer:
         self._cancel = cancel or threading.Event()
         self.stages: list[StageRecord] = []
         self.warnings: list[str] = []
+        self._font: Path | None = None
 
     # ---- 工具 ---------------------------------------------------------------
 
@@ -456,10 +457,23 @@ class Renderer:
         return fp, output
 
     def _font_path(self, project: Project) -> Path:
-        path = (self.settings.fonts_dir / project.subtitle.font).resolve()
-        if path.parent != self.settings.fonts_dir.resolve() or not path.is_file():
+        """字幕字体；缺字时（例如中文字体显示韩文）自动换成能显示的内置字体并提示。"""
+        if self._font is not None:
+            return self._font
+        fonts_dir = self.settings.fonts_dir.resolve()
+        path = (fonts_dir / project.subtitle.font).resolve()
+        if path.parent != fonts_dir or not path.is_file():
             raise RenderError(f"找不到字幕字体：{project.subtitle.font}")
-        return path
+        text = "".join(shot.text for shot in project.shots)
+        chosen, missing = subs.pick_font(path, fonts_dir, text)
+        if chosen != path:
+            self.warnings.append(f"字幕字体 {path.name} 缺少部分文字，已改用 {chosen.name}")
+        if missing:
+            self.warnings.append(
+                f"字幕里有字体无法显示的文字：{missing[:20]}，请在 resources/fonts 中加入支持该语言的字体"
+            )
+        self._font = chosen
+        return chosen
 
     def _cues(self, project: Project, timings: list[ShotTiming]) -> list[subs.Cue]:
         style = project.subtitle

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { Aspect, ProjectSummary, Providers } from "../types";
+import { useI18n } from "../i18n";
+import type { Aspect, LanguageInfo, ProjectSummary, Providers } from "../types";
 import { Segmented } from "./Controls";
 
 export function Home() {
@@ -13,10 +14,14 @@ export function Home() {
   const [error, setError] = useState("");
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [providers, setProviders] = useState<Providers | null>(null);
+  const [languages, setLanguages] = useState<LanguageInfo[]>([]);
+  const { t, lang } = useI18n();
+  const [language, setLanguage] = useState(lang === "zh" ? "zh-CN" : "en-US");
 
   useEffect(() => {
     api.listProjects().then(setProjects).catch(() => setProjects([]));
     api.providers().then(setProviders).catch(() => setProviders(null));
+    api.languages().then(setLanguages).catch(() => setLanguages([]));
   }, []);
 
   const llmReady = providers?.llm?.some((p) => p.default && p.configured) ?? false;
@@ -31,6 +36,7 @@ export function Home() {
         subject: subject.trim(),
         script: mode === "split" ? script : "",
         canvas: { aspect },
+        language,
         shots,
       });
       window.location.hash = `#/p/${project.id}`;
@@ -45,66 +51,77 @@ export function Home() {
     <main className="page narrow">
       <section className="card">
         <div className="card-head">
-          <h1>新建视频</h1>
+          <h1>{t("home.newVideo")}</h1>
         </div>
         <Segmented
-          label="创建方式"
+          label={t("home.createMode")}
           value={mode}
           onChange={setMode}
           options={[
-            { value: "llm", label: "从主题开始（AI 写文案）" },
-            { value: "split", label: "粘贴现成文案" },
+            { value: "llm", label: t("home.mode.llm") },
+            { value: "split", label: t("home.mode.split") },
           ]}
         />
         {mode === "llm" ? (
           <div className="field">
-            <label htmlFor="subject">视频主题</label>
+            <label htmlFor="subject">{t("home.subject")}</label>
             <input
               id="subject"
               className="input"
-              placeholder="例如：人工智能如何改变日常生活"
+              placeholder={t("home.subjectPlaceholder")}
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && canSubmit && !busy && create()}
             />
             {providers && !llmReady && (
-              <p className="hint warn">
-                还没有配置大模型。请在 config.toml 的 [defaults] 里选择大模型（doubao、deepseek、kimi、qwen），并在对应小节填写 API Key；也可以改用"粘贴现成文案"。
-              </p>
+              <p className="hint warn">{t("home.llmMissing")}</p>
             )}
           </div>
         ) : (
           <div className="field">
-            <label htmlFor="script">视频文案</label>
+            <label htmlFor="script">{t("home.script")}</label>
             <textarea
               id="script"
               className="input"
               rows={7}
-              placeholder="粘贴文案，按句号、问号等自动拆成镜头。"
+              placeholder={t("home.scriptPlaceholder")}
               value={script}
               onChange={(e) => setScript(e.target.value)}
             />
           </div>
         )}
+        <div className="field">
+          <div className="field-row">
+            <label htmlFor="language">{t("home.language")}</label>
+            <span className="muted small">{t("home.languageHint")}</span>
+          </div>
+          <select id="language" className="input" value={language} onChange={(e) => setLanguage(e.target.value)}>
+            {languages.map((l) => (
+              <option key={l.code} value={l.code}>
+                {lang === "zh" && l.name_zh !== l.name ? `${l.name}（${l.name_zh}）` : l.name}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="grid-2">
           <div className="field">
-            <span className="label">画面比例</span>
+            <span className="label">{t("home.aspect")}</span>
             <Segmented
-              label="画面比例"
+              label={t("home.aspect")}
               value={aspect}
               onChange={setAspect}
               options={[
-                { value: "9:16", label: "竖屏 9:16" },
-                { value: "16:9", label: "横屏 16:9" },
-                { value: "1:1", label: "方形 1:1" },
+                { value: "9:16", label: t("home.aspect.portrait") },
+                { value: "16:9", label: t("home.aspect.landscape") },
+                { value: "1:1", label: t("home.aspect.square") },
               ]}
             />
           </div>
           {mode === "llm" && (
             <div className="field">
               <div className="field-row">
-                <label htmlFor="shots">镜头数量</label>
-                <span className="muted">约 {shots} 个</span>
+                <label htmlFor="shots">{t("home.shots")}</label>
+                <span className="muted">{t("home.shotsValue", { n: shots })}</span>
               </div>
               <input id="shots" type="range" min={3} max={15} value={shots} onChange={(e) => setShots(Number(e.target.value))} />
             </div>
@@ -112,16 +129,16 @@ export function Home() {
         </div>
         {error && <p className="hint error">{error}</p>}
         <button type="button" className="btn primary big" disabled={!canSubmit || busy} onClick={create}>
-          {busy ? (mode === "llm" ? "AI 正在写分镜…" : "创建中…") : "生成分镜"}
+          {busy ? (mode === "llm" ? t("home.writing") : t("home.creating")) : t("home.submit")}
         </button>
       </section>
 
       <section className="card">
         <div className="card-head">
-          <h2>最近的项目</h2>
+          <h2>{t("home.recent")}</h2>
         </div>
         {projects.length === 0 ? (
-          <p className="muted">还没有项目。</p>
+          <p className="muted">{t("home.empty")}</p>
         ) : (
           <ul className="project-list">
             {projects.map((p) => (
@@ -129,7 +146,12 @@ export function Home() {
                 <a href={`#/p/${p.id}`}>
                   <span className="project-title">{p.title}</span>
                   <span className="muted">
-                    {p.aspect} · {p.shots} 个镜头 · {new Date(p.updated_at * 1000).toLocaleString()}
+                    <span className="tag">{p.language}</span>{" "}
+                    {t("home.projectMeta", {
+                      aspect: p.aspect,
+                      shots: p.shots,
+                      time: new Date(p.updated_at * 1000).toLocaleString(lang === "zh" ? "zh-CN" : "en"),
+                    })}
                   </span>
                 </a>
               </li>

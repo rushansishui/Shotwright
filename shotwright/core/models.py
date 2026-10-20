@@ -186,7 +186,10 @@ class Project(_Model):
     id: str = Field(default_factory=new_id)
     title: str = ""
     subject: str = ""
-    language: str = "auto"
+    language: str = "zh-CN"
+    """视频内容的语言（BCP-47，例如 zh-CN、en-US），决定文案语言、默认配音和字幕字体。"""
+    group: str | None = None
+    """同一个视频的不同语言版本共用一个 group（原始项目的 id）。"""
     canvas: Canvas = Field(default_factory=Canvas)
     voice: VoiceSettings = Field(default_factory=VoiceSettings)
     subtitle: SubtitleStyle = Field(default_factory=SubtitleStyle)
@@ -196,6 +199,11 @@ class Project(_Model):
     revision: int = 0
     created_at: float = Field(default_factory=time.time)
     updated_at: float = Field(default_factory=time.time)
+
+    @field_validator("group")
+    @classmethod
+    def _check_group(cls, value: str | None) -> str | None:
+        return None if value is None else validate_id(value)
 
     @field_validator("id")
     @classmethod

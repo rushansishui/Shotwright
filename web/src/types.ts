@@ -57,6 +57,8 @@ export interface Project {
   id: string;
   title: string;
   subject: string;
+  language: string;
+  group: string | null;
   canvas: { aspect: Aspect; fps: number };
   voice: VoiceSettings;
   subtitle: SubtitleStyle;
@@ -72,6 +74,8 @@ export interface ProjectSummary {
   title: string;
   shots: number;
   aspect: Aspect;
+  language: string;
+  group: string;
   updated_at: number;
 }
 
@@ -110,3 +114,18 @@ export interface Job {
 
 /** 修改镜头画面时可以传的字段；clear_first_frame 取消首帧。 */
 export type VisualPatch = Partial<ShotVisual> & { clear_first_frame?: boolean };
+
+export interface LanguageInfo {
+  code: string;
+  name: string;
+  name_zh: string;
+  default_voice: string;
+  font: string;
+}
+
+export interface VersionInfo {
+  id: string;
+  title: string;
+  language: string;
+  updated_at: number;
+}

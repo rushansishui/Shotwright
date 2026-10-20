@@ -49,6 +49,19 @@ class OpenAIImages:
         return payload
 
     def generate(self, prompt: str, *, aspect: str, output: Path) -> Path:
+        paid_task.log.info("%s 提交生图请求：模型 %s", self.label, self.model)
+        try:
+            path = self._generate(prompt, aspect=aspect, output=output)
+        except UnconfirmedTaskError as exc:
+            paid_task.log.error("%s 生图结果无法确认，可能已扣费：%s", self.label, exc)
+            raise
+        except ProviderError as exc:
+            paid_task.log.warning("%s 生图失败：%s", self.label, exc)
+            raise
+        paid_task.log.info("%s 生图完成：%s", self.label, path.name)
+        return path
+
+    def _generate(self, prompt: str, *, aspect: str, output: Path) -> Path:
         if not prompt.strip():
             raise ProviderError("缺少画面提示词")
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
