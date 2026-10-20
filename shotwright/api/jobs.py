@@ -22,6 +22,9 @@ log = logging.getLogger(__name__)
 
 JobState = Literal["queued", "running", "done", "failed", "cancelled"]
 
+MAX_FINISHED_JOBS = 200
+"""保留的已结束任务数；超过时按创建时间丢弃最旧的，避免长跑服务内存持续增长。"""
+
 
 @dataclass
 class Job:
@@ -54,8 +57,19 @@ class JobManager:
         with self._lock:
             self._jobs[job.id] = job
             self._cancel[job.id] = threading.Event()
+            self._prune()
         self._executor.submit(self._run, job.id)
         return job
+
+    def _prune(self) -> None:
+        """丢弃最旧的已结束任务，只保留 :data:`MAX_FINISHED_JOBS` 个。调用方需持有锁。"""
+        finished = [job for job in self._jobs.values() if job.state in ("done", "failed", "cancelled")]
+        excess = len(finished) - MAX_FINISHED_JOBS
+        if excess <= 0:
+            return
+        for job in sorted(finished, key=lambda item: item.created_at)[:excess]:
+            self._jobs.pop(job.id, None)
+            self._cancel.pop(job.id, None)
 
     def get(self, job_id: str) -> Job | None:
         with self._lock:
@@ -118,6 +132,8 @@ class JobManager:
                 log.warning("渲染任务 %s：%s", job.id, warning)
         finally:
             job.finished_at = time.time()
+            with self._lock:
+                self._prune()
 
     def shutdown(self) -> None:
         for event in self._cancel.values():

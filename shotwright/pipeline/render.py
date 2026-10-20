@@ -27,7 +27,7 @@ from shotwright.core.ids import new_id
 from shotwright.core.models import Project, Shot
 from shotwright.core.store import ProjectStore, read_json, sha256_file, write_json
 from shotwright.media import subtitles as subs
-from shotwright.media.ffmpeg import LOCAL_PROTOCOLS, MediaError, probe, run_ffmpeg
+from shotwright.media.ffmpeg import LOCAL_PROTOCOLS, MediaCancelled, MediaError, probe, run_ffmpeg
 from shotwright.providers import registry
 from shotwright.providers.base import ProviderError, TTSProvider
 from shotwright.services import visuals
@@ -160,6 +160,9 @@ class Renderer:
         try:
             build(temp)
             temp.replace(output)
+        except MediaCancelled as exc:
+            # ffmpeg 被取消：转成渲染取消，让队列记为 cancelled 而不是 failed。
+            raise RenderCancelled(str(exc)) from exc
         finally:
             temp.unlink(missing_ok=True)
         self.stages.append(StageRecord(key, kind, fp, False, round(time.monotonic() - started, 3)))
@@ -310,7 +313,8 @@ class Renderer:
                         f"{seconds:.3f}",
                         *AUDIO_ARGS,
                         str(path),
-                    ]
+                    ],
+                    cancel=self._cancel,
                 )
                 duration = seconds
             else:
@@ -411,7 +415,8 @@ class Renderer:
                     "-f",
                     "mp4",
                     str(temp),
-                ]
+                ],
+                cancel=self._cancel,
             )
 
         self._stage(f"{shot.id}:shot", "shot", fp, output, build)
@@ -448,7 +453,8 @@ class Renderer:
                         "-f",
                         "mp4",
                         str(temp),
-                    ]
+                    ],
+                    cancel=self._cancel,
                 )
             finally:
                 listing.unlink(missing_ok=True)
@@ -577,10 +583,12 @@ class Renderer:
                     "mp4",
                     str(temp.resolve()),
                 ]
-                run_ffmpeg(command, cwd=work)
+                run_ffmpeg(command, cwd=work, cancel=self._cancel)
 
         try:
             self._stage("final", "final", fp, output, build)
+        except MediaCancelled as exc:
+            raise RenderCancelled(str(exc)) from exc
         except MediaError as exc:
             raise RenderError(f"合成字幕与背景音乐失败：{exc}") from exc
         return output

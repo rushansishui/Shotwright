@@ -247,8 +247,15 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         return localize.create_language_version(store, llm, project, body.language)  # type: ignore[arg-type]
 
     @api.delete("/projects/{project_id}", status_code=204)
-    def delete_project(project_id: str):
-        store.delete(_id(project_id))
+    def delete_project(project_id: str, force: bool = False):
+        pid = _id(project_id)
+        active = [j for j in jobs.list(pid) if j.state in ("queued", "running")]
+        if active and not force:
+            # 渲染中途删目录会让任务写文件时抛难以理解的错误。
+            raise HTTPException(409, "这个项目正在渲染，请等它结束，或加 ?force=true 强制删除")
+        for job in active:
+            jobs.cancel(job.id)
+        store.delete(pid)
 
     # ---- 镜头 ---------------------------------------------------------------
 

@@ -233,3 +233,25 @@ def test_languages_and_project_language(client):
     assert client.patch(f"/api/v2/projects/{project['id']}", json={"language": "xx"}).status_code == 422
     versions = client.get(f"/api/v2/projects/{project['id']}/versions").json()
     assert [v["id"] for v in versions] == [project["id"]]
+
+
+def test_delete_refuses_while_rendering(client):
+    import threading
+
+    from shotwright.api.jobs import Job
+
+    pid = _create(client)["id"]
+    jobs = client.app.state.jobs
+    running = Job(id="busyjob", project_id=pid, state="running")
+    with jobs._lock:
+        jobs._jobs[running.id] = running
+        jobs._cancel[running.id] = threading.Event()
+    try:
+        assert client.delete(f"/api/v2/projects/{pid}").status_code == 409
+        # 强制删除会先发出取消信号（正在跑的渲染随后自行收尾为 cancelled），再删目录。
+        assert client.delete(f"/api/v2/projects/{pid}", params={"force": "true"}).status_code == 204
+        assert jobs._cancel["busyjob"].is_set()
+    finally:
+        with jobs._lock:
+            jobs._jobs.pop(running.id, None)
+            jobs._cancel.pop(running.id, None)
