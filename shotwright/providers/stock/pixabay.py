@@ -50,6 +50,14 @@ def pick_rendition(videos: dict, aspect: str) -> tuple[str, int, int, int] | Non
     return usable[-1]
 
 
+def matches_orientation(width: int, height: int, aspect: str) -> bool:
+    if aspect == "9:16":
+        return height > width
+    if aspect == "16:9":
+        return width > height
+    return True
+
+
 class PixabayStock:
     def __init__(self, settings: dict[str, str]):
         self.api_key = settings["api_key"]
@@ -65,7 +73,7 @@ class PixabayStock:
         )
 
     def search(self, query: str, *, aspect: str, min_duration: float, limit: int) -> list[StockCandidate]:
-        params = {"key": self.api_key, "q": query[:100], "per_page": 30, "safesearch": "true"}
+        params = {"key": self.api_key, "q": query[:100], "per_page": 50, "safesearch": "true"}
         try:
             with self._client() as client:
                 response = client.get(API_URL, params=params)
@@ -111,9 +119,10 @@ class PixabayStock:
                     },
                 )
             )
-            if len(results) >= limit:
-                break
-        return results
+        # Pixabay 没有按方向筛选的参数：先多取一些，再把方向与画布一致的排在前面，
+        # 竖屏视频就能优先用竖屏素材，少裁掉画面。排序是稳定的，同组内保留相关度顺序。
+        results.sort(key=lambda c: not matches_orientation(c.width, c.height, aspect))
+        return results[:limit]
 
     def download(self, candidate: StockCandidate, output: Path) -> Path:
         output = output.with_suffix(".mp4")

@@ -84,3 +84,21 @@ def test_registered_and_requires_key(settings):
     with pytest.raises(ProviderNotConfigured):
         registry.create("stock", "pixabay", settings)
     assert pixabay.API_URL.startswith("https://pixabay.com/")
+
+
+def test_portrait_canvas_prefers_portrait_clips(monkeypatch):
+    portrait = {
+        "tiny": (540, 960, 1),
+        "small": (720, 1280, 2),
+        "medium": (1080, 1920, 3),
+        "large": (0, 0, 0),
+    }
+    hits = [
+        {"id": 1, "duration": 10, "videos": _videos(), "user": "landscape"},
+        {"id": 2, "duration": 10, "videos": _videos(**portrait), "user": "portrait"},
+        {"id": 3, "duration": 10, "videos": _videos(), "user": "landscape2"},
+    ]
+    _client_returning(monkeypatch, 200, {"hits": hits})
+    stock = PixabayStock({"api_key": "k"})
+    assert [r.remote_id for r in stock.search("x", aspect="9:16", min_duration=1, limit=2)] == ["2", "1"]
+    assert [r.remote_id for r in stock.search("x", aspect="16:9", min_duration=1, limit=2)] == ["1", "3"]
