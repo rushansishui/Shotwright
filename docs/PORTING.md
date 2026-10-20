@@ -27,7 +27,6 @@ Shotwright 是全新编写的项目，MoneyPrinterTurbo（下称 MPT，MIT Licen
 | 素材缓存 | `app/services/material_cache.py` | `services/visuals.py` | 相同检索词复用下载结果 |
 | 文生图 | `material.py` → `generate_images_openai` | `providers/image_gen/` | 配合镜头运动做成动态画面 |
 | AI 背景音乐 | `app/services/elevenlabs_music.py`、`sonilo.py` | `providers/music/` | |
-| 大模型 Provider 列表 | `app/models/llm_provider.py` | `providers/llm/` | 把常用服务的 Base URL 和模型做成预设 |
 
 ## 不移植
 

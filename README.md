@@ -53,10 +53,11 @@ shotwright render <项目id>                                # 只重做有改动
 
 ```bash
 SHOTWRIGHT_STOCK_PIXABAY_API_KEY=xxxx
-SHOTWRIGHT_LLM_OPENAI_API_KEY=sk-xxxx
-SHOTWRIGHT_LLM_OPENAI_BASE_URL=https://api.deepseek.com/v1
-SHOTWRIGHT_LLM_OPENAI_MODEL=deepseek-chat
+SHOTWRIGHT_DEFAULT_LLM=deepseek
+SHOTWRIGHT_LLM_DEEPSEEK_API_KEY=sk-xxxx
 ```
+
+大模型内置了豆包 Seed、DeepSeek、Kimi、通义千问四个预设，选好后只需填写 API Key；其他 OpenAI 兼容接口用 `openai` 小节自定义 Base URL 和模型。
 
 密钥只保存在配置文件或环境变量中，不会写进项目文件，项目文件可以放心分享。
 

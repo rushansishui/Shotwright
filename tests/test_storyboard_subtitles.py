@@ -113,3 +113,15 @@ def test_llm_base_url_tolerates_full_endpoint():
         {"base_url": "https://ark.cn-beijing.volces.com/api/v3/chat/completions/", "model": "m"}
     )
     assert llm.base_url == "https://ark.cn-beijing.volces.com/api/v3"
+
+
+def test_llm_presets_only_need_a_key(settings):
+    from shotwright.providers import registry
+
+    ids = [s.id for s in registry.specs("llm")]
+    assert ids[:4] == ["doubao", "deepseek", "kimi", "qwen"] and "openai" in ids
+    settings.providers["llm"] = {"deepseek": {"api_key": "k"}}
+    llm = registry.create("llm", "deepseek", settings)
+    assert llm.base_url == "https://api.deepseek.com" and llm.model == "deepseek-flash"
+    settings.providers["llm"]["kimi"] = {"api_key": "k", "model": "kimi-custom"}
+    assert registry.create("llm", "kimi", settings).model == "kimi-custom"

@@ -14,18 +14,39 @@ auto_fetch_visuals = true
 
 # 各类别默认使用的 Provider
 [defaults]
-llm = "openai"
+llm = "doubao"       # doubao / deepseek / kimi / qwen / openai
 tts = "edge"        # 改成 "silent" 可离线预览
 stock = "pixabay"     # 或 "pexels"（Pexels 目前暂停发放新 Key）
 
-# ---- 大模型：任何 OpenAI 兼容接口 -------------------------------------------
+# ---- 大模型 ------------------------------------------------------------------
+# 在 [defaults] 里把 llm 改成要用的那一家，然后在对应小节填写 api_key 即可。
+# 模型更新很快，model 可以按控制台里的模型 ID 修改。
+
+# 豆包 Seed：https://console.volcengine.com/ark（API Key 管理 + 开通模型）
+[providers.llm.doubao]
+api_key = ""
+# model = "doubao-seed-2-0-pro-260215"
+
+# DeepSeek：https://platform.deepseek.com
+[providers.llm.deepseek]
+api_key = ""
+# model = "deepseek-flash"
+
+# Kimi：https://platform.moonshot.cn
+[providers.llm.kimi]
+api_key = ""
+# model = "kimi-k3"
+
+# 通义千问：https://bailian.console.aliyun.com
+[providers.llm.qwen]
+api_key = ""
+# model = "qwen-plus"
+
+# 其他 OpenAI 兼容接口（OpenAI、本地 Ollama 等）
 [providers.llm.openai]
 api_key = ""
 base_url = "https://api.openai.com/v1"
 model = "gpt-4o-mini"
-# DeepSeek 示例：
-# base_url = "https://api.deepseek.com/v1"
-# model = "deepseek-chat"
 # 本地 Ollama 示例（api_key 留空）：
 # base_url = "http://127.0.0.1:11434/v1"
 # model = "qwen2.5:7b"

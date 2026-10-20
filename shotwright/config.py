@@ -21,7 +21,7 @@ DEFAULT_FONTS_DIR = ROOT_DIR / "resources" / "fonts"
 PROVIDER_KINDS = ("llm", "tts", "stock", "video_gen")
 
 DEFAULT_PROVIDERS = {
-    "llm": "openai",
+    "llm": "doubao",
     "tts": "edge",
     "stock": "pixabay",
     "video_gen": "",

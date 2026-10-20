@@ -3,7 +3,7 @@
 ## v0.1（当前）：可用的骨架
 
 - [x] Project / Shot / Asset 数据模型与项目存储
-- [x] Provider 注册表：OpenAI 兼容大模型、Edge 配音、静音配音、Pixabay、Pexels
+- [x] Provider 注册表：大模型（豆包 Seed、DeepSeek、Kimi、通义千问预设 + 自定义 OpenAI 兼容接口）、Edge 配音、静音配音、Pixabay、Pexels
 - [x] 镜头级增量渲染：配音、镜头渲染、拼接、字幕、背景音乐
 - [x] 字幕按像素宽度换行、行长均衡
 - [x] `/api/v2`、命令行、进程内渲染队列

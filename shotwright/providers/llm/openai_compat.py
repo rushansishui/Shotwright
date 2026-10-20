@@ -49,11 +49,66 @@ class OpenAICompatibleLLM:
             raise ProviderError("大模型返回的格式无法解析") from exc
 
 
+# 预设：同一个实现，换默认的 Base URL 和推荐模型。用户只需填写 API Key；
+# 各家模型更新很快，推荐模型可以在 config.toml 里用 model 覆盖。
+PRESETS: tuple[dict, ...] = (
+    {
+        "id": "doubao",
+        "name": "豆包 Seed（火山方舟）",
+        "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+        "model": "doubao-seed-2-0-pro-260215",
+        "timeout": "300",
+        "docs_url": "https://www.volcengine.com/docs/82379/1330626",
+    },
+    {
+        "id": "deepseek",
+        "name": "DeepSeek",
+        "base_url": "https://api.deepseek.com",
+        "model": "deepseek-flash",
+        "timeout": "180",
+        "docs_url": "https://api-docs.deepseek.com/zh",
+    },
+    {
+        "id": "kimi",
+        "name": "Kimi（月之暗面）",
+        "base_url": "https://api.moonshot.cn/v1",
+        "model": "kimi-k3",
+        "timeout": "300",
+        "docs_url": "https://platform.moonshot.cn/docs",
+    },
+    {
+        "id": "qwen",
+        "name": "通义千问（阿里云百炼）",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "model": "qwen-plus",
+        "timeout": "180",
+        "docs_url": "https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope",
+    },
+)
+
+for preset in PRESETS:
+    registry.register(
+        ProviderSpec(
+            kind="llm",
+            id=preset["id"],
+            name=preset["name"],
+            fields=(
+                ConfigField("api_key", "API Key", required=True, secret=True),
+                ConfigField("model", "模型", required=True, default=preset["model"]),
+                ConfigField("base_url", "Base URL", default=preset["base_url"]),
+                ConfigField("timeout", "超时（秒）", default=preset["timeout"]),
+            ),
+            paid=True,
+            docs_url=preset["docs_url"],
+        ),
+        OpenAICompatibleLLM,
+    )
+
 registry.register(
     ProviderSpec(
         kind="llm",
         id="openai",
-        name="OpenAI 兼容接口",
+        name="OpenAI 兼容接口（自定义）",
         fields=(
             ConfigField("api_key", "API Key", secret=True),
             ConfigField("base_url", "Base URL", default="https://api.openai.com/v1"),
