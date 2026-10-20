@@ -36,6 +36,8 @@ export function ShotCard(props: {
   index: number;
   active: boolean;
   busy: boolean;
+  /** 已经等了多少秒（生成 AI 画面可能要几分钟）。 */
+  busySeconds?: number;
   aiVideo: ProviderInfo | null;
   aiImage: ProviderInfo | null;
   onFocus: () => void;
@@ -67,6 +69,10 @@ export function ShotCard(props: {
     if (window.confirm(`为镜头 ${index + 1} ${what}？${cost}`)) props.onCandidates(true, prompt !== visual.prompt ? prompt : undefined);
   };
 
+  const generating = visual.mode === "ai" || visual.mode === "image";
+  const busyVerb = generating ? "生成中" : visual.mode === "stock" ? "检索中" : "处理中";
+  const busyLabel = props.busySeconds ? `${busyVerb} ${props.busySeconds}s` : busyVerb;
+
   const seconds = estimateSeconds({ ...shot, text }, (shot.voice ?? project.voice).rate);
   const isLast = index === project.shots.length - 1;
   const commitTerms = () => {
@@ -81,7 +87,15 @@ export function ShotCard(props: {
     <article className={`shot ${props.active ? "active" : ""}`} onFocusCapture={props.onFocus} onClick={props.onFocus}>
       <div className="shot-side">
         <span className="shot-index">{index + 1}</span>
-        <Thumb project={project} assetId={visual.selected} color={visual.color} className={`shot-thumb a${project.canvas.aspect.replace(":", "-")}`} />
+        <div className="shot-thumb-wrap">
+          <Thumb project={project} assetId={visual.selected} color={visual.color} className={`shot-thumb a${project.canvas.aspect.replace(":", "-")}`} />
+          {props.busy && (
+            <div className="shot-busy" role="status" aria-live="polite">
+              <span className="spinner" aria-hidden="true" />
+              <span>{busyLabel}</span>
+            </div>
+          )}
+        </div>
         <span className="muted small">约 {seconds} 秒</span>
       </div>
 
@@ -110,7 +124,7 @@ export function ShotCard(props: {
               }
               return provider?.paid ? { ...m, title: `${provider.name}（收费）` } : m;
             })}
-            disabled={visual.locked}
+            disabled={visual.locked || props.busy}
             onChange={(mode) => props.onUpdate({ visual: { mode } })}
           />
           <button
@@ -140,7 +154,7 @@ export function ShotCard(props: {
             />
             <button type="button" className="btn" disabled={props.busy || visual.locked} onClick={() => props.onCandidates()}>
               <Icon name="refresh" />
-              {props.busy ? "检索中…" : visual.candidates.length ? "换一批" : "检索素材"}
+              {props.busy ? `${busyLabel}…` : visual.candidates.length ? "换一批" : "检索素材"}
             </button>
           </div>
         )}
@@ -166,7 +180,16 @@ export function ShotCard(props: {
               title={generator ? `${generator.name}${generator.paid ? "（收费）" : ""}` : "还没有配置生成服务"}
               onClick={generate}
             >
-              {props.busy ? "生成中…" : generator?.paid ? "生成（收费）" : "生成"}
+              {props.busy ? (
+                <>
+                  <span className="spinner" aria-hidden="true" />
+                  {busyLabel}
+                </>
+              ) : generator?.paid ? (
+                "生成（收费）"
+              ) : (
+                "生成"
+              )}
             </button>
           </div>
         )}

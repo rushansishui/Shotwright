@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import mimetypes
 import tempfile
+import threading
+import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -244,6 +246,21 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
         return _mutate(project_id, change)
 
+    # 正在检索或生成的镜头：页面刷新后仍能显示"生成中"，并拒绝重复提交。
+    in_progress: dict[tuple[str, str], dict] = {}
+    in_progress_lock = threading.Lock()
+
+    @api.get("/projects/{project_id}/in-progress")
+    def shots_in_progress(project_id: str):
+        _id(project_id)
+        now = time.time()
+        with in_progress_lock:
+            return {
+                shot_id: {"mode": info["mode"], "seconds": round(now - info["since"], 1)}
+                for (pid, shot_id), info in in_progress.items()
+                if pid == project_id
+            }
+
     @api.post("/projects/{project_id}/shots/{shot_id}/candidates")
     def refresh_candidates(project_id: str, shot_id: str, body: ChargeConsent | None = None):
         """检索（stock）或生成（ai / image）新的候选素材。可能耗时较长。
@@ -258,7 +275,12 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         if shot.visual.locked:
             raise HTTPException(409, "镜头已锁定，请先解锁")
         confirmed = bool(body and body.confirm_charge)
-        visuals.refresh_candidates(store, settings, project, shot, confirm_charge=confirmed)
+        key = (project_id, shot_id)
+        with in_progress_lock:
+            if key in in_progress:
+                # 同一个镜头不允许重复提交，避免连点造成重复扣费。
+                raise HTTPException(409, "这个镜头正在生成，请等它完成")
+            in_progress[key] = {"mode": shot.visual.mode, "since": time.time()}
         generated = shot.visual.mode in ("ai", "image")
 
         def change(latest: Project) -> None:
@@ -270,7 +292,13 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 # 刚生成的画面花了钱，直接选中它。
                 target.visual.selected = shot.visual.selected
 
-        return _mutate(project_id, change)
+        try:
+            visuals.refresh_candidates(store, settings, project, shot, confirm_charge=confirmed)
+            return _mutate(project_id, change)
+        finally:
+            # 保存之后再移除，页面看到"完成"时就能读到新素材。
+            with in_progress_lock:
+                in_progress.pop(key, None)
 
     # ---- 素材 ---------------------------------------------------------------
 

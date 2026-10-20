@@ -8,7 +8,10 @@ import { ShotCard } from "./ShotCard";
 export function Editor({ projectId }: { projectId: string }) {
   const [project, setProject] = useState<Project | null>(null);
   const [error, setError] = useState("");
-  const [busyShot, setBusyShot] = useState<string | null>(null);
+  // 正在检索 / 生成 / 上传的镜头 → 开始时间（毫秒）。可以同时有多个镜头在生成。
+  const [busy, setBusy] = useState<Record<string, number>>({});
+  const [now, setNow] = useState(Date.now());
+  const inflight = useRef(new Set<string>());
   const [activeIndex, setActiveIndex] = useState(0);
   const [voices, setVoices] = useState<{ id: string; name: string }[]>([]);
   const [providers, setProviders] = useState<Providers | null>(null);
@@ -27,6 +30,54 @@ export function Editor({ projectId }: { projectId: string }) {
       .catch((e) => setError((e as Error).message));
   }, [projectId]);
 
+  const markBusy = useCallback((shotId: string, on: boolean, since = Date.now()) => {
+    setBusy((prev) => {
+      if (on === shotId in prev) return prev;
+      const next = { ...prev };
+      if (on) next[shotId] = since;
+      else delete next[shotId];
+      return next;
+    });
+  }, []);
+
+  // 刷新页面后，从服务器恢复仍在生成的镜头；生成期间每 2 秒同步一次，完成后自动刷新项目。
+  const busyCount = Object.keys(busy).length;
+  useEffect(() => {
+    let stopped = false;
+    const sync = async () => {
+      try {
+        const remote = await api.inProgress(projectId);
+        if (stopped) return;
+        let finished = false;
+        setBusy((prev) => {
+          const next = { ...prev };
+          for (const [shotId, info] of Object.entries(remote)) {
+            if (!(shotId in next)) next[shotId] = Date.now() - info.seconds * 1000;
+          }
+          for (const shotId of Object.keys(next)) {
+            if (!(shotId in remote) && !inflight.current.has(shotId)) {
+              delete next[shotId];
+              finished = true;
+            }
+          }
+          return next;
+        });
+        if (finished) load();
+      } catch {
+        /* 网络抖动时下次再试 */
+      }
+    };
+    sync();
+    if (busyCount === 0) return () => void (stopped = true);
+    const poll = window.setInterval(sync, 2000);
+    const tick = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => {
+      stopped = true;
+      window.clearInterval(poll);
+      window.clearInterval(tick);
+    };
+  }, [projectId, busyCount, load]);
+
   useEffect(() => {
     load();
     api.voices().then(setVoices).catch(() => setVoices([]));
@@ -35,7 +86,10 @@ export function Editor({ projectId }: { projectId: string }) {
 
   async function run(action: () => Promise<Project>, shotId?: string) {
     setError("");
-    if (shotId) setBusyShot(shotId);
+    if (shotId) {
+      inflight.current.add(shotId);
+      markBusy(shotId, true);
+    }
     try {
       const next = await action();
       setProject(next);
@@ -44,7 +98,10 @@ export function Editor({ projectId }: { projectId: string }) {
       setError((e as Error).message);
       return null;
     } finally {
-      if (shotId) setBusyShot(null);
+      if (shotId) {
+        inflight.current.delete(shotId);
+        markBusy(shotId, false);
+      }
     }
   }
 
@@ -74,15 +131,10 @@ export function Editor({ projectId }: { projectId: string }) {
   }
 
   async function uploadForShot(shotId: string, file: File) {
-    setBusyShot(shotId);
-    try {
+    await run(async () => {
       const asset = await api.upload(id, file);
-      await run(() => api.updateShot(id, shotId, { visual: { mode: "upload", selected: asset.id } }));
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusyShot(null);
-    }
+      return api.updateShot(id, shotId, { visual: { mode: "upload", selected: asset.id } });
+    }, shotId);
   }
 
   async function uploadBgm(file: File) {
@@ -148,7 +200,8 @@ export function Editor({ projectId }: { projectId: string }) {
                 shot={shot}
                 index={index}
                 active={index === activeIndex}
-                busy={busyShot === shot.id}
+                busy={shot.id in busy}
+                busySeconds={shot.id in busy ? Math.max(0, Math.round((now - busy[shot.id]) / 1000)) : 0}
                 aiVideo={aiVideo}
                 aiImage={aiImage}
                 onFocus={() => setActiveIndex(index)}
