@@ -6,7 +6,7 @@ shotwright new --subject "主题" --llm    让大模型写文案并拆镜头
 shotwright list                          列出项目
 shotwright show <项目>                   查看镜头
 shotwright shot <项目> <序号> --text …   修改某个镜头
-shotwright render <项目>                 渲染（只重做有改动的镜头）
+shotwright render <项目> [--allow-paid]  渲染（只重做有改动的镜头）
 """
 
 from __future__ import annotations
@@ -127,7 +127,7 @@ def cmd_render(args) -> int:
     def progress(value: float, message: str) -> None:
         print(f"\r[{value * 100:5.1f}%] {message:<24}", end="", flush=True)
 
-    result = Renderer(store, settings, progress=progress).render(args.project)
+    result = Renderer(store, settings, progress=progress, allow_paid=args.allow_paid).render(args.project)
     print()
     reused = sum(1 for s in result.stages if s.reused)
     print(f"完成：{result.duration:.1f} 秒，{len(result.stages)} 个阶段中复用了 {reused} 个")
@@ -180,6 +180,11 @@ def build_parser() -> argparse.ArgumentParser:
     render = sub.add_parser("render", help="渲染项目")
     render.add_argument("project")
     render.add_argument("--offline", action="store_true", help="不自动检索素材，缺画面的镜头用纯色")
+    render.add_argument(
+        "--allow-paid",
+        action="store_true",
+        help="允许为缺画面的 AI 镜头调用收费生成（Seedance、Seedream 等）；默认改用素材检索",
+    )
     render.set_defaults(func=cmd_render)
     return parser
 

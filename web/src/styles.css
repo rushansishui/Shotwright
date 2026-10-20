@@ -796,3 +796,18 @@ input[type="color"] {
 .bad {
   color: var(--muted);
 }
+
+.check {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.check input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}

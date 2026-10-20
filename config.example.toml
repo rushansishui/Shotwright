@@ -9,7 +9,7 @@ storage_dir = "storage/projects"
 # ffprobe = ""
 # 访问外网需要代理时填写，例如 "http://127.0.0.1:7890"
 # proxy = ""
-# 渲染时为没有画面的镜头自动检索一次素材
+# 渲染时为没有画面的镜头自动检索一次素材（AI 镜头需在渲染时勾选"收费生成"才会调用 AI）
 auto_fetch_visuals = true
 
 # 各类别默认使用的 Provider
@@ -17,6 +17,8 @@ auto_fetch_visuals = true
 llm = "doubao"       # doubao / deepseek / kimi / qwen / openai
 tts = "edge"        # 改成 "silent" 可离线预览
 stock = "pixabay"     # 或 "pexels"（Pexels 目前暂停发放新 Key）
+video_gen = "seedance"  # AI 视频（收费）
+image_gen = "seedream"  # AI 图片（收费）；也可以用 "openai"
 
 # ---- 大模型 ------------------------------------------------------------------
 # 在 [defaults] 里把 llm 改成要用的那一家，然后在对应小节填写 api_key 即可。
@@ -63,3 +65,29 @@ api_key = ""
 # Pexels：已有 Key 的可以继续使用（https://www.pexels.com/api/）
 [providers.stock.pexels]
 api_key = ""
+
+# ---- AI 画面（收费）----------------------------------------------------------
+# Seedance / Seedream 与豆包大模型同属火山方舟：api_key 留空时自动使用
+# [providers.llm.doubao] 的 Key。需要先在方舟控制台"开通管理"里开通对应模型。
+# 每次生成都会在界面上弹窗确认；渲染时不勾选"收费生成"就改用素材检索。
+
+# AI 视频：https://www.volcengine.com/docs/82379/1520757
+[providers.video_gen.seedance]
+# api_key = ""
+# model = "doubao-seedance-2-5-260628"
+# resolution = "1080p"        # 480p / 720p / 1080p，越高越贵
+# min_duration = "4"          # 模型支持的时长范围（秒），镜头时长会向上取整后限制在这个范围内
+# max_duration = "30"
+# generate_audio = "false"    # 是否生成音效（口播视频一般不需要）
+
+# AI 图片：https://www.volcengine.com/docs/82379/1541523
+[providers.image_gen.seedream]
+# api_key = ""
+# model = "doubao-seedream-4-0-250828"
+# size = ""                   # 留空按画布比例自动选择
+
+# 其他兼容 OpenAI Images 接口的文生图服务
+[providers.image_gen.openai]
+api_key = ""
+base_url = "https://api.openai.com/v1"
+model = ""

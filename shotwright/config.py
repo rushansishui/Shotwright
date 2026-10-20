@@ -18,13 +18,14 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_FONTS_DIR = ROOT_DIR / "resources" / "fonts"
 
-PROVIDER_KINDS = ("llm", "tts", "stock", "video_gen")
+PROVIDER_KINDS = ("llm", "tts", "stock", "video_gen", "image_gen")
 
 DEFAULT_PROVIDERS = {
     "llm": "doubao",
     "tts": "edge",
     "stock": "pixabay",
-    "video_gen": "",
+    "video_gen": "seedance",
+    "image_gen": "seedream",
 }
 
 

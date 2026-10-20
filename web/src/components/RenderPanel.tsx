@@ -47,6 +47,7 @@ function Preview({ project, shotIndex }: { project: Project; shotIndex: number }
 
 export function RenderPanel(props: {
   project: Project;
+  paidAvailable: boolean;
   shotIndex: number;
   onShotIndex: (index: number) => void;
   onRendered: () => void;
@@ -88,13 +89,19 @@ export function RenderPanel(props: {
 
   const total = project.shots.reduce((sum, s) => sum + estimateSeconds(s, (s.voice ?? project.voice).rate), 0);
   const missing = project.shots.filter((s) => !s.visual.selected && s.visual.mode !== "color").length;
+  const pendingAi = project.shots.filter(
+    (s) => (s.visual.mode === "ai" || s.visual.mode === "image") && !s.visual.locked && !s.visual.selected,
+  ).length;
+  const [allowPaid, setAllowPaid] = useState(false);
   const running = job?.state === "queued" || job?.state === "running";
   const result = job?.state === "done" ? job.result : latest;
 
   async function start() {
     setError("");
+    const paid = allowPaid && pendingAi > 0 && props.paidAvailable;
+    if (paid && !window.confirm(`将为 ${pendingAi} 个 AI 镜头提交收费生成，提交后即使失败也可能扣费。继续？`)) return;
     try {
-      setJob(await api.render(project.id));
+      setJob(await api.render(project.id, paid));
     } catch (e) {
       setError((e as Error).message);
     }
@@ -140,6 +147,12 @@ export function RenderPanel(props: {
           <p className="hint">
             {missing} 个镜头还没有画面。渲染时会自动检索一次素材；检索不到时使用纯色画面。
           </p>
+        )}
+        {pendingAi > 0 && props.paidAvailable && !running && (
+          <label className="check">
+            <input type="checkbox" checked={allowPaid} onChange={(e) => setAllowPaid(e.target.checked)} />
+            为 {pendingAi} 个 AI 镜头生成画面（收费）；不勾选则改用素材检索
+          </label>
         )}
         {running ? (
           <div className="progress-block">

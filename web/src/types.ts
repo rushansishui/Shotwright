@@ -104,4 +104,5 @@ export interface Job {
   message: string;
   error: string | null;
   result: RenderResult | null;
+  allow_paid: boolean;
 }

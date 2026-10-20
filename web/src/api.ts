@@ -53,14 +53,16 @@ export const api = {
     body: { text?: string; duration?: number; clear_duration?: boolean; visual?: Partial<ShotVisual> },
   ) => request<Project>(`/projects/${id}/shots/${shotId}`, json("PATCH", body)),
   deleteShot: (id: string, shotId: string) => request<Project>(`/projects/${id}/shots/${shotId}`, json("DELETE")),
-  candidates: (id: string, shotId: string) =>
-    request<Project>(`/projects/${id}/shots/${shotId}/candidates`, json("POST")),
+  /** 收费的 AI 生成必须传 confirmCharge=true（用户已确认），否则后端返回 402。 */
+  candidates: (id: string, shotId: string, confirmCharge = false) =>
+    request<Project>(`/projects/${id}/shots/${shotId}/candidates`, json("POST", { confirm_charge: confirmCharge })),
   upload: (id: string, file: File) => {
     const form = new FormData();
     form.append("file", file);
     return request<{ id: string; kind: string }>(`/projects/${id}/assets`, { method: "POST", body: form });
   },
-  render: (id: string) => request<Job>(`/projects/${id}/renders`, json("POST")),
+  render: (id: string, confirmCharge = false) =>
+    request<Job>(`/projects/${id}/renders`, json("POST", { confirm_charge: confirmCharge })),
   job: (jobId: string) => request<Job>(`/renders/${jobId}`),
   cancel: (jobId: string) => request<{ ok: boolean }>(`/renders/${jobId}/cancel`, json("POST")),
   renders: (id: string) =>

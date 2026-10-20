@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import math
 import shutil
 import tempfile
 import threading
@@ -35,6 +36,29 @@ Progress = Callable[[float, str], None]
 
 VOICE_PADDING = 0.25
 """配音后留的空隙（秒），让镜头之间有呼吸感。"""
+
+
+KEN_BURNS = "ken-burns-1"
+"""图片镜头的运动效果版本；改动滤镜参数时同步修改，让旧缓存失效。"""
+
+
+def _fit_filter(width: int, height: int, fit: str) -> str:
+    if fit == "contain":
+        return (
+            f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black"
+        )
+    return f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
+
+
+def ken_burns_filter(width: int, height: int, fps: int, duration: float, fit: str) -> str:
+    """图片慢推：先按两倍画布适配（减少缩放抖动），再从 1.0 匀速放大到 1.1 倍。"""
+    frames = math.ceil(duration * fps) + 1
+    return (
+        f"{_fit_filter(width * 2, height * 2, fit)},"
+        f"zoompan=z='1+0.1*on/{frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+        f":d={frames}:s={width}x{height}:fps={fps},setsar=1,format=yuv420p"
+    )
 
 
 class RenderError(RuntimeError):
@@ -106,8 +130,11 @@ class Renderer:
         *,
         progress: Progress | None = None,
         cancel: threading.Event | None = None,
+        allow_paid: bool = False,
     ):
         self.store = store
+        self.allow_paid = allow_paid
+        """用户是否已确认本次渲染可以调用收费的 AI 生成。"""
         self.settings = settings
         self._progress = progress or (lambda value, message: None)
         self._cancel = cancel or threading.Event()
@@ -199,23 +226,33 @@ class Renderer:
     # ---- 画面 ---------------------------------------------------------------
 
     def _prepare_visuals(self, project: Project) -> None:
-        """为还没有画面的镜头自动检索一次素材；失败时退回纯色画面并记录提示。"""
+        """为还没有画面的镜头自动检索或生成一次素材。
+
+        AI 镜头只有在 ``allow_paid`` 为真时才会提交收费任务；未确认或生成失败时，
+        有检索词就改用素材检索，仍然拿不到才退回纯色画面。每种情况都记录提示。
+        """
         if not self.settings.auto_fetch_visuals:
             return
         changed: dict[str, tuple[list[str], str | None]] = {}
         for index, shot in enumerate(project.shots):
             visual = shot.visual
-            if visual.locked or visual.mode not in ("stock", "ai") or self._has_visual(project, shot):
+            if (
+                visual.locked
+                or visual.mode not in ("stock", "ai", "image")
+                or self._has_visual(project, shot)
+            ):
                 continue
             try:
                 try:
-                    visuals.refresh_candidates(self.store, self.settings, project, shot)
+                    visuals.refresh_candidates(
+                        self.store, self.settings, project, shot, confirm_charge=self.allow_paid
+                    )
                 except ProviderError as exc:
-                    # AI 生成不可用时，有检索词就退回素材检索，而不是直接用纯色。
-                    if visual.mode != "ai" or not visual.terms:
+                    # AI 画面没生成时，有检索词就退回素材检索，而不是直接用纯色。
+                    if visual.mode == "stock" or not visual.terms:
                         raise
                     visuals.fetch_stock_candidates(self.store, self.settings, project, shot)
-                    self.warnings.append(f"镜头 {index + 1} 的 AI 生成不可用（{exc}），已改用素材检索")
+                    self.warnings.append(f"镜头 {index + 1} 的 AI 画面没有生成（{exc}），已改用素材检索")
                 changed[shot.id] = (list(visual.candidates), visual.selected)
             except ProviderError as exc:
                 self.warnings.append(f"镜头 {index + 1} 没有拿到素材，已使用纯色画面：{exc}")
@@ -314,6 +351,7 @@ class Renderer:
             duration,
             visual_key,
             visual.fit,
+            KEN_BURNS if asset is not None and asset.kind == "image" else None,
             canvas.model_dump(),
             project.voice_for(shot).volume,
         )
@@ -329,11 +367,8 @@ class Renderer:
                     f"color=c=0x{visual.color[1:]}:s={width}x{height}:r={fps}",
                 ]
             elif asset.kind == "image":
+                # 单帧输入，由 zoompan 展开成整段慢推镜头。
                 video_input = [
-                    "-loop",
-                    "1",
-                    "-framerate",
-                    str(fps),
                     "-protocol_whitelist",
                     LOCAL_PROTOCOLS,
                     "-i",
@@ -348,17 +383,11 @@ class Renderer:
                     "-i",
                     str(self.store.asset_path(project, asset.id)),
                 ]
-            if visual.fit == "contain":
-                fit = (
-                    f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-                    f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black"
-                )
+            if asset is not None and asset.kind == "image":
+                video_chain = ken_burns_filter(width, height, fps, duration, visual.fit)
             else:
-                fit = f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
-            graph = (
-                f"[0:v]{fit},setsar=1,fps={fps},format=yuv420p[v];"
-                f"[1:a]aresample=48000,aformat=channel_layouts=stereo,apad[a]"
-            )
+                video_chain = f"{_fit_filter(width, height, visual.fit)},setsar=1,fps={fps},format=yuv420p"
+            graph = f"[0:v]{video_chain}[v];[1:a]aresample=48000,aformat=channel_layouts=stereo,apad[a]"
             run_ffmpeg(
                 [
                     *video_input,

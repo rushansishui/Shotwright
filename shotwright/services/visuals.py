@@ -10,7 +10,14 @@ from shotwright.core.models import Asset, Project, Shot
 from shotwright.core.store import ProjectStore
 from shotwright.media.ffmpeg import MediaError, probe
 from shotwright.providers import registry
-from shotwright.providers.base import ProviderError, StockProvider, VideoGenProvider
+from shotwright.providers.base import (
+    ChargeConfirmationRequired,
+    ImageGenProvider,
+    ProviderError,
+    ProviderNotConfigured,
+    StockProvider,
+    VideoGenProvider,
+)
 from shotwright.services.durations import estimated_shot_seconds
 
 
@@ -53,7 +60,7 @@ def fetch_stock_candidates(
     limit: int = 3,
 ) -> list[str]:
     """按检索词找素材并下载前 ``limit`` 个，返回新增的素材 id。"""
-    provider: StockProvider = registry.create("stock", shot.visual.provider, settings)  # type: ignore[assignment]
+    provider: StockProvider = registry.create("stock", _provider_id(settings, "stock", shot), settings)  # type: ignore[assignment]
     terms = shot.visual.terms or ([project.subject] if project.subject else [])
     if not terms:
         raise ProviderError("这个镜头没有检索词，请先填写英文检索词")
@@ -83,48 +90,121 @@ def fetch_stock_candidates(
     return added
 
 
+def _provider_id(settings: Settings, kind: str, shot: Shot) -> str | None:
+    """镜头记录的 Provider 属于这个类别时才使用，否则用配置里的默认值。
+
+    切换画面来源后 ``visual.provider`` 可能还是上一个类别的（例如 pixabay）。
+    """
+    chosen = shot.visual.provider
+    if chosen:
+        try:
+            registry.spec(kind, chosen)
+            return chosen
+        except ProviderError:
+            pass
+    return settings.default_provider(kind)
+
+
+def require_charge_confirmation(
+    settings: Settings, kind: str, provider_id: str | None, confirmed: bool
+) -> None:
+    """收费 Provider 没有得到确认时抛 :class:`ChargeConfirmationRequired`。"""
+    chosen = provider_id or settings.default_provider(kind)
+    if not chosen:
+        raise ProviderNotConfigured(f"没有配置 {kind} 类别的 Provider")
+    spec = registry.spec(kind, chosen)
+    if spec.paid and not confirmed:
+        raise ChargeConfirmationRequired(f"{spec.name} 按次收费，需要确认后才会提交")
+
+
+def _first_frame(store: ProjectStore, project: Project, shot: Shot) -> Path | None:
+    selected = shot.visual.selected
+    asset = project.assets.get(selected) if selected else None
+    if asset is None or asset.kind != "image":
+        return None
+    return store.asset_path(project, asset.id)
+
+
 def generate_ai_candidate(
     store: ProjectStore,
     settings: Settings,
     project: Project,
     shot: Shot,
+    *,
+    confirm_charge: bool = False,
 ) -> list[str]:
-    provider: VideoGenProvider = registry.create("video_gen", shot.visual.provider, settings)  # type: ignore[assignment]
-    if not shot.visual.prompt:
+    """AI 视频。已选中的画面是图片时，把它作为首帧（图生视频）。"""
+    if not shot.visual.prompt.strip():
         raise ProviderError("这个镜头没有画面提示词")
+    provider_id = _provider_id(settings, "video_gen", shot)
+    require_charge_confirmation(settings, "video_gen", provider_id, confirm_charge)
+    provider: VideoGenProvider = registry.create("video_gen", provider_id, settings)  # type: ignore[assignment]
+    first_frame = _first_frame(store, project, shot)
+    meta = {"prompt": shot.visual.prompt[:500]}
+    if first_frame is not None:
+        meta["first_frame"] = shot.visual.selected or ""
     with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
         path = provider.generate(
             shot.visual.prompt,
             aspect=project.canvas.aspect,
             duration=estimated_shot_seconds(project, shot),
             output=Path(temp) / "gen",
+            first_frame=first_frame,
         )
-        asset = _register_media(
-            store,
-            project,
-            path,
-            source=shot.visual.provider or "video_gen",
-            meta={"prompt": shot.visual.prompt},
-        )
-    _attach(shot, [asset.id])
+        asset = _register_media(store, project, path, source=provider_id or "video_gen", meta=meta)
+    _attach(shot, [asset.id], select=True)
     return [asset.id]
 
 
-def refresh_candidates(store: ProjectStore, settings: Settings, project: Project, shot: Shot) -> list[str]:
+def generate_image_candidate(
+    store: ProjectStore,
+    settings: Settings,
+    project: Project,
+    shot: Shot,
+    *,
+    confirm_charge: bool = False,
+) -> list[str]:
+    """AI 图片：渲染时配合慢推镜头；也可以再作为 AI 视频的首帧。"""
+    if not shot.visual.prompt.strip():
+        raise ProviderError("这个镜头没有画面提示词")
+    provider_id = _provider_id(settings, "image_gen", shot)
+    require_charge_confirmation(settings, "image_gen", provider_id, confirm_charge)
+    provider: ImageGenProvider = registry.create("image_gen", provider_id, settings)  # type: ignore[assignment]
+    with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
+        path = provider.generate(shot.visual.prompt, aspect=project.canvas.aspect, output=Path(temp) / "gen")
+        asset = _register_media(
+            store, project, path, source=provider_id or "image_gen", meta={"prompt": shot.visual.prompt[:500]}
+        )
+    _attach(shot, [asset.id], select=True)
+    return [asset.id]
+
+
+def refresh_candidates(
+    store: ProjectStore,
+    settings: Settings,
+    project: Project,
+    shot: Shot,
+    *,
+    confirm_charge: bool = False,
+) -> list[str]:
     if shot.visual.mode == "stock":
         return fetch_stock_candidates(store, settings, project, shot)
     if shot.visual.mode == "ai":
-        return generate_ai_candidate(store, settings, project, shot)
+        return generate_ai_candidate(store, settings, project, shot, confirm_charge=confirm_charge)
+    if shot.visual.mode == "image":
+        return generate_image_candidate(store, settings, project, shot, confirm_charge=confirm_charge)
     raise ProviderError("这个镜头的画面来源不需要检索或生成")
 
 
-def _attach(shot: Shot, asset_ids: list[str]) -> None:
+def _attach(shot: Shot, asset_ids: list[str], *, select: bool = False) -> None:
     candidates = list(shot.visual.candidates)
     for asset_id in asset_ids:
         if asset_id not in candidates:
             candidates.append(asset_id)
     shot.visual.candidates = candidates[-12:]
-    if asset_ids and (shot.visual.selected is None or shot.visual.selected not in shot.visual.candidates):
+    if asset_ids and (
+        select or shot.visual.selected is None or shot.visual.selected not in shot.visual.candidates
+    ):
         shot.visual.selected = asset_ids[0]
 
 

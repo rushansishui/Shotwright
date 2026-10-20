@@ -136,3 +136,48 @@ def test_ai_shot_falls_back_to_stock_when_ai_unavailable(store, settings):
     saved = store.load(project.id)
     assert saved.shots[0].visual.selected in saved.assets
     assert "已改用素材检索" in result.warnings[0]
+
+
+def test_paid_ai_shot_needs_confirmation(store, settings):
+    from conftest import FakeVideoGen
+
+    settings.auto_fetch_visuals = True
+    shot = Shot(text="海边日落。", visual=ShotVisual(mode="ai", prompt="sunset", terms=["sunset"]))
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=[shot]))
+    result = Renderer(store, settings).render(project.id)
+    assert FakeVideoGen.calls == []
+    assert "需要确认" in result.warnings[0]
+
+    project = store.load(project.id)
+    project.shots[0].visual.selected = None
+    project.shots[0].visual.candidates = []
+    store.save(project)
+    result = Renderer(store, settings, allow_paid=True).render(project.id)
+    assert len(FakeVideoGen.calls) == 1
+    assert result.warnings == []
+    saved = store.load(project.id)
+    assert saved.assets[saved.shots[0].visual.selected].source == "fakevid"
+
+
+def test_image_shot_gets_ken_burns_motion(store, settings, tmp_path):
+    from conftest import make_image
+
+    project = store.create(Project(voice=VoiceSettings(provider="silent")))
+    image = store.add_asset(project, make_image(tmp_path / "still.png"), kind="image", source="upload")
+    project.shots = [Shot(text="一张图片慢慢推近。", visual=ShotVisual(mode="image", selected=image.id))]
+    store.save(project)
+    result = Renderer(store, settings).render(project.id)
+    video = store.render_dir(project.id, result.render_id) / result.video
+    info = probe(video)
+    assert info.width == 1080 and info.height == 1920
+    assert abs(info.duration - result.duration) < 0.2
+
+    # 首帧和末帧应该不同（有运动），用两帧的 MD5 比较。
+    from shotwright.media.ffmpeg import run_ffmpeg
+
+    frames = []
+    for at in ("0", f"{result.duration - 0.1:.2f}"):
+        out = tmp_path / f"f{at}.png"
+        run_ffmpeg(["-ss", at, "-i", str(video), "-frames:v", "1", str(out)])
+        frames.append(out.read_bytes())
+    assert frames[0] != frames[1]

@@ -27,6 +27,8 @@ _BUILTIN_MODULES = (
     "shotwright.providers.tts.silent",
     "shotwright.providers.stock.pixabay",
     "shotwright.providers.stock.pexels",
+    "shotwright.providers.video_gen.seedance",
+    "shotwright.providers.image_gen.openai_images",
 )
 
 
@@ -82,8 +84,7 @@ def create(kind: str, provider_id: str | None, settings: Settings) -> object:
     entry = _ENTRIES.get((kind, chosen))
     if entry is None:
         raise ProviderError(f"未知的 {kind} Provider：{chosen}")
-    values = {f.key: f.default for f in entry.spec.fields if f.default}
-    values.update(settings.provider_settings(kind, chosen))
+    values = _values(entry.spec, settings)
     if settings.proxy and "proxy" not in values:
         values["proxy"] = settings.proxy
     missing = entry.spec.missing_fields(values)
@@ -92,7 +93,17 @@ def create(kind: str, provider_id: str | None, settings: Settings) -> object:
     return entry.factory(values)
 
 
-def is_configured(spec_: ProviderSpec, settings: Settings) -> bool:
+def _values(spec_: ProviderSpec, settings: Settings) -> dict[str, str]:
     values = {f.key: f.default for f in spec_.fields if f.default}
     values.update(settings.provider_settings(spec_.kind, spec_.id))
-    return not spec_.missing_fields(values)
+    if not values.get("api_key"):
+        for kind, provider_id in spec_.shared_key_from:
+            shared = settings.provider_settings(kind, provider_id).get("api_key")
+            if shared:
+                values["api_key"] = shared
+                break
+    return values
+
+
+def is_configured(spec_: ProviderSpec, settings: Settings) -> bool:
+    return not spec_.missing_fields(_values(spec_, settings))

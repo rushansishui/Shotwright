@@ -54,7 +54,12 @@ export function Editor({ projectId }: { projectId: string }) {
 
   const id = project.id;
   const ttsProviders = providers?.tts ?? [];
-  const aiAvailable = (providers?.video_gen ?? []).some((p) => p.configured);
+  const defaultProvider = (kind: string) => {
+    const found = (providers?.[kind] ?? []).find((p) => p.default);
+    return found?.configured ? found : null;
+  };
+  const aiVideo = defaultProvider("video_gen");
+  const aiImage = defaultProvider("image_gen");
   const updateVoice = (patch: Partial<VoiceSettings>) => run(() => api.updateProject(id, { voice: { ...project.voice, ...patch } }));
   const updateSubtitle = (patch: Partial<SubtitleStyle>) =>
     run(() => api.updateProject(id, { subtitle: { ...project.subtitle, ...patch } }));
@@ -144,10 +149,11 @@ export function Editor({ projectId }: { projectId: string }) {
                 index={index}
                 active={index === activeIndex}
                 busy={busyShot === shot.id}
-                aiAvailable={aiAvailable}
+                aiVideo={aiVideo}
+                aiImage={aiImage}
                 onFocus={() => setActiveIndex(index)}
                 onUpdate={(body: { text?: string; visual?: Partial<ShotVisual> }) => run(() => api.updateShot(id, shot.id, body))}
-                onCandidates={() => run(() => api.candidates(id, shot.id), shot.id)}
+                onCandidates={(confirmCharge) => run(() => api.candidates(id, shot.id, confirmCharge), shot.id)}
                 onUpload={(file) => uploadForShot(shot.id, file)}
                 onMove={(delta) => moveShot(index, delta)}
                 onInsert={() => run(() => api.addShot(id, shot.id))}
@@ -317,7 +323,7 @@ export function Editor({ projectId }: { projectId: string }) {
         </Section>
       </div>
 
-      <RenderPanel project={project} shotIndex={activeIndex} onShotIndex={setActiveIndex} onRendered={load} />
+      <RenderPanel project={project} paidAvailable={Boolean(aiVideo || aiImage)} shotIndex={activeIndex} onShotIndex={setActiveIndex} onRendered={load} />
     </main>
   );
 }

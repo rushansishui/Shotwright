@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { assetUrl, estimateSeconds } from "../api";
-import type { Project, Shot, ShotVisual, VisualMode } from "../types";
+import type { Project, ProviderInfo, Shot, ShotVisual, VisualMode } from "../types";
 import { Icon, Segmented } from "./Controls";
 
 export function Thumb(props: { project: Project; assetId: string | null; color: string; className?: string }) {
@@ -24,7 +24,8 @@ export function Thumb(props: { project: Project; assetId: string | null; color: 
 
 const MODES: { value: VisualMode; label: string }[] = [
   { value: "stock", label: "素材检索" },
-  { value: "ai", label: "AI 生成" },
+  { value: "ai", label: "AI 视频" },
+  { value: "image", label: "AI 图片" },
   { value: "upload", label: "上传" },
   { value: "color", label: "纯色" },
 ];
@@ -35,10 +36,11 @@ export function ShotCard(props: {
   index: number;
   active: boolean;
   busy: boolean;
-  aiAvailable: boolean;
+  aiVideo: ProviderInfo | null;
+  aiImage: ProviderInfo | null;
   onFocus: () => void;
   onUpdate: (body: { text?: string; visual?: Partial<ShotVisual> }) => void;
-  onCandidates: () => void;
+  onCandidates: (confirmCharge?: boolean) => void;
   onUpload: (file: File) => void;
   onMove: (delta: number) => void;
   onInsert: () => void;
@@ -54,6 +56,18 @@ export function ShotCard(props: {
   useEffect(() => setText(shot.text), [shot.text]);
   useEffect(() => setTerms(visual.terms.join(", ")), [visual.terms]);
   useEffect(() => setPrompt(visual.prompt), [visual.prompt]);
+
+  const generator = visual.mode === "ai" ? props.aiVideo : visual.mode === "image" ? props.aiImage : null;
+  const selectedAsset = visual.selected ? project.assets[visual.selected] : undefined;
+  const firstFrame = visual.mode === "ai" && selectedAsset?.kind === "image";
+  const generate = async () => {
+    if (!generator) return;
+    // 先保存还没失焦的提示词，再生成。
+    if (prompt !== visual.prompt) props.onUpdate({ visual: { prompt } });
+    const what = visual.mode === "ai" ? (firstFrame ? "以选中的图片为首帧生成一段视频" : "生成一段视频") : "生成一张图片";
+    const cost = generator.paid ? `\n${generator.name} 按次收费，提交后即使失败也可能扣费。` : "";
+    if (window.confirm(`为镜头 ${index + 1} ${what}？${cost}`)) props.onCandidates(true);
+  };
 
   const seconds = estimateSeconds({ ...shot, text }, (shot.voice ?? project.voice).rate);
   const isLast = index === project.shots.length - 1;
@@ -90,12 +104,14 @@ export function ShotCard(props: {
         <div className="shot-visual-row">
           <Segmented
             label="画面来源"
-            value={visual.mode === "image" ? "upload" : visual.mode}
-            options={MODES.map((m) =>
-              m.value === "ai" && !props.aiAvailable && visual.mode !== "ai"
-                ? { ...m, disabled: true, title: "还没有配置 AI 视频服务（v0.2 支持）" }
-                : m,
-            )}
+            value={visual.mode}
+            options={MODES.map((m) => {
+              const provider = m.value === "ai" ? props.aiVideo : m.value === "image" ? props.aiImage : undefined;
+              if (provider === null && visual.mode !== m.value) {
+                return { ...m, disabled: true, title: `还没有配置${m.label}服务，见 config.toml` };
+              }
+              return provider?.paid ? { ...m, title: `${provider.name}（收费）` } : m;
+            })}
             disabled={visual.locked}
             onChange={(mode) => props.onUpdate({ visual: { mode } })}
           />
@@ -124,21 +140,23 @@ export function ShotCard(props: {
               onBlur={commitTerms}
               onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
             />
-            <button type="button" className="btn" disabled={props.busy || visual.locked} onClick={props.onCandidates}>
+            <button type="button" className="btn" disabled={props.busy || visual.locked} onClick={() => props.onCandidates()}>
               <Icon name="refresh" />
               {props.busy ? "检索中…" : visual.candidates.length ? "换一批" : "检索素材"}
             </button>
           </div>
         )}
 
-        {visual.mode === "ai" && (
+        {(visual.mode === "ai" || visual.mode === "image") && (
           <div className="inline-field">
             <label htmlFor={`prompt-${shot.id}`}>提示词</label>
             <input
               id={`prompt-${shot.id}`}
               className="input"
               value={prompt}
-              placeholder="英文画面描述：主体、动作、镜头运动、光线"
+              placeholder={
+                visual.mode === "ai" ? "画面描述：主体、动作、镜头运动、光线" : "画面描述：主体、场景、风格、光线"
+              }
               disabled={visual.locked}
               onChange={(e) => setPrompt(e.target.value)}
               onBlur={() => prompt !== visual.prompt && props.onUpdate({ visual: { prompt } })}
@@ -146,16 +164,19 @@ export function ShotCard(props: {
             <button
               type="button"
               className="btn"
-              disabled={props.busy || visual.locked || !props.aiAvailable}
-              title={props.aiAvailable ? "" : "还没有配置 AI 视频服务"}
-              onClick={props.onCandidates}
+              disabled={props.busy || visual.locked || !generator || !prompt.trim()}
+              title={generator ? `${generator.name}${generator.paid ? "（收费）" : ""}` : "还没有配置生成服务"}
+              onClick={generate}
             >
-              {props.busy ? "生成中…" : "生成"}
+              {props.busy ? "生成中…" : generator?.paid ? "生成（收费）" : "生成"}
             </button>
           </div>
         )}
+        {firstFrame && !visual.locked && (
+          <p className="muted small">将以选中的图片作为首帧；想纯文字生成，先选中一段视频或清空选择。</p>
+        )}
 
-        {(visual.mode === "upload" || visual.mode === "image") && (
+        {visual.mode === "upload" && (
           <div className="inline-field">
             <span className="label">素材</span>
             <input

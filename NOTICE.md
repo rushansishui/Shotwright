@@ -15,6 +15,9 @@ Shotwright 的部分设计和实现参考了 MoneyPrinterTurbo：
 | `shotwright/providers/stock/pexels.py` | `app/services/material.py` 中 `search_videos_pexels` 的检索与清晰度挑选逻辑 |
 | `shotwright/providers/tts/edge.py` | `app/services/voice.py` 中的 Edge TTS 用法 |
 | `shotwright/pipeline/render.py` | `app/services/video_project.py` 的按镜头指纹增量渲染思路 |
+| `shotwright/providers/paid_task.py` | `app/services/video_providers/client.py`、`polling.py` 的收费任务提交与轮询语义 |
+| `shotwright/providers/video_gen/seedance.py` | `app/services/video_providers/seedance.py` 的请求格式 |
+| `shotwright/services/visuals.py`（收费确认） | `app/services/ai_video_studio.py` 的扣费确认设计 |
 
 MoneyPrinterTurbo 的许可声明如下：
 
@@ -50,4 +53,4 @@ SOFTWARE.
 
 ## 素材
 
-通过 Pexels 等素材库下载的视频遵循各自平台的许可协议，Shotwright 会在素材信息里记录作者与来源页面。
+通过 Pixabay、Pexels 等素材库下载的视频遵循各自平台的许可协议。AI 生成的画面遵循对应服务商的使用条款，Shotwright 会在素材信息里记录作者与来源页面。

@@ -59,10 +59,47 @@ class FakeStock:
 registry.register(ProviderSpec(kind="stock", id="fake", name="Fake", offline=True), FakeStock)
 
 
+def make_image(path: Path, *, size: str = "640x360") -> Path:
+    run_ffmpeg(["-f", "lavfi", "-i", f"testsrc2=size={size}:rate=1", "-frames:v", "1", str(path)])
+    return path
+
+
+class FakeVideoGen:
+    """收费的 AI 视频：记录调用参数，生成一段测试画面。"""
+
+    calls: list[dict] = []
+
+    def __init__(self, settings):
+        pass
+
+    def generate(self, prompt, *, aspect, duration, output, first_frame=None):
+        FakeVideoGen.calls.append({"prompt": prompt, "duration": duration, "first_frame": first_frame})
+        return make_clip(output.with_suffix(".mp4"), pattern="rgbtestsrc")
+
+
+class FakeImageGen:
+    calls: list[str] = []
+
+    def __init__(self, settings):
+        pass
+
+    def generate(self, prompt, *, aspect, output):
+        FakeImageGen.calls.append(prompt)
+        return make_image(output.with_suffix(".png"))
+
+
+registry.register(ProviderSpec(kind="video_gen", id="fakevid", name="FakeVid", paid=True), FakeVideoGen)
+registry.register(ProviderSpec(kind="image_gen", id="fakeimg", name="FakeImg", paid=True), FakeImageGen)
+
+
 @pytest.fixture
 def settings(tmp_path) -> Settings:
     s = Settings(storage_dir=tmp_path / "projects", auto_fetch_visuals=False)
-    s.defaults.update({"tts": "silent", "stock": "fake", "llm": ""})
+    s.defaults.update(
+        {"tts": "silent", "stock": "fake", "llm": "", "video_gen": "fakevid", "image_gen": "fakeimg"}
+    )
+    FakeVideoGen.calls.clear()
+    FakeImageGen.calls.clear()
     return s
 
 

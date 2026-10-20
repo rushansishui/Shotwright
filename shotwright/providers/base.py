@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol
 
-ProviderKind = Literal["llm", "tts", "stock", "video_gen"]
+ProviderKind = Literal["llm", "tts", "stock", "video_gen", "image_gen"]
 
 
 class ProviderError(RuntimeError):
@@ -26,6 +26,14 @@ class ProviderError(RuntimeError):
 
 class ProviderNotConfigured(ProviderError):
     pass
+
+
+class ChargeConfirmationRequired(ProviderError):
+    """收费操作没有得到用户的明确确认。"""
+
+
+class UnconfirmedTaskError(ProviderError):
+    """收费任务可能已在远端创建，但本地无法确认结果。不要自动重试，以免重复扣费。"""
 
 
 @dataclass(frozen=True)
@@ -50,6 +58,8 @@ class ProviderSpec:
     docs_url: str = ""
     offline: bool = False
     """不需要网络即可工作（例如静音配音）。"""
+    shared_key_from: tuple[tuple[str, str], ...] = ()
+    """自己的 api_key 为空时，依次借用这些 (类别, id) 的 api_key（例如方舟的同一把 Key）。"""
 
     def missing_fields(self, settings: dict[str, str]) -> list[str]:
         return [f.key for f in self.fields if f.required and not settings.get(f.key)]
@@ -106,4 +116,14 @@ class VideoGenProvider(Protocol):
         duration: float,
         output: Path,
         first_frame: Path | None = None,
-    ) -> Path: ...
+    ) -> Path:
+        """生成视频并保存到 ``output``（可改扩展名），返回实际路径。
+
+        ``first_frame`` 为本地图片时走图生视频。提交收费任务后若无法确认结果，
+        必须抛 :class:`UnconfirmedTaskError`，不得自动重新提交。
+        """
+        ...
+
+
+class ImageGenProvider(Protocol):
+    def generate(self, prompt: str, *, aspect: str, output: Path) -> Path: ...

@@ -18,13 +18,20 @@ from fastapi.staticfiles import StaticFiles
 
 from shotwright import __version__
 from shotwright.api.jobs import JobManager
-from shotwright.api.schemas import AddShot, CreateProject, ReorderShots, UpdateProject, UpdateShot
+from shotwright.api.schemas import (
+    AddShot,
+    ChargeConsent,
+    CreateProject,
+    ReorderShots,
+    UpdateProject,
+    UpdateShot,
+)
 from shotwright.config import ROOT_DIR, Settings, load_settings
 from shotwright.core.models import Project, Shot, ShotVisual, validate_id
 from shotwright.core.store import ProjectNotFound, ProjectStore, read_json
 from shotwright.media import ffmpeg
 from shotwright.providers import registry
-from shotwright.providers.base import ProviderError
+from shotwright.providers.base import ChargeConfirmationRequired, ProviderError
 from shotwright.providers.tts.edge import VOICES
 from shotwright.services import storyboard, visuals
 
@@ -55,6 +62,10 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
     @app.exception_handler(ProjectNotFound)
     async def _not_found(request: Request, exc: ProjectNotFound):
         return JSONResponse(status_code=404, content={"detail": "项目不存在"})
+
+    @app.exception_handler(ChargeConfirmationRequired)
+    async def _charge_required(request: Request, exc: ChargeConfirmationRequired):
+        return JSONResponse(status_code=402, content={"detail": str(exc), "code": "confirm_charge"})
 
     @app.exception_handler(ProviderError)
     async def _provider_error(request: Request, exc: ProviderError):
@@ -231,8 +242,11 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         return _mutate(project_id, change)
 
     @api.post("/projects/{project_id}/shots/{shot_id}/candidates")
-    def refresh_candidates(project_id: str, shot_id: str):
-        """检索（stock）或生成（ai）新的候选素材。可能耗时较长。"""
+    def refresh_candidates(project_id: str, shot_id: str, body: ChargeConsent | None = None):
+        """检索（stock）或生成（ai / image）新的候选素材。可能耗时较长。
+
+        收费的生成必须带 ``confirm_charge: true``，否则返回 402。
+        """
         _id(project_id)
         project = store.load(project_id)
         shot = project.shot(_id(shot_id)) if any(s.id == shot_id for s in project.shots) else None
@@ -240,14 +254,17 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             raise HTTPException(404, "镜头不存在")
         if shot.visual.locked:
             raise HTTPException(409, "镜头已锁定，请先解锁")
-        visuals.refresh_candidates(store, settings, project, shot)
+        confirmed = bool(body and body.confirm_charge)
+        visuals.refresh_candidates(store, settings, project, shot, confirm_charge=confirmed)
+        generated = shot.visual.mode in ("ai", "image")
 
         def change(latest: Project) -> None:
             for asset_id, asset in project.assets.items():
                 latest.assets.setdefault(asset_id, asset)
             target = latest.shot(shot_id)
             target.visual.candidates = shot.visual.candidates
-            if target.visual.selected is None or target.visual.selected not in latest.assets:
+            if generated or target.visual.selected is None or target.visual.selected not in latest.assets:
+                # 刚生成的画面花了钱，直接选中它。
                 target.visual.selected = shot.visual.selected
 
         return _mutate(project_id, change)
@@ -287,10 +304,11 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
     # ---- 渲染 ---------------------------------------------------------------
 
     @api.post("/projects/{project_id}/renders", status_code=202)
-    def start_render(project_id: str):
+    def start_render(project_id: str, body: ChargeConsent | None = None):
+        """``confirm_charge: true`` 时，没有画面的 AI 镜头会提交收费生成；否则改用素材检索。"""
         if not store.exists(_id(project_id)):
             raise ProjectNotFound(project_id)
-        return jobs.submit(project_id).to_dict()
+        return jobs.submit(project_id, allow_paid=bool(body and body.confirm_charge)).to_dict()
 
     @api.get("/projects/{project_id}/renders")
     def list_renders(project_id: str):

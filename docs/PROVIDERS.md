@@ -1,6 +1,6 @@
 # 新增一个 Provider
 
-以新增一个素材库为例，其他类别（`llm`、`tts`、`video_gen`）步骤相同，只是实现的协议不同（见 `shotwright/providers/base.py`）。
+以新增一个素材库为例，其他类别（`llm`、`tts`、`video_gen`、`image_gen`）步骤相同，只是实现的协议不同（见 `shotwright/providers/base.py`）。
 
 ## 1. 新建文件
 

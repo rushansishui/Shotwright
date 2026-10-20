@@ -31,6 +31,7 @@ class Job:
     finished_at: float | None = None
     error: str | None = None
     result: dict | None = None
+    allow_paid: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -45,8 +46,8 @@ class JobManager:
         self._cancel: dict[str, threading.Event] = {}
         self._lock = threading.Lock()
 
-    def submit(self, project_id: str) -> Job:
-        job = Job(id=new_id(), project_id=project_id)
+    def submit(self, project_id: str, *, allow_paid: bool = False) -> Job:
+        job = Job(id=new_id(), project_id=project_id, allow_paid=allow_paid)
         with self._lock:
             self._jobs[job.id] = job
             self._cancel[job.id] = threading.Event()
@@ -84,9 +85,9 @@ class JobManager:
             job.progress, job.message = round(value, 3), message
 
         try:
-            result = Renderer(self.store, self.settings, progress=progress, cancel=cancel).render(
-                job.project_id, render_id=job.id
-            )
+            result = Renderer(
+                self.store, self.settings, progress=progress, cancel=cancel, allow_paid=job.allow_paid
+            ).render(job.project_id, render_id=job.id)
         except RenderCancelled:
             job.state, job.message = "cancelled", "已取消"
         except Exception as exc:  # noqa: BLE001 - 失败原因展示给用户

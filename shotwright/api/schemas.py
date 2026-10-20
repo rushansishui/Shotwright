@@ -62,3 +62,8 @@ class AddShot(_Body):
 
 class ReorderShots(_Body):
     order: list[str]
+
+
+class ChargeConsent(_Body):
+    confirm_charge: bool = False
+    """用户已确认这次操作可以调用收费服务（AI 视频、AI 图片）。"""

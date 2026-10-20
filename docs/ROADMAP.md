@@ -1,6 +1,6 @@
 # 路线图
 
-## v0.1（当前）：可用的骨架
+## v0.1：可用的骨架
 
 - [x] Project / Shot / Asset 数据模型与项目存储
 - [x] Provider 注册表：大模型（豆包 Seed、DeepSeek、Kimi、通义千问预设 + 自定义 OpenAI 兼容接口）、Edge 配音、静音配音、Pixabay、Pexels
@@ -11,12 +11,15 @@
 - [x] Windows 一键启动脚本 `start.bat`
 - [x] 网页界面：新建、分镜编辑（文案、画面来源、检索词、候选素材、锁定、排序）、声音、字幕、预览、渲染与下载
 
-## v0.2：AI 画面
+## v0.2（当前）：AI 画面
 
-- [ ] 移植 AI 视频 Provider（Seedance、Wavespeed、Muapi 等，见 [PORTING.md](PORTING.md)），带首帧和参考素材
-- [ ] 收费操作的费用预估与确认
-- [ ] 文生图 + 镜头运动（Ken Burns）作为低成本的 AI 画面
-- [x] AI 生成不可用时自动回退到素材检索（v0.1 已提前实现）
+- [x] AI 视频：火山方舟 Seedance，文生视频 + 首帧图生视频，与豆包共用方舟 Key
+- [x] AI 图片：火山方舟 Seedream / OpenAI 兼容文生图，渲染时自动加慢推镜头（Ken Burns）
+- [x] 收费确认：生成按钮和渲染都需要显式确认；未确认的 AI 镜头改用素材检索
+- [x] 收费任务提交不重试，结果无法确认时提示到控制台核对，避免重复扣费
+- [x] AI 生成不可用时自动回退到素材检索
+- [ ] 更多 AI 视频服务：Wavespeed、Muapi 等（顺延，见 [PORTING.md](PORTING.md)）
+- [ ] 参考素材（多图参考）与费用预估（顺延）
 
 ## v0.3：配音与素材
 
