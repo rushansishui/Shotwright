@@ -32,10 +32,10 @@ shotwright/
 ├── providers/
 │   ├── base.py          ProviderSpec、ConfigField、各类别的协议（Protocol）
 │   ├── registry.py      注册表：显式列出内置模块、惰性导入、按配置实例化
-│   ├── llm/openai_compat.py
+│   ├── llm/openai_compat.py  OpenAI 兼容实现 + 豆包 Seed / DeepSeek / Kimi / 通义千问预设
 │   ├── tts/edge.py      Edge 在线语音（免费）
 │   ├── tts/silent.py    静音配音（离线预览、测试）
-│   ├── stock/pixabay.py
+│   ├── stock/pixabay.py      默认素材库，方向与画布一致的素材优先
 │   └── stock/pexels.py
 ├── services/
 │   ├── storyboard.py    主题 → 文案 → 镜头（大模型或按句切分）
@@ -91,7 +91,7 @@ storage/projects/<项目id>/
 
 规则：
 
-1. **画面准备**：渲染时，没有画面且未锁定的 `stock` / `ai` 镜头会自动检索或生成一次；失败时使用纯色画面并在结果里给出提示，不中断渲染。
+1. **画面准备**：渲染时，没有画面且未锁定的 `stock` / `ai` 镜头会自动检索或生成一次。AI 生成不可用时，有检索词就改用素材检索；仍拿不到素材才使用纯色画面。每种情况都在结果里给出提示，不中断渲染。
 2. **锁定**：锁定的镜头不会被自动补素材，也不允许重新检索。
 3. **配音失败会中断渲染**，并指出是第几个镜头。
 4. 渲染期间对项目的编辑不会被覆盖：自动补的素材只合并进最新的项目文件。
@@ -114,6 +114,20 @@ registry.register(
 - 收费的服务设置 `paid=True`，界面会标出"收费"。
 
 新增一家服务的步骤见 [PROVIDERS.md](PROVIDERS.md)。
+
+### 大模型预设
+
+`llm` 类别内置四个预设，共用 OpenAI 兼容实现，只是默认的 Base URL、推荐模型和超时不同。在 `[defaults]` 里选好后，只需在对应小节填写 `api_key`；`model` 可以覆盖。
+
+| 预设 | Base URL | 推荐模型 |
+| --- | --- | --- |
+| `doubao` 豆包 Seed（默认） | `https://ark.cn-beijing.volces.com/api/v3` | `doubao-seed-2-0-pro-260215` |
+| `deepseek` | `https://api.deepseek.com` | `deepseek-flash` |
+| `kimi` | `https://api.moonshot.cn/v1` | `kimi-k3` |
+| `qwen` 通义千问 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` |
+| `openai`（自定义） | 自行填写 | 自行填写 |
+
+Base URL 误填成完整的 `/chat/completions` 地址时会自动纠正。
 
 ## API
 
