@@ -3,7 +3,7 @@
 ## v0.1（当前）：可用的骨架
 
 - [x] Project / Shot / Asset 数据模型与项目存储
-- [x] Provider 注册表：OpenAI 兼容大模型、Edge 配音、静音配音、Pexels
+- [x] Provider 注册表：OpenAI 兼容大模型、Edge 配音、静音配音、Pixabay、Pexels
 - [x] 镜头级增量渲染：配音、镜头渲染、拼接、字幕、背景音乐
 - [x] 字幕按像素宽度换行、行长均衡
 - [x] `/api/v2`、命令行、进程内渲染队列
@@ -20,7 +20,7 @@
 
 - [ ] 更多配音服务：Azure、硅基流动、MiniMax、ElevenLabs
 - [ ] 使用配音服务返回的逐词时间戳对齐字幕
-- [ ] 更多素材库：Pixabay、Coverr
+- [ ] 更多素材库：Coverr
 - [ ] 素材检索缓存（相同检索词不重复请求）
 
 ## v0.4：编辑体验

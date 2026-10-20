@@ -23,7 +23,7 @@ Shotwright 是全新编写的项目，MoneyPrinterTurbo（下称 MPT，MIT Licen
 | 收费确认 | `app/services/ai_video_studio.py` → `AIVideoChargeConfirmationRequired` | `services/visuals.py` + API | 请求需显式确认扣费 |
 | Azure / 硅基流动 / MiniMax / ElevenLabs 配音 | `app/services/voice.py` 中的 `azure_tts_v2`、`siliconflow_tts`、`minimax_tts`、`elevenlabs_tts` | `providers/tts/` | 每家一个文件；远程音频校验逻辑见 `_validate_remote_tts_audio` |
 | 逐词时间戳字幕 | `voice.py` 中 SubMaker 相关处理 | `TTSProvider` 返回值增加时间戳 | 用于字幕精确对齐 |
-| Pixabay / Coverr | `material.py` → `search_videos_pixabay`、`search_videos_coverr` | `providers/stock/` | |
+| Coverr | `material.py` → `search_videos_coverr` | `providers/stock/` | Pixabay 已按官方文档另行实现 |
 | 素材缓存 | `app/services/material_cache.py` | `services/visuals.py` | 相同检索词复用下载结果 |
 | 文生图 | `material.py` → `generate_images_openai` | `providers/image_gen/` | 配合镜头运动做成动态画面 |
 | AI 背景音乐 | `app/services/elevenlabs_music.py`、`sonilo.py` | `providers/music/` | |

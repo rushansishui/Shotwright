@@ -23,7 +23,7 @@ PROVIDER_KINDS = ("llm", "tts", "stock", "video_gen")
 DEFAULT_PROVIDERS = {
     "llm": "openai",
     "tts": "edge",
-    "stock": "pexels",
+    "stock": "pixabay",
     "video_gen": "",
 }
 

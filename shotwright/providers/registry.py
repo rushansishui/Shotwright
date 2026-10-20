@@ -25,6 +25,7 @@ _BUILTIN_MODULES = (
     "shotwright.providers.llm.openai_compat",
     "shotwright.providers.tts.edge",
     "shotwright.providers.tts.silent",
+    "shotwright.providers.stock.pixabay",
     "shotwright.providers.stock.pexels",
 )
 

@@ -16,7 +16,7 @@ auto_fetch_visuals = true
 [defaults]
 llm = "openai"
 tts = "edge"        # 改成 "silent" 可离线预览
-stock = "pexels"
+stock = "pixabay"     # 或 "pexels"（Pexels 目前暂停发放新 Key）
 
 # ---- 大模型：任何 OpenAI 兼容接口 -------------------------------------------
 [providers.llm.openai]
@@ -35,6 +35,10 @@ model = "gpt-4o-mini"
 timeout = "60"
 
 # ---- 素材库 ------------------------------------------------------------------
-# 免费申请：https://www.pexels.com/api/
+# Pixabay：注册后在 https://pixabay.com/api/docs/ 页面即可看到自己的 Key（免费）
+[providers.stock.pixabay]
+api_key = ""
+
+# Pexels：已有 Key 的可以继续使用（https://www.pexels.com/api/）
 [providers.stock.pexels]
 api_key = ""
