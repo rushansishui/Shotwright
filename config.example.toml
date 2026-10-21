@@ -66,6 +66,13 @@ api_key = ""
 [providers.stock.pexels]
 api_key = ""
 
+# ---- 背景音乐 ----------------------------------------------------------------
+# Internet Archive：免 Key。音频授权不一（有的禁止商用或改编，有的没有标注），
+# 发布前请确认授权；可以用 collection 限定在授权明确的合集。
+[providers.music.archive]
+# collection = ""             # 合集标识符；留空搜索全部公开音频。注意 opensource_audio 等社区合集的授权也不统一
+# timeout = "30"
+
 # ---- AI 画面（收费）----------------------------------------------------------
 # Seedance / Seedream 与豆包大模型同属火山方舟：api_key 留空时自动使用
 # [providers.llm.doubao] 的 Key。需要先在方舟控制台"开通管理"里开通对应模型。

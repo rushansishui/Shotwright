@@ -66,6 +66,7 @@ registry.register(
         kind="tts",
         id="edge",
         name="Edge 在线语音（免费）",
+        name_en="Edge online voices (free)",
         fields=(ConfigField("timeout", "超时（秒）", default="60"),),
         docs_url="https://github.com/rany2/edge-tts",
     ),

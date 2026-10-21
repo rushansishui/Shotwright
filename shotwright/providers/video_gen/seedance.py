@@ -140,6 +140,7 @@ registry.register(
         kind="video_gen",
         id="seedance",
         name="Seedance（火山方舟）",
+        name_en="Seedance (Volcengine Ark)",
         fields=(
             ConfigField(
                 "api_key", "方舟 API Key", required=True, secret=True, help="留空时使用豆包大模型的 Key"

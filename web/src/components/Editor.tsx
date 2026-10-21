@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, assetUrl } from "../api";
 import type { Aspect, LanguageInfo, Project, Providers, SubtitleStyle, VisualMode, VisualPatch, VoiceSettings } from "../types";
 import { Section, Segmented, Slider } from "./Controls";
-import { useI18n } from "../i18n";
+import { providerName, useI18n } from "../i18n";
 import { RenderPanel } from "./RenderPanel";
 import { Versions } from "./Versions";
 import { ShotCard } from "./ShotCard";
@@ -297,7 +297,7 @@ export function Editor({ projectId }: { projectId: string }) {
               <select id="tts" className="input" value={project.voice.provider} onChange={(e) => updateVoice({ provider: e.target.value })}>
                 {ttsProviders.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name}
+                    {providerName(p, lang)}
                   </option>
                 ))}
               </select>

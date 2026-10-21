@@ -116,6 +116,7 @@ registry.register(
         kind="image_gen",
         id="seedream",
         name="Seedream（火山方舟）",
+        name_en="Seedream (Volcengine Ark)",
         fields=(
             ConfigField(
                 "api_key", "方舟 API Key", required=True, secret=True, help="留空时使用豆包大模型的 Key"
@@ -138,6 +139,7 @@ registry.register(
         kind="image_gen",
         id="openai",
         name="OpenAI 兼容文生图",
+        name_en="OpenAI-compatible images",
         fields=(
             ConfigField("api_key", "API Key", required=True, secret=True),
             ConfigField("base_url", "Base URL", required=True, default="https://api.openai.com/v1"),

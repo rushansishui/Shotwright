@@ -58,3 +58,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 }
 
 export const useI18n = () => useContext(I18nContext);
+
+/** 服务名称：英文界面优先用 name_en。 */
+export const providerName = (p: { name: string; name_en?: string }, lang: UILang) =>
+  (lang === "en" && p.name_en) || p.name;

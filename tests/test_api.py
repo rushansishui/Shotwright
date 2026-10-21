@@ -165,6 +165,15 @@ def test_providers_lists_ai_kinds(client):
     assert any(p["id"] == "seedream" for p in providers["image_gen"])
 
 
+def test_providers_have_english_names(client):
+    providers = client.get("/api/v2/providers").json()
+    for kind in providers.values():
+        for p in kind:
+            assert p["name_en"], p["id"]
+            # 英文名不应含中文，否则英文界面会混入中文
+            assert not any("\u4e00" <= ch <= "\u9fff" for ch in p["name_en"]), p["name_en"]
+
+
 def test_new_project_uses_configured_tts(client):
     project = _create(client)
     assert project["voice"]["provider"] == "silent"
