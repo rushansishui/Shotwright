@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | English
 
-**From a video brief to a finished video: AI writes the script, each shot gets generated or stock footage, voice-over and subtitles are added automatically, and every shot can be adjusted on its own.**
+**From a video brief to a finished video: AI writes the script, each shot gets generated or stock footage, voice-over, subtitles and background music are added automatically, and every shot can be adjusted on its own.**
 
 Shotwright is built around the *shot*. The script is split into shots, and each shot picks its own visual source (stock search, AI generation, or your own uploaded image or video). Any shot can be replaced, locked or redone by itself. Change one shot and only that shot is re-rendered, plus the final assembly.
 
@@ -11,12 +11,14 @@ Shotwright is built around the *shot*. The script is split into shots, and each 
 ## Features
 
 - **Storyboard editing**: split a script into shots sentence by sentence, or write a video brief (audience, tone, key points; up to 4096 bytes), pick a length, and let an LLM write the script, decide how many shots it needs, and suggest search terms and visual prompts for each shot.
-- **Mixed visuals**: in one video, some shots can use Pixabay / Pexels footage, some AI video (Seedance) or AI images (Seedream with a slow Ken Burns push-in), and some your own uploads. An AI image can also serve as the first frame of an AI video.
+- **Mixed visuals**: in one video, some shots can use Pixabay / Pexels footage, some AI video (Seedance) or AI images (Seedream with a slow Ken Burns push-in), and some your own uploads. An AI image can also serve as the first frame of an AI video. Under each shot, a hint shows how many candidates the other sources have, with one click to switch, so switching sources never loses footage you already generated.
 - **Charge confirmation**: every paid generation must be confirmed in the UI before it is submitted. If the result of a submission can't be confirmed, it is never retried automatically, so you are never charged twice.
 - **Incremental rendering**: each stage is fingerprinted by its inputs and cached, so unchanged shots are reused. Renders can be cancelled at any time.
 - **Voice-over and subtitles**: free Edge online voices; subtitles wrap by real font width with balanced line lengths.
+- **Background music**: upload your own, or find it in one click: an LLM turns the brief and the shots into music-style search terms, candidates come from Internet Archive (no key needed), you can preview and switch them, and the track loops to the length of the video.
 - **Three ways in**: web UI, REST API (`/api/v2`) and CLI, all sharing the same services and render queue.
 - **Multilingual**: videos can be in 16 languages, including Chinese, English, Japanese, Korean and Spanish, with a matching voice and subtitle font picked automatically. One click translates a video into another language version (visuals are shared; only the script, voice and subtitles change). The web UI switches between 中文 and English.
+- **Assets sorted by source**: project assets live in `ai-video`, `ai-image`, `stock`, `upload` and similar folders; older projects are sorted automatically at startup.
 - **Logs**: `storage/logs/shotwright.log` records the model, task id and result of every paid task, plus each generation and render. Logs rotate daily, are kept for 14 days, and API keys are masked.
 - **Works offline**: with no services configured it still runs end to end (silent voice-over and solid-color frames), handy for tuning storyboard pacing first.
 
@@ -30,11 +32,11 @@ Shotwright is built around the *shot*. The script is split into shots, and each 
 
 ![Storyboard editor](docs/images/en-editor.png)
 
-**Mixed visuals in one video**: the upper shot uses stock footage, the lower one an AI image.
+**Mixed visuals in one video**: the upper shot uses stock footage, the lower one an AI image; under each shot a hint shows how many candidates the other sources have, one click to switch.
 
 ![Stock search and AI image](docs/images/en-shots.png)
 
-**Audio, subtitles and language versions**: switch the video language, voice and background music, and translate the video into another language in one click.
+**Audio, subtitles and language versions**: switch the video language and voice; upload background music or find it automatically and preview the candidates; translate the video into another language in one click.
 
 ![Audio, subtitles and language versions](docs/images/en-audio.png)
 
@@ -100,6 +102,8 @@ SHOTWRIGHT_LLM_DEEPSEEK_API_KEY=sk-xxxx
 ```
 
 Four LLM presets are built in: Doubao Seed, DeepSeek, Kimi and Qwen. Pick one and fill in its API key. Any other OpenAI-compatible API can be set up in the `openai` section with your own base URL and model.
+
+Background music search uses Internet Archive by default and needs no key. **Licences on Internet Archive vary**: some tracks forbid commercial use or adaptation (for example CC BY-NC-ND), and some carry no licence at all. Each track's author, licence and source page are saved in the project's asset info; check the licence before you publish. To play it safe, restrict the search to a collection with clear licences via `collection` under `[providers.music.archive]`, or upload your own music.
 
 AI video (Seedance) and AI images (Seedream) run on Volcengine Ark, the same platform as Doubao. Once the key in `[providers.llm.doubao]` is filled in and the models are enabled in the Ark console, they work without entering the key again.
 
