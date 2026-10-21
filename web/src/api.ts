@@ -87,6 +87,9 @@ export const api = {
     request<Project>(`/projects/${id}/shots/${shotId}/candidates`, json("POST", { confirm_charge: confirmCharge })),
   /** 服务器上正在检索或生成的镜头（页面刷新后用来恢复"生成中"状态）。 */
   inProgress: (id: string) => request<Record<string, { mode: string; seconds: number }>>(`/projects/${id}/in-progress`),
+  /** 检索背景音乐；query 留空时由服务端用大模型从诉求和镜头提示词提炼。 */
+  bgmCandidates: (id: string, query = "") =>
+    request<Project>(`/projects/${id}/bgm/candidates`, json("POST", { query })),
   upload: (id: string, file: File) => {
     const form = new FormData();
     form.append("file", file);

@@ -115,13 +115,12 @@ def create_language_version(
     version.created_at = version.updated_at = time.time()
 
     store.create(version)
-    source_dir = store.assets_dir(project.id)
-    target_dir = store.assets_dir(version.id)
-    target_dir.mkdir(parents=True, exist_ok=True)
     for asset in version.assets.values():
-        src = source_dir / asset.filename
-        if src.is_file() and not (target_dir / asset.filename).exists():
-            _copy_file(str(src), str(target_dir / asset.filename))
+        src = store.asset_path(project, asset.id)
+        dst = store.asset_path(version, asset.id)
+        if src.is_file() and not dst.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            _copy_file(str(src), str(dst))
     log.info("项目 %s 生成了 %s 版本：%s", project.id, code, version.id)
     return version
 

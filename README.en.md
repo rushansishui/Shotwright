@@ -20,6 +20,40 @@ Shotwright is built around the *shot*. The script is split into shots, and each 
 - **Logs**: `storage/logs/shotwright.log` records the model, task id and result of every paid task, plus each generation and render. Logs rotate daily, are kept for 14 days, and API keys are masked.
 - **Works offline**: with no services configured it still runs end to end (silent voice-over and solid-color frames), handy for tuning storyboard pacing first.
 
+## Screenshots
+
+**New video**: write a brief, pick the language, aspect ratio and length, and the AI writes the script and decides how many shots it needs.
+
+![New video](docs/images/en-home.png)
+
+**Storyboard editor**: each shot picks its own visual source; the live preview on the right shows the subtitles, and only changed shots are re-rendered.
+
+![Storyboard editor](docs/images/en-editor.png)
+
+**Mixed visuals in one video**: the upper shot uses stock footage, the lower one an AI image.
+
+![Stock search and AI image](docs/images/en-shots.png)
+
+**Audio, subtitles and language versions**: switch the video language, voice and background music, and translate the video into another language in one click.
+
+![Audio, subtitles and language versions](docs/images/en-audio.png)
+
+## Hardware requirements
+
+Script writing, AI video / images and voice-over all run in the cloud; your machine only edits and encodes with FFmpeg, so **no GPU is needed**.
+
+| | Minimum | Recommended |
+|---|---|---|
+| CPU | 2 cores (x86-64 or ARM64) | 4 cores or more |
+| Memory | 2 GB free | 8 GB |
+| Disk | 2 GB free for the app and dependencies, plus about 0.5 GB per project | 20 GB+ SSD |
+| Network | Needed for AI, voice-over and stock search; offline mode works without it | Stable broadband for faster 1080p downloads |
+| OS | Windows 10 / 11, macOS 12+, mainstream Linux | |
+
+Measured on a 2-core Linux VM with 7 GB of RAM: a 6-shot, 52.7-second 1080p landscape video took about 2 minutes to render from scratch, with the server and FFmpeg peaking below 500 MB of memory combined. Changing a single shot only redoes that shot, the assembly and the subtitle pass, about 1 minute there (the subtitle pass re-encodes the whole video). On the Windows desktop used for development, the same single-shot re-render measured 4–10 seconds; more CPU cores make it faster.
+
+Most disk space goes to assets: projects using AI video and 1080p stock footage measured 100–600 MB each, and each finished render takes about 15–20 MB per minute of video. The render cache under `cache/` can be deleted at any time.
+
 ## Quick start
 
 You need Python 3.11+, [FFmpeg](https://ffmpeg.org/download.html) (with libass, which most builds include) and Node.js 20+ (only for building the web UI).

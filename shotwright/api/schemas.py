@@ -102,3 +102,8 @@ class ChargeConsent(_Body):
 class CreateVersion(_Body):
     language: str = Field(..., max_length=40)
     """要生成的语言版本，例如 en-US。"""
+
+
+class BgmSearch(_Body):
+    query: str = Field("", max_length=200)
+    """检索词；留空时由大模型从视频诉求和镜头提示词提炼。"""

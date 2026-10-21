@@ -32,7 +32,9 @@ def _store(args) -> tuple:
     settings = load_settings(args.config)
     setup_logging(settings, console=False)
     ffmpeg.configure(settings.ffmpeg, settings.ffprobe)
-    return settings, ProjectStore(settings.storage_dir)
+    store = ProjectStore(settings.storage_dir)
+    visuals.organize_all(store)
+    return settings, store
 
 
 def cmd_serve(args) -> int:

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { api, assetUrl } from "../api";
 import type { Aspect, LanguageInfo, Project, Providers, SubtitleStyle, VisualMode, VisualPatch, VoiceSettings } from "../types";
 import { Section, Segmented, Slider } from "./Controls";
 import { useI18n } from "../i18n";
@@ -23,6 +23,7 @@ export function Editor({ projectId }: { projectId: string }) {
   // 滑块拖动时只更新本地显示，松手后再保存。
   const [draft, setDraft] = useState<{ rate?: number; volume?: number; bgm?: number; size?: number }>({});
   const bgmInput = useRef<HTMLInputElement>(null);
+  const [bgmBusy, setBgmBusy] = useState(false);
 
   const load = useCallback(() => {
     api
@@ -141,6 +142,10 @@ export function Editor({ projectId }: { projectId: string }) {
   const updateSubtitle = (patch: Partial<SubtitleStyle>) =>
     run(() => api.updateProject(id, { subtitle: { ...project.subtitle, ...patch } }));
   const bgmAsset = project.bgm.asset_id ? project.assets[project.bgm.asset_id] : undefined;
+  /** 自动检索到的背景音乐候选（上传的素材不在其中）。 */
+  const bgmCandidates = (project.bgm.candidates ?? [])
+    .map((assetId) => project.assets[assetId])
+    .filter((asset): asset is NonNullable<typeof asset> => asset?.kind === "audio");
 
   async function moveShot(index: number, delta: number) {
     const order = project!.shots.map((s) => s.id);
@@ -164,6 +169,24 @@ export function Editor({ projectId }: { projectId: string }) {
       await run(() => api.updateProject(id, { bgm: { ...project!.bgm, asset_id: asset.id } }));
     } catch (e) {
       setError((e as Error).message);
+    }
+  }
+
+  async function searchBgm() {
+    setBgmBusy(true);
+    setError("");
+    try {
+      const next = await api.bgmCandidates(id, project!.bgm.query || "");
+      setProject(next);
+      // 检索到之后自动选用第一首，省一次点击。
+      const first = next.bgm.candidates?.[0];
+      if (first && !next.bgm.asset_id) {
+        await run(() => api.updateProject(id, { bgm: { ...next.bgm, asset_id: first } }));
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBgmBusy(false);
     }
   }
 
@@ -338,15 +361,41 @@ export function Editor({ projectId }: { projectId: string }) {
                 <button type="button" className="btn" onClick={() => bgmInput.current?.click()}>
                   {bgmAsset ? t("editor.bgmReplace") : t("editor.bgmUpload")}
                 </button>
+                <button type="button" className="btn" disabled={bgmBusy} onClick={searchBgm}>
+                  {bgmBusy ? t("editor.bgmSearching") : t("editor.bgmSearch")}
+                </button>
                 {bgmAsset && (
                   <>
-                    <span className="muted small ellipsis">{bgmAsset.meta.filename ?? t("editor.bgmUploaded")}</span>
+                    <span className="muted small ellipsis">{bgmAsset.meta.title ?? bgmAsset.meta.filename ?? t("editor.bgmUploaded")}</span>
                     <button type="button" className="btn ghost" onClick={() => run(() => api.updateProject(id, { bgm: { ...project.bgm, asset_id: null } }))}>
                       {t("editor.bgmRemove")}
                     </button>
                   </>
                 )}
               </div>
+              {project.bgm.query && <p className="hint">{t("editor.bgmQuery", { query: project.bgm.query })}</p>}
+              {bgmCandidates.length > 0 && (
+                <div className="bgm-candidates" role="listbox" aria-label={t("editor.bgmCandidates")}>
+                  {bgmCandidates.map((asset) => (
+                    <button
+                      type="button"
+                      key={asset.id}
+                      role="option"
+                      aria-selected={project.bgm.asset_id === asset.id}
+                      className={`bgm-candidate ${project.bgm.asset_id === asset.id ? "on" : ""}`}
+                      onClick={() => run(() => api.updateProject(id, { bgm: { ...project.bgm, asset_id: asset.id } }))}
+                      title={asset.meta.author ? t("shot.author", { name: asset.meta.author }) : asset.meta.title}
+                    >
+                      <span className="bgm-candidate-title">{asset.meta.title ?? asset.id}</span>
+                      <span className="muted small">
+                        {asset.duration ? t("editor.bgmDuration", { n: Math.round(asset.duration) }) : ""}
+                        {asset.meta.author ? ` · ${asset.meta.author}` : ""}
+                      </span>
+                      <audio src={assetUrl(id, asset.id)} controls preload="none" onClick={(e) => e.stopPropagation()} />
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <Slider
               id="bgm-volume"

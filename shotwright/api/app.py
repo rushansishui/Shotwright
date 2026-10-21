@@ -23,6 +23,7 @@ from shotwright import __version__
 from shotwright.api.jobs import JobManager
 from shotwright.api.schemas import (
     AddShot,
+    BgmSearch,
     ChargeConsent,
     CreateProject,
     CreateVersion,
@@ -39,7 +40,7 @@ from shotwright.media import ffmpeg
 from shotwright.providers import registry
 from shotwright.providers.base import ChargeConfirmationRequired, ProviderError
 from shotwright.providers.tts.edge import VOICES
-from shotwright.services import localize, storyboard, visuals
+from shotwright.services import localize, music, storyboard, visuals
 
 log = logging.getLogger("shotwright.api")
 
@@ -53,6 +54,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
     log.info("Shotwright %s 启动，日志写入 %s", __version__, log_path)
     ffmpeg.configure(settings.ffmpeg, settings.ffprobe)
     store = ProjectStore(settings.storage_dir)
+    visuals.organize_all(store)
     jobs = job_manager or JobManager(store, settings)
 
     @asynccontextmanager
@@ -411,6 +413,23 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         path = store.asset_path(project, asset_id)
         media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         return FileResponse(path, media_type=media_type)
+
+    # ---- 背景音乐 -----------------------------------------------------------
+
+    @api.post("/projects/{project_id}/bgm/candidates")
+    def search_bgm(project_id: str, body: BgmSearch | None = None):
+        """检索背景音乐并登记为候选。``query`` 留空时由大模型提炼检索词。"""
+        _id(project_id)
+        project = store.load(project_id)
+        added, query = music.search_bgm(store, settings, project, query=(body.query if body else ""))
+
+        def change(latest: Project) -> None:
+            for asset_id, asset in project.assets.items():
+                latest.assets.setdefault(asset_id, asset)
+            latest.bgm.candidates = [*latest.bgm.candidates, *added][-music.MAX_CANDIDATES :]
+            latest.bgm.query = query
+
+        return _mutate(project_id, change)
 
     # ---- 渲染 ---------------------------------------------------------------
 

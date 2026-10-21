@@ -36,6 +36,9 @@ _HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
 Aspect = Literal["9:16", "16:9", "1:1"]
 VisualMode = Literal["stock", "ai", "image", "upload", "color"]
 AssetKind = Literal["video", "image", "audio"]
+AssetFolder = Literal["ai-video", "ai-image", "stock", "upload", "other"]
+"""素材在 ``assets/`` 下的子目录：AI 视频、AI 图片、素材库下载、用户上传、其他。"""
+ASSET_FOLDERS: tuple[str, ...] = ("ai-video", "ai-image", "stock", "upload", "other")
 ShotStatus = Literal["draft", "ready", "rendering", "done", "failed"]
 
 _RESOLUTIONS: dict[str, tuple[int, int]] = {
@@ -104,12 +107,22 @@ class SubtitleStyle(_Model):
 
 class BgmSettings(_Model):
     asset_id: str | None = None
+    """选中的背景音乐；为空时不用背景音乐。"""
+    candidates: list[str] = Field(default_factory=list)
+    """自动检索到的候选音频，界面用来切换。与 asset_id 独立，换来源时不清空。"""
+    query: str = ""
+    """上次检索用的词，界面上回填。"""
     volume: float = Field(0.2, ge=0.0, le=1.0)
 
     @field_validator("asset_id")
     @classmethod
     def _check_asset(cls, value: str | None) -> str | None:
         return None if value is None else validate_id(value)
+
+    @field_validator("candidates")
+    @classmethod
+    def _check_candidates(cls, value: list[str]) -> list[str]:
+        return [validate_id(item) for item in value]
 
 
 class ShotVisual(_Model):
@@ -172,6 +185,8 @@ class Asset(_Model):
     source: str
     """来源：pexels、upload、tts、ffmpeg 等。"""
     filename: str
+    folder: AssetFolder | None = None
+    """所在子目录（见 :data:`AssetFolder`）。为空表示旧项目，文件直接放在 ``assets/`` 下。"""
     sha256: str
     width: int | None = None
     height: int | None = None
