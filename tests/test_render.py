@@ -181,3 +181,33 @@ def test_image_shot_gets_ken_burns_motion(store, settings, tmp_path):
         run_ffmpeg(["-ss", at, "-i", str(video), "-frames:v", "1", str(out)])
         frames.append(out.read_bytes())
     assert frames[0] != frames[1]
+
+
+def test_color_mode_ignores_selected_asset(store, settings, tmp_path):
+    project = store.create(Project(voice=VoiceSettings(provider="silent")))
+    clip = store.add_asset(project, make_clip(tmp_path / "c.mp4"), kind="video", source="upload")
+    project.shots = [Shot(text="纯色。", visual=ShotVisual(mode="color", color="#FF0000", selected=clip.id))]
+    store.save(project)
+    result = Renderer(store, settings).render(project.id)
+    out = tmp_path / "frame.rgb"
+    from shotwright.media.ffmpeg import run_ffmpeg
+
+    run_ffmpeg(
+        [
+            "-ss",
+            "0.2",
+            "-i",
+            str(store.render_dir(project.id, result.render_id) / result.video),
+            "-frames:v",
+            "1",
+            "-vf",
+            "scale=1:1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            str(out),
+        ]
+    )
+    r, g, b = out.read_bytes()[:3]
+    assert r > 200 and g < 60 and b < 60  # 纯红，没有用到选中的视频

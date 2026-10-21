@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from concurrent.futures import Executor, ThreadPoolExecutor
@@ -17,7 +18,12 @@ from shotwright.core.ids import new_id
 from shotwright.core.store import ProjectStore
 from shotwright.pipeline.render import RenderCancelled, Renderer
 
+log = logging.getLogger(__name__)
+
 JobState = Literal["queued", "running", "done", "failed", "cancelled"]
+
+MAX_FINISHED_JOBS = 200
+"""保留的已结束任务数；超过时按创建时间丢弃最旧的，避免长跑服务内存持续增长。"""
 
 
 @dataclass
@@ -51,8 +57,19 @@ class JobManager:
         with self._lock:
             self._jobs[job.id] = job
             self._cancel[job.id] = threading.Event()
+            self._prune()
         self._executor.submit(self._run, job.id)
         return job
+
+    def _prune(self) -> None:
+        """丢弃最旧的已结束任务，只保留 :data:`MAX_FINISHED_JOBS` 个。调用方需持有锁。"""
+        finished = [job for job in self._jobs.values() if job.state in ("done", "failed", "cancelled")]
+        excess = len(finished) - MAX_FINISHED_JOBS
+        if excess <= 0:
+            return
+        for job in sorted(finished, key=lambda item: item.created_at)[:excess]:
+            self._jobs.pop(job.id, None)
+            self._cancel.pop(job.id, None)
 
     def get(self, job_id: str) -> Job | None:
         with self._lock:
@@ -80,6 +97,12 @@ class JobManager:
         if cancel.is_set():
             return
         job.state, job.message = "running", "开始渲染"
+        log.info(
+            "渲染任务 %s 开始：项目 %s，允许收费生成 %s",
+            job.id,
+            job.project_id,
+            "是" if job.allow_paid else "否",
+        )
 
         def progress(value: float, message: str) -> None:
             job.progress, job.message = round(value, 3), message
@@ -90,12 +113,27 @@ class JobManager:
             ).render(job.project_id, render_id=job.id)
         except RenderCancelled:
             job.state, job.message = "cancelled", "已取消"
+            log.info("渲染任务 %s 已取消", job.id)
         except Exception as exc:  # noqa: BLE001 - 失败原因展示给用户
             job.state, job.error, job.message = "failed", str(exc) or type(exc).__name__, "渲染失败"
+            log.exception("渲染任务 %s 失败", job.id)
         else:
             job.state, job.progress, job.message, job.result = "done", 1.0, "完成", result.to_dict()
+            reused = sum(1 for s in result.stages if s.reused)
+            log.info(
+                "渲染任务 %s 完成：%.1f 秒成片，复用缓存 %d/%d，提示 %d 条",
+                job.id,
+                result.duration,
+                reused,
+                len(result.stages),
+                len(result.warnings),
+            )
+            for warning in result.warnings:
+                log.warning("渲染任务 %s：%s", job.id, warning)
         finally:
             job.finished_at = time.time()
+            with self._lock:
+                self._prune()
 
     def shutdown(self) -> None:
         for event in self._cancel.values():

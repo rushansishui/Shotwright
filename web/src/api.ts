@@ -1,4 +1,17 @@
-import type { Job, Project, ProjectSummary, Providers, RenderResult, Shot, ShotVisual, VoiceSettings } from "./types";
+import type {
+  Job,
+  LanguageInfo,
+  Project,
+  ProjectSummary,
+  Providers,
+  RenderResult,
+  Shot,
+  VersionInfo,
+  VisualPatch,
+  VoiceSettings,
+} from "./types";
+
+import { currentLang, translate } from "./i18n";
 
 const BASE = "/api/v2";
 
@@ -7,14 +20,17 @@ export class ApiError extends Error {}
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(BASE + path, {
     ...init,
-    headers: init?.body instanceof FormData ? undefined : { "Content-Type": "application/json" },
+    headers: {
+      ...(init?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+      "Accept-Language": currentLang() === "zh" ? "zh-CN" : "en",
+    },
   });
   if (!response.ok) {
-    let message = `请求失败（HTTP ${response.status}）`;
+    let message = translate("common.requestFailed", { status: response.status });
     try {
       const data = await response.json();
       if (typeof data.detail === "string") message = data.detail;
-      else if (Array.isArray(data.detail)) message = data.detail.map((d: { msg: string }) => d.msg).join("；");
+      else if (Array.isArray(data.detail)) message = data.detail.map((d: { msg: string }) => d.msg).join("; ");
     } catch {
       /* 响应不是 JSON */
     }
@@ -31,18 +47,31 @@ const json = (method: string, body?: unknown): RequestInit => ({
 
 export const api = {
   providers: () => request<Providers>("/providers"),
-  voices: () => request<{ id: string; name: string }[]>("/voices"),
+  voices: (language?: string) =>
+    request<{ id: string; name: string; language: string | null }[]>(
+      language ? `/voices?language=${encodeURIComponent(language)}` : "/voices",
+    ),
+  languages: () => request<LanguageInfo[]>("/languages"),
+  versions: (id: string) => request<VersionInfo[]>(`/projects/${id}/versions`),
+  createVersion: (id: string, language: string) => request<Project>(`/projects/${id}/versions`, json("POST", { language })),
   listProjects: () => request<ProjectSummary[]>("/projects"),
   getProject: (id: string) => request<Project>(`/projects/${id}`),
   createProject: (body: {
     mode: "llm" | "split" | "empty";
+    language?: string;
     subject?: string;
     script?: string;
     canvas?: { aspect: string; fps?: number };
     voice?: Partial<VoiceSettings>;
-    shots?: number;
+    /** 为空时由大模型按目标时长和诉求自行决定镜头数。 */
+    shots?: number | null;
+    /** 目标总时长（秒）；为空时由大模型估算。 */
+    duration?: number | null;
   }) => request<Project>("/projects", json("POST", body)),
-  updateProject: (id: string, body: Partial<Pick<Project, "title" | "canvas" | "voice" | "subtitle" | "bgm">>) =>
+  updateProject: (
+    id: string,
+    body: Partial<Pick<Project, "title" | "language" | "canvas" | "voice" | "subtitle" | "bgm">>,
+  ) =>
     request<Project>(`/projects/${id}`, json("PATCH", body)),
   deleteProject: (id: string) => request<void>(`/projects/${id}`, json("DELETE")),
   addShot: (id: string, after?: string) => request<Project>(`/projects/${id}/shots`, json("POST", { text: "", after })),
@@ -50,7 +79,7 @@ export const api = {
   updateShot: (
     id: string,
     shotId: string,
-    body: { text?: string; duration?: number; clear_duration?: boolean; visual?: Partial<ShotVisual> },
+    body: { text?: string; duration?: number; clear_duration?: boolean; visual?: VisualPatch },
   ) => request<Project>(`/projects/${id}/shots/${shotId}`, json("PATCH", body)),
   deleteShot: (id: string, shotId: string) => request<Project>(`/projects/${id}/shots/${shotId}`, json("DELETE")),
   /** 收费的 AI 生成必须传 confirmCharge=true（用户已确认），否则后端返回 402。 */

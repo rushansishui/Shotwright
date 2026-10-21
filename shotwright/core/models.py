@@ -110,7 +110,10 @@ class ShotVisual(_Model):
     provider: str | None = None
     """为空时使用配置里该类别的默认 Provider。"""
     candidates: list[str] = Field(default_factory=list)
+    """所有来源的候选素材；界面按当前画面来源筛选显示。"""
     selected: str | None = None
+    first_frame: str | None = None
+    """ai 模式的首帧图片（图生视频）；为空时纯文字生成。"""
     color: str = "#1F2937"
     """color 模式或没有可用素材时的纯色画面。"""
     fit: Literal["cover", "contain"] = "cover"
@@ -122,7 +125,7 @@ class ShotVisual(_Model):
     def _check_candidates(cls, value: list[str]) -> list[str]:
         return [validate_id(item) for item in value]
 
-    @field_validator("selected")
+    @field_validator("selected", "first_frame")
     @classmethod
     def _check_selected(cls, value: str | None) -> str | None:
         return None if value is None else validate_id(value)
@@ -183,7 +186,13 @@ class Project(_Model):
     id: str = Field(default_factory=new_id)
     title: str = ""
     subject: str = ""
-    language: str = "auto"
+    """视频诉求：用户想要的内容。最多 4096 字节（UTF-8），由 API 层校验。"""
+    language: str = "zh-CN"
+    """视频内容的语言（BCP-47，例如 zh-CN、en-US），决定文案语言、默认配音和字幕字体。"""
+    target_seconds: float | None = None
+    """目标总时长（秒）。只影响生成时的镜头数和文案长度；成片以实际配音为准。"""
+    group: str | None = None
+    """同一个视频的不同语言版本共用一个 group（原始项目的 id）。"""
     canvas: Canvas = Field(default_factory=Canvas)
     voice: VoiceSettings = Field(default_factory=VoiceSettings)
     subtitle: SubtitleStyle = Field(default_factory=SubtitleStyle)
@@ -193,6 +202,11 @@ class Project(_Model):
     revision: int = 0
     created_at: float = Field(default_factory=time.time)
     updated_at: float = Field(default_factory=time.time)
+
+    @field_validator("group")
+    @classmethod
+    def _check_group(cls, value: str | None) -> str | None:
+        return None if value is None else validate_id(value)
 
     @field_validator("id")
     @classmethod

@@ -27,7 +27,7 @@ from shotwright.core.ids import new_id
 from shotwright.core.models import Project, Shot
 from shotwright.core.store import ProjectStore, read_json, sha256_file, write_json
 from shotwright.media import subtitles as subs
-from shotwright.media.ffmpeg import LOCAL_PROTOCOLS, MediaError, probe, run_ffmpeg
+from shotwright.media.ffmpeg import LOCAL_PROTOCOLS, MediaCancelled, MediaError, probe, run_ffmpeg
 from shotwright.providers import registry
 from shotwright.providers.base import ProviderError, TTSProvider
 from shotwright.services import visuals
@@ -140,6 +140,7 @@ class Renderer:
         self._cancel = cancel or threading.Event()
         self.stages: list[StageRecord] = []
         self.warnings: list[str] = []
+        self._font: Path | None = None
 
     # ---- 工具 ---------------------------------------------------------------
 
@@ -159,6 +160,9 @@ class Renderer:
         try:
             build(temp)
             temp.replace(output)
+        except MediaCancelled as exc:
+            # ffmpeg 被取消：转成渲染取消，让队列记为 cancelled 而不是 failed。
+            raise RenderCancelled(str(exc)) from exc
         finally:
             temp.unlink(missing_ok=True)
         self.stages.append(StageRecord(key, kind, fp, False, round(time.monotonic() - started, 3)))
@@ -309,7 +313,8 @@ class Renderer:
                         f"{seconds:.3f}",
                         *AUDIO_ARGS,
                         str(path),
-                    ]
+                    ],
+                    cancel=self._cancel,
                 )
                 duration = seconds
             else:
@@ -341,7 +346,7 @@ class Renderer:
     ) -> tuple[str, Path]:
         canvas = project.canvas
         visual = shot.visual
-        asset = project.assets.get(visual.selected) if visual.selected else None
+        asset = project.assets.get(visual.selected) if visual.selected and visual.mode != "color" else None
         if asset is not None and asset.kind not in ("video", "image"):
             asset = None
         visual_key = asset.sha256 if asset else f"color:{visual.color}"
@@ -410,7 +415,8 @@ class Renderer:
                     "-f",
                     "mp4",
                     str(temp),
-                ]
+                ],
+                cancel=self._cancel,
             )
 
         self._stage(f"{shot.id}:shot", "shot", fp, output, build)
@@ -447,7 +453,8 @@ class Renderer:
                         "-f",
                         "mp4",
                         str(temp),
-                    ]
+                    ],
+                    cancel=self._cancel,
                 )
             finally:
                 listing.unlink(missing_ok=True)
@@ -456,10 +463,23 @@ class Renderer:
         return fp, output
 
     def _font_path(self, project: Project) -> Path:
-        path = (self.settings.fonts_dir / project.subtitle.font).resolve()
-        if path.parent != self.settings.fonts_dir.resolve() or not path.is_file():
+        """字幕字体；缺字时（例如中文字体显示韩文）自动换成能显示的内置字体并提示。"""
+        if self._font is not None:
+            return self._font
+        fonts_dir = self.settings.fonts_dir.resolve()
+        path = (fonts_dir / project.subtitle.font).resolve()
+        if path.parent != fonts_dir or not path.is_file():
             raise RenderError(f"找不到字幕字体：{project.subtitle.font}")
-        return path
+        text = "".join(shot.text for shot in project.shots)
+        chosen, missing = subs.pick_font(path, fonts_dir, text)
+        if chosen != path:
+            self.warnings.append(f"字幕字体 {path.name} 缺少部分文字，已改用 {chosen.name}")
+        if missing:
+            self.warnings.append(
+                f"字幕里有字体无法显示的文字：{missing[:20]}，请在 resources/fonts 中加入支持该语言的字体"
+            )
+        self._font = chosen
+        return chosen
 
     def _cues(self, project: Project, timings: list[ShotTiming]) -> list[subs.Cue]:
         style = project.subtitle
@@ -563,10 +583,12 @@ class Renderer:
                     "mp4",
                     str(temp.resolve()),
                 ]
-                run_ffmpeg(command, cwd=work)
+                run_ffmpeg(command, cwd=work, cancel=self._cancel)
 
         try:
             self._stage("final", "final", fp, output, build)
+        except MediaCancelled as exc:
+            raise RenderCancelled(str(exc)) from exc
         except MediaError as exc:
             raise RenderError(f"合成字幕与背景音乐失败：{exc}") from exc
         return output

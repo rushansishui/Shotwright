@@ -4,9 +4,18 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from shotwright.core.models import BgmSettings, Canvas, SubtitleStyle, VisualMode, VoiceSettings
+
+MAX_SUBJECT_BYTES = 4096
+"""视频诉求内容的上限（UTF-8 字节）。中文一个字占 3 字节，约 1365 个汉字。"""
+
+
+def _check_subject_bytes(value: str) -> str:
+    if len(value.encode("utf-8")) > MAX_SUBJECT_BYTES:
+        raise ValueError(f"视频诉求最多 {MAX_SUBJECT_BYTES} 字节")
+    return value
 
 
 class _Body(BaseModel):
@@ -14,24 +23,44 @@ class _Body(BaseModel):
 
 
 class CreateProject(_Body):
-    subject: str = Field("", max_length=500)
+    subject: str = ""
+    """视频诉求：想要什么内容。上限 4096 字节。"""
     script: str = Field("", max_length=20000)
     title: str = Field("", max_length=120)
     mode: Literal["llm", "split", "empty"] = "split"
     """llm：让大模型写文案并拆镜头；split：把 script 按句拆成镜头；empty：空项目。"""
-    shots: int = Field(6, ge=1, le=30)
-    language: str = Field("简体中文", max_length=40)
+    shots: int | None = Field(None, ge=1, le=60)
+    """期望的镜头数；为空时由大模型按目标时长和诉求内容自行决定。"""
+    duration: float | None = Field(None, gt=0, le=1800)
+    """目标总时长（秒）；为空时由大模型按诉求内容估算。"""
+    language: str = Field("zh-CN", max_length=40)
+    """视频内容的语言代码（见 /api/v2/languages），也接受"简体中文"这类旧写法。"""
     canvas: Canvas | None = None
     voice: VoiceSettings | None = None
+
+    @field_validator("subject")
+    @classmethod
+    def _subject_within_limit(cls, value: str) -> str:
+        return _check_subject_bytes(value)
 
 
 class UpdateProject(_Body):
     title: str | None = Field(None, max_length=120)
-    subject: str | None = Field(None, max_length=500)
+    language: str | None = Field(None, max_length=40)
+    """切换视频语言：同时换成该语言的默认配音声音和字幕字体（文案不变）。"""
+    subject: str | None = None
+    """视频诉求；上限 4096 字节。"""
+    target_seconds: float | None = Field(None, gt=0, le=1800)
+    """目标总时长（秒）。"""
     canvas: Canvas | None = None
     voice: VoiceSettings | None = None
     subtitle: SubtitleStyle | None = None
     bgm: BgmSettings | None = None
+
+    @field_validator("subject")
+    @classmethod
+    def _subject_within_limit(cls, value: str | None) -> str | None:
+        return None if value is None else _check_subject_bytes(value)
 
 
 class VisualPatch(_Body):
@@ -40,6 +69,9 @@ class VisualPatch(_Body):
     prompt: str | None = Field(None, max_length=2000)
     provider: str | None = None
     selected: str | None = None
+    first_frame: str | None = None
+    clear_first_frame: bool = False
+    """为真时取消首帧，改为纯文字生成视频。"""
     color: str | None = None
     fit: Literal["cover", "contain"] | None = None
     locked: bool | None = None
@@ -67,3 +99,8 @@ class ReorderShots(_Body):
 class ChargeConsent(_Body):
     confirm_charge: bool = False
     """用户已确认这次操作可以调用收费服务（AI 视频、AI 图片）。"""
+
+
+class CreateVersion(_Body):
+    language: str = Field(..., max_length=40)
+    """要生成的语言版本，例如 en-US。"""

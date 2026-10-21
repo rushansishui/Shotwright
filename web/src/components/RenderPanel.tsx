@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { api, assetUrl, estimateSeconds, renderUrl } from "../api";
+import { useI18n } from "../i18n";
 import type { Job, Project, RenderResult } from "../types";
 
 function Preview({ project, shotIndex }: { project: Project; shotIndex: number }) {
+  const { t } = useI18n();
   const shot = project.shots[shotIndex];
   const frame = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState(400);
@@ -16,7 +18,7 @@ function Preview({ project, shotIndex }: { project: Project; shotIndex: number }
 
   const style = project.subtitle;
   const scale = height / (project.canvas.aspect === "16:9" ? 1080 : project.canvas.aspect === "1:1" ? 1080 : 1920);
-  const asset = shot?.visual.selected ? project.assets[shot.visual.selected] : undefined;
+  const asset = shot?.visual.selected && shot.visual.mode !== "color" ? project.assets[shot.visual.selected] : undefined;
   const position = { top: "flex-start", middle: "center", bottom: "flex-end" }[style.position];
   const fit = shot?.visual.fit === "contain" ? "contain" : "cover";
 
@@ -40,7 +42,7 @@ function Preview({ project, shotIndex }: { project: Project; shotIndex: number }
           </span>
         </div>
       )}
-      {!shot && <span className="preview-empty">还没有镜头</span>}
+      {!shot && <span className="preview-empty">{t("render.noShots")}</span>}
     </div>
   );
 }
@@ -53,6 +55,7 @@ export function RenderPanel(props: {
   onRendered: () => void;
 }) {
   const { project } = props;
+  const { t } = useI18n();
   const [job, setJob] = useState<Job | null>(null);
   const [latest, setLatest] = useState<(RenderResult & { created_at: number }) | null>(null);
   const [error, setError] = useState("");
@@ -99,7 +102,7 @@ export function RenderPanel(props: {
   async function start() {
     setError("");
     const paid = allowPaid && pendingAi > 0 && props.paidAvailable;
-    if (paid && !window.confirm(`将为 ${pendingAi} 个 AI 镜头提交收费生成，提交后即使失败也可能扣费。继续？`)) return;
+    if (paid && !window.confirm(t("render.confirmPaid", { n: pendingAi }))) return;
     try {
       setJob(await api.render(project.id, paid));
     } catch (e) {
@@ -111,15 +114,15 @@ export function RenderPanel(props: {
     <aside className="side">
       <section className="card">
         <div className="card-head">
-          <h2>预览</h2>
+          <h2>{t("render.preview")}</h2>
           <span className="card-extra muted small">
-            镜头 {Math.min(props.shotIndex + 1, project.shots.length)} / {project.shots.length}
+            {t("render.shotOf", { i: Math.min(props.shotIndex + 1, project.shots.length), n: project.shots.length })}
           </span>
         </div>
         <Preview project={project} shotIndex={props.shotIndex} />
         <div className="preview-nav">
           <button type="button" className="btn" disabled={props.shotIndex <= 0} onClick={() => props.onShotIndex(props.shotIndex - 1)}>
-            上一个
+            {t("render.prev")}
           </button>
           <button
             type="button"
@@ -127,17 +130,17 @@ export function RenderPanel(props: {
             disabled={props.shotIndex >= project.shots.length - 1}
             onClick={() => props.onShotIndex(props.shotIndex + 1)}
           >
-            下一个
+            {t("render.next")}
           </button>
         </div>
         <dl className="stats">
           <div>
-            <dt>预计时长</dt>
-            <dd>{Math.round(total)} 秒</dd>
+            <dt>{t("render.estimated")}</dt>
+            <dd>{t("common.seconds", { n: Math.round(total) })}</dd>
           </div>
           <div>
-            <dt>镜头</dt>
-            <dd>{project.shots.length} 个</dd>
+            <dt>{t("render.shotCount")}</dt>
+            <dd>{t("render.shotCountValue", { n: project.shots.length })}</dd>
           </div>
         </dl>
       </section>
@@ -145,13 +148,13 @@ export function RenderPanel(props: {
       <section className="card">
         {missing > 0 && !running && (
           <p className="hint">
-            {missing} 个镜头还没有画面。渲染时会自动检索一次素材；检索不到时使用纯色画面。
+            {t("render.missing", { n: missing })}
           </p>
         )}
         {pendingAi > 0 && props.paidAvailable && !running && (
           <label className="check">
             <input type="checkbox" checked={allowPaid} onChange={(e) => setAllowPaid(e.target.checked)} />
-            为 {pendingAi} 个 AI 镜头生成画面（收费）；不勾选则改用素材检索
+            {t("render.allowPaid", { n: pendingAi })}
           </label>
         )}
         {running ? (
@@ -164,24 +167,24 @@ export function RenderPanel(props: {
               <div style={{ width: `${(job?.progress ?? 0) * 100}%` }} />
             </div>
             <button type="button" className="btn" onClick={() => job && api.cancel(job.id).catch(() => undefined)}>
-              取消
+              {t("render.cancel")}
             </button>
           </div>
         ) : (
           <button type="button" className="btn primary big" disabled={project.shots.length === 0} onClick={start}>
-            {result ? "重新渲染" : "生成视频"}
+            {result ? t("render.rerender") : t("render.render")}
           </button>
         )}
         {job?.state === "failed" && <p className="hint error">{job.error}</p>}
         {error && <p className="hint error">{error}</p>}
-        <p className="muted small center">只会重做有改动的镜头</p>
+        <p className="muted small center">{t("render.incremental")}</p>
       </section>
 
       {result && !running && (
         <section className="card">
           <div className="card-head">
-            <h2>成片</h2>
-            <span className="card-extra muted small">{result.duration.toFixed(1)} 秒</span>
+            <h2>{t("render.result")}</h2>
+            <span className="card-extra muted small">{t("common.seconds", { n: result.duration.toFixed(1) })}</span>
           </div>
           <video
             key={result.render_id}
@@ -192,16 +195,16 @@ export function RenderPanel(props: {
           />
           <div className="result-links">
             <a className="btn" href={renderUrl(project.id, result.render_id, result.video)} download>
-              下载视频
+              {t("render.downloadVideo")}
             </a>
             {result.subtitles && (
               <a className="btn" href={renderUrl(project.id, result.render_id, result.subtitles)} download>
-                下载字幕
+                {t("render.downloadSubs")}
               </a>
             )}
           </div>
           <p className="muted small">
-            本次复用了 {result.stages.filter((s) => s.reused).length} / {result.stages.length} 个阶段的缓存
+            {t("render.reused", { a: result.stages.filter((s) => s.reused).length, b: result.stages.length })}
           </p>
           {result.warnings.map((w) => (
             <p key={w} className="hint warn">

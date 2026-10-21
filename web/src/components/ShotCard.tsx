@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { assetUrl, estimateSeconds } from "../api";
-import type { Project, ProviderInfo, Shot, ShotVisual, VisualMode } from "../types";
+import { useI18n } from "../i18n";
+import type { Asset, Project, ProviderInfo, Shot, VisualMode, VisualPatch } from "../types";
 import { Icon, Segmented } from "./Controls";
 
 export function Thumb(props: { project: Project; assetId: string | null; color: string; className?: string }) {
@@ -22,13 +23,7 @@ export function Thumb(props: { project: Project; assetId: string | null; color: 
   return <div className={props.className} style={{ background: props.color }} />;
 }
 
-const MODES: { value: VisualMode; label: string }[] = [
-  { value: "stock", label: "素材检索" },
-  { value: "ai", label: "AI 视频" },
-  { value: "image", label: "AI 图片" },
-  { value: "upload", label: "上传" },
-  { value: "color", label: "纯色" },
-];
+const MODES: VisualMode[] = ["stock", "ai", "image", "upload", "color"];
 
 export function ShotCard(props: {
   project: Project;
@@ -40,8 +35,10 @@ export function ShotCard(props: {
   busySeconds?: number;
   aiVideo: ProviderInfo | null;
   aiImage: ProviderInfo | null;
+  /** 服务 id → 画面来源，用来按当前来源筛选候选素材。 */
+  sourceModes: Record<string, VisualMode>;
   onFocus: () => void;
-  onUpdate: (body: { text?: string; visual?: Partial<ShotVisual> }) => void;
+  onUpdate: (body: { text?: string; visual?: VisualPatch }) => void;
   onCandidates: (confirmCharge?: boolean, prompt?: string) => void;
   onUpload: (file: File) => void;
   onMove: (delta: number) => void;
@@ -54,23 +51,45 @@ export function ShotCard(props: {
   const [terms, setTerms] = useState(visual.terms.join(", "));
   const [prompt, setPrompt] = useState(visual.prompt);
   const fileInput = useRef<HTMLInputElement>(null);
+  const { t } = useI18n();
 
   useEffect(() => setText(shot.text), [shot.text]);
   useEffect(() => setTerms(visual.terms.join(", ")), [visual.terms]);
   useEffect(() => setPrompt(visual.prompt), [visual.prompt]);
 
   const generator = visual.mode === "ai" ? props.aiVideo : visual.mode === "image" ? props.aiImage : null;
-  const selectedAsset = visual.selected ? project.assets[visual.selected] : undefined;
-  const firstFrame = visual.mode === "ai" && selectedAsset?.kind === "image";
+  const modeOf = (asset: Asset | undefined): VisualMode | undefined => {
+    if (!asset) return undefined;
+    const mode = props.sourceModes[asset.source];
+    // 视频服务只产出视频、图片服务只产出图片，同名服务用素材类型区分。
+    if (mode === "ai" && asset.kind !== "video") return undefined;
+    if (mode === "image" && asset.kind !== "image") return undefined;
+    return mode;
+  };
+  const shown = visual.mode === "color" ? [] : visual.candidates.filter((id) => modeOf(project.assets[id]) === visual.mode);
+  // AI 视频的首帧可以从这个镜头的任意图片里选（AI 图片或上传的图片）。
+  const frameChoices = visual.mode === "ai" ? visual.candidates.filter((id) => project.assets[id]?.kind === "image") : [];
+  const firstFrame = visual.mode === "ai" && !!visual.first_frame && !!project.assets[visual.first_frame];
+  const emptyHint: Partial<Record<VisualMode, string>> = {
+    stock: t("shot.empty.stock"),
+    ai: t("shot.empty.ai"),
+    image: t("shot.empty.image"),
+    upload: t("shot.empty.upload"),
+  };
   const generate = async () => {
     if (!generator) return;
-    const what = visual.mode === "ai" ? (firstFrame ? "以选中的图片为首帧生成一段视频" : "生成一段视频") : "生成一张图片";
-    const cost = generator.paid ? `\n${generator.name} 按次收费，提交后即使失败也可能扣费。` : "";
-    if (window.confirm(`为镜头 ${index + 1} ${what}？${cost}`)) props.onCandidates(true, prompt !== visual.prompt ? prompt : undefined);
+    const what =
+      visual.mode === "ai"
+        ? t(firstFrame ? "shot.confirm.videoFirstFrame" : "shot.confirm.video")
+        : t("shot.confirm.image");
+    const cost = generator.paid ? `\n${t("shot.confirm.cost", { name: generator.name })}` : "";
+    if (window.confirm(t("shot.confirm.question", { n: index + 1, what }) + cost)) {
+      props.onCandidates(true, prompt !== visual.prompt ? prompt : undefined);
+    }
   };
 
   const generating = visual.mode === "ai" || visual.mode === "image";
-  const busyVerb = generating ? "生成中" : visual.mode === "stock" ? "检索中" : "处理中";
+  const busyVerb = t(generating ? "shot.busy.generating" : visual.mode === "stock" ? "shot.busy.searching" : "shot.busy.working");
   const busyLabel = props.busySeconds ? `${busyVerb} ${props.busySeconds}s` : busyVerb;
 
   const seconds = estimateSeconds({ ...shot, text }, (shot.voice ?? project.voice).rate);
@@ -88,7 +107,7 @@ export function ShotCard(props: {
       <div className="shot-side">
         <span className="shot-index">{index + 1}</span>
         <div className="shot-thumb-wrap">
-          <Thumb project={project} assetId={visual.selected} color={visual.color} className={`shot-thumb a${project.canvas.aspect.replace(":", "-")}`} />
+          <Thumb project={project} assetId={visual.mode === "color" ? null : visual.selected} color={visual.color} className={`shot-thumb a${project.canvas.aspect.replace(":", "-")}`} />
           {props.busy && (
             <div className="shot-busy" role="status" aria-live="polite">
               <span className="spinner" aria-hidden="true" />
@@ -96,33 +115,34 @@ export function ShotCard(props: {
             </div>
           )}
         </div>
-        <span className="muted small">约 {seconds} 秒</span>
+        <span className="muted small">{t("shot.duration", { n: seconds })}</span>
       </div>
 
       <div className="shot-main">
         <label className="sr-only" htmlFor={`text-${shot.id}`}>
-          镜头 {index + 1} 文案
+          {t("shot.textLabel", { n: index + 1 })}
         </label>
         <textarea
           id={`text-${shot.id}`}
           className="input shot-text"
           rows={2}
           value={text}
-          placeholder="这个镜头的口播文案"
+          placeholder={t("shot.textPlaceholder")}
           onChange={(e) => setText(e.target.value)}
           onBlur={() => text !== shot.text && props.onUpdate({ text })}
         />
 
         <div className="shot-visual-row">
           <Segmented
-            label="画面来源"
+            label={t("shot.source")}
             value={visual.mode}
-            options={MODES.map((m) => {
-              const provider = m.value === "ai" ? props.aiVideo : m.value === "image" ? props.aiImage : undefined;
-              if (provider === null && visual.mode !== m.value) {
-                return { ...m, disabled: true, title: `还没有配置${m.label}服务，见 config.toml` };
+            options={MODES.map((value) => {
+              const m = { value, label: t(`shot.mode.${value}`) };
+              const provider = value === "ai" ? props.aiVideo : value === "image" ? props.aiImage : undefined;
+              if (provider === null && visual.mode !== value) {
+                return { ...m, disabled: true, title: t("shot.notConfigured", { name: m.label }) };
               }
-              return provider?.paid ? { ...m, title: `${provider.name}（收费）` } : m;
+              return provider?.paid ? { ...m, title: `${provider.name}${t("common.paidSuffix")}` } : m;
             })}
             disabled={visual.locked || props.busy}
             onChange={(mode) => props.onUpdate({ visual: { mode } })}
@@ -131,8 +151,8 @@ export function ShotCard(props: {
             type="button"
             className={`btn icon ${visual.locked ? "on" : ""}`}
             aria-pressed={visual.locked}
-            aria-label={visual.locked ? "解锁画面" : "锁定画面"}
-            title={visual.locked ? "已锁定：重新生成时不会改动这个镜头的画面" : "锁定画面"}
+            aria-label={visual.locked ? t("shot.unlock") : t("shot.lock")}
+            title={visual.locked ? t("shot.lockedTip") : t("shot.lock")}
             onClick={() => props.onUpdate({ visual: { locked: !visual.locked } })}
           >
             <Icon name={visual.locked ? "lock" : "unlock"} />
@@ -141,12 +161,12 @@ export function ShotCard(props: {
 
         {visual.mode === "stock" && (
           <div className="inline-field">
-            <label htmlFor={`terms-${shot.id}`}>检索词</label>
+            <label htmlFor={`terms-${shot.id}`}>{t("shot.terms")}</label>
             <input
               id={`terms-${shot.id}`}
               className="input"
               value={terms}
-              placeholder="英文，逗号分隔，例如 city night, traffic"
+              placeholder={t("shot.termsPlaceholder")}
               disabled={visual.locked}
               onChange={(e) => setTerms(e.target.value)}
               onBlur={commitTerms}
@@ -154,20 +174,20 @@ export function ShotCard(props: {
             />
             <button type="button" className="btn" disabled={props.busy || visual.locked} onClick={() => props.onCandidates()}>
               <Icon name="refresh" />
-              {props.busy ? `${busyLabel}…` : visual.candidates.length ? "换一批" : "检索素材"}
+              {props.busy ? `${busyLabel}…` : shown.length ? t("shot.more") : t("shot.search")}
             </button>
           </div>
         )}
 
         {(visual.mode === "ai" || visual.mode === "image") && (
           <div className="inline-field">
-            <label htmlFor={`prompt-${shot.id}`}>提示词</label>
+            <label htmlFor={`prompt-${shot.id}`}>{t("shot.prompt")}</label>
             <input
               id={`prompt-${shot.id}`}
               className="input"
               value={prompt}
               placeholder={
-                visual.mode === "ai" ? "画面描述：主体、动作、镜头运动、光线" : "画面描述：主体、场景、风格、光线"
+                visual.mode === "ai" ? t("shot.promptVideo") : t("shot.promptImage")
               }
               disabled={visual.locked}
               onChange={(e) => setPrompt(e.target.value)}
@@ -177,7 +197,7 @@ export function ShotCard(props: {
               type="button"
               className="btn"
               disabled={props.busy || visual.locked || !generator || !prompt.trim()}
-              title={generator ? `${generator.name}${generator.paid ? "（收费）" : ""}` : "还没有配置生成服务"}
+              title={generator ? `${generator.name}${generator.paid ? t("common.paidSuffix") : ""}` : t("shot.noGenerator")}
               onClick={generate}
             >
               {props.busy ? (
@@ -186,20 +206,49 @@ export function ShotCard(props: {
                   {busyLabel}
                 </>
               ) : generator?.paid ? (
-                "生成（收费）"
+                t("shot.generatePaid")
               ) : (
-                "生成"
+                t("shot.generate")
               )}
             </button>
           </div>
         )}
-        {firstFrame && !visual.locked && (
-          <p className="muted small">将以选中的图片作为首帧；想纯文字生成，先选中一段视频或清空选择。</p>
+        {frameChoices.length > 0 && (
+          <div className="first-frame">
+            <span className="label">{t("shot.firstFrame")}</span>
+            <div className="candidates small" role="listbox" aria-label={t("shot.firstFrameLabel")}>
+              <button
+                type="button"
+                role="option"
+                aria-selected={!firstFrame}
+                className={`candidate none ${!firstFrame ? "on" : ""}`}
+                disabled={visual.locked || props.busy}
+                onClick={() => props.onUpdate({ visual: { clear_first_frame: true } })}
+              >
+                {t("shot.firstFrameNone")}
+              </button>
+              {frameChoices.map((id) => (
+                <button
+                  type="button"
+                  key={id}
+                  role="option"
+                  aria-selected={visual.first_frame === id}
+                  className={`candidate ${visual.first_frame === id ? "on" : ""}`}
+                  disabled={visual.locked || props.busy}
+                  onClick={() => props.onUpdate({ visual: { first_frame: id } })}
+                  title={t("shot.firstFrameTip")}
+                >
+                  <Thumb project={project} assetId={id} color={visual.color} className="candidate-media" />
+                </button>
+              ))}
+            </div>
+            <span className="muted small">{firstFrame ? t("shot.firstFrameOn") : t("shot.firstFrameOff")}</span>
+          </div>
         )}
 
         {visual.mode === "upload" && (
           <div className="inline-field">
-            <span className="label">素材</span>
+            <span className="label">{t("shot.material")}</span>
             <input
               ref={fileInput}
               type="file"
@@ -213,14 +262,14 @@ export function ShotCard(props: {
             />
             <button type="button" className="btn" disabled={props.busy || visual.locked} onClick={() => fileInput.current?.click()}>
               <Icon name="upload" />
-              {props.busy ? "上传中…" : "上传图片或视频"}
+              {props.busy ? t("shot.uploading") : t("shot.upload")}
             </button>
           </div>
         )}
 
         {visual.mode === "color" && (
           <div className="inline-field">
-            <label htmlFor={`color-${shot.id}`}>背景色</label>
+            <label htmlFor={`color-${shot.id}`}>{t("shot.background")}</label>
             <input
               id={`color-${shot.id}`}
               type="color"
@@ -231,9 +280,12 @@ export function ShotCard(props: {
           </div>
         )}
 
-        {visual.mode !== "color" && visual.candidates.length > 0 && (
-          <div className="candidates" role="listbox" aria-label="候选素材">
-            {visual.candidates.map((id) => (
+        {visual.mode !== "color" && shown.length === 0 && !props.busy && (
+          <p className="muted small">{emptyHint[visual.mode]}</p>
+        )}
+        {shown.length > 0 && (
+          <div className="candidates" role="listbox" aria-label={t("shot.candidates")}>
+            {shown.map((id) => (
               <button
                 type="button"
                 key={id}
@@ -242,7 +294,7 @@ export function ShotCard(props: {
                 className={`candidate ${visual.selected === id ? "on" : ""}`}
                 disabled={visual.locked}
                 onClick={() => props.onUpdate({ visual: { selected: id } })}
-                title={project.assets[id]?.meta.author ? `作者：${project.assets[id].meta.author}` : ""}
+                title={project.assets[id]?.meta.author ? t("shot.author", { name: project.assets[id].meta.author }) : ""}
               >
                 <Thumb project={project} assetId={id} color={visual.color} className="candidate-media" />
               </button>
@@ -253,16 +305,16 @@ export function ShotCard(props: {
       </div>
 
       <div className="shot-actions">
-        <button type="button" className="btn icon ghost" aria-label="上移" disabled={index === 0} onClick={() => props.onMove(-1)}>
+        <button type="button" className="btn icon ghost" aria-label={t("shot.moveUp")} disabled={index === 0} onClick={() => props.onMove(-1)}>
           <Icon name="up" />
         </button>
-        <button type="button" className="btn icon ghost" aria-label="下移" disabled={isLast} onClick={() => props.onMove(1)}>
+        <button type="button" className="btn icon ghost" aria-label={t("shot.moveDown")} disabled={isLast} onClick={() => props.onMove(1)}>
           <Icon name="down" />
         </button>
-        <button type="button" className="btn icon ghost" aria-label="在后面插入镜头" onClick={props.onInsert}>
+        <button type="button" className="btn icon ghost" aria-label={t("shot.insert")} onClick={props.onInsert}>
           <Icon name="plus" />
         </button>
-        <button type="button" className="btn icon ghost danger" aria-label="删除镜头" onClick={props.onDelete}>
+        <button type="button" className="btn icon ghost danger" aria-label={t("shot.delete")} onClick={props.onDelete}>
           <Icon name="trash" />
         </button>
       </div>

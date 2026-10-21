@@ -199,3 +199,59 @@ def test_generation_in_progress_is_visible_and_not_resubmitted(client, monkeypat
     worker.join(10)
     assert result["r"].status_code == 200
     assert client.get(f"/api/v2/projects/{pid}/in-progress").json() == {}
+
+
+def test_first_frame_can_be_set_and_cleared(client):
+    pid = _create(client)["id"]
+    shot = client.get(f"/api/v2/projects/{pid}").json()["shots"][0]["id"]
+    base = f"/api/v2/projects/{pid}/shots/{shot}"
+    client.patch(base, json={"visual": {"mode": "image", "prompt": "猫"}})
+    image = client.post(f"{base}/candidates", json={"confirm_charge": True}).json()["shots"][0]["visual"][
+        "selected"
+    ]
+    visual = client.patch(base, json={"visual": {"mode": "ai"}}).json()["shots"][0]["visual"]
+    assert visual["first_frame"] == image and visual["selected"] is None
+    visual = client.patch(base, json={"visual": {"clear_first_frame": True}}).json()["shots"][0]["visual"]
+    assert visual["first_frame"] is None
+    assert client.patch(base, json={"visual": {"first_frame": image}}).json()["shots"][0]["visual"][
+        "first_frame"
+    ]
+
+
+def test_languages_and_project_language(client):
+    langs = client.get("/api/v2/languages").json()
+    assert {"zh-CN", "en-US", "ja-JP", "ko-KR"} <= {item["code"] for item in langs}
+    voices = client.get("/api/v2/voices", params={"language": "ja-JP"}).json()
+    assert voices and all(v["id"].startswith("ja-JP") for v in voices)
+    project = client.post(
+        "/api/v2/projects",
+        json={"mode": "split", "script": "Hello there. Nice to meet you.", "language": "en-US"},
+    ).json()
+    assert project["language"] == "en-US"
+    patched = client.patch(f"/api/v2/projects/{project['id']}", json={"language": "ko-KR"}).json()
+    assert patched["language"] == "ko-KR" and patched["subtitle"]["font"] == "NotoSansKR-Bold.ttf"
+    assert client.patch(f"/api/v2/projects/{project['id']}", json={"language": "xx"}).status_code == 422
+    versions = client.get(f"/api/v2/projects/{project['id']}/versions").json()
+    assert [v["id"] for v in versions] == [project["id"]]
+
+
+def test_delete_refuses_while_rendering(client):
+    import threading
+
+    from shotwright.api.jobs import Job
+
+    pid = _create(client)["id"]
+    jobs = client.app.state.jobs
+    running = Job(id="busyjob", project_id=pid, state="running")
+    with jobs._lock:
+        jobs._jobs[running.id] = running
+        jobs._cancel[running.id] = threading.Event()
+    try:
+        assert client.delete(f"/api/v2/projects/{pid}").status_code == 409
+        # 强制删除会先发出取消信号（正在跑的渲染随后自行收尾为 cancelled），再删目录。
+        assert client.delete(f"/api/v2/projects/{pid}", params={"force": "true"}).status_code == 204
+        assert jobs._cancel["busyjob"].is_set()
+    finally:
+        with jobs._lock:
+            jobs._jobs.pop(running.id, None)
+            jobs._cancel.pop(running.id, None)

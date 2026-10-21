@@ -9,14 +9,23 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 LOCAL_PROTOCOLS = "file,pipe,crypto,data"
 
+_POLL_INTERVAL = 0.2
+"""等待 ffmpeg 时检查取消信号的间隔（秒）。"""
+
 
 class MediaError(RuntimeError):
     pass
+
+
+class MediaCancelled(MediaError):
+    """ffmpeg 被取消信号中止。"""
 
 
 @dataclass
@@ -37,7 +46,17 @@ def tools() -> Tools:
     return _tools
 
 
-def run_ffmpeg(args: list[str], *, cwd: Path | None = None, timeout: float = 1800) -> None:
+def run_ffmpeg(
+    args: list[str],
+    *,
+    cwd: Path | None = None,
+    timeout: float = 1800,
+    cancel: threading.Event | None = None,
+) -> None:
+    """运行 ffmpeg。``cancel`` 被设置时终止子进程并抛 :class:`MediaCancelled`。"""
+    if cancel is not None and cancel.is_set():
+        # 已经取消就不必启动进程。
+        raise MediaCancelled("ffmpeg 已取消")
     command = [
         _tools.ffmpeg,
         "-hide_banner",
@@ -48,22 +67,55 @@ def run_ffmpeg(args: list[str], *, cwd: Path | None = None, timeout: float = 180
         *args,
     ]
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             command,
             cwd=cwd,
-            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=timeout,
         )
     except FileNotFoundError as exc:
         raise MediaError("找不到 ffmpeg，请先安装并加入 PATH，或在 config.toml 中配置路径") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise MediaError("ffmpeg 执行超时") from exc
-    if result.returncode != 0:
-        tail = "\n".join(result.stderr.strip().splitlines()[-8:])
+
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            try:
+                # 先等一小段，避免命令瞬间结束时仍然轮询。
+                stdout, stderr = process.communicate(timeout=_POLL_INTERVAL)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+            if cancel is not None and cancel.is_set():
+                _terminate(process)
+                raise MediaCancelled("ffmpeg 已取消")
+            if time.monotonic() >= deadline:
+                _terminate(process)
+                raise MediaError("ffmpeg 执行超时")
+    finally:
+        if process.poll() is None:
+            _terminate(process)
+    if process.returncode != 0:
+        tail = "\n".join((stderr or "").strip().splitlines()[-8:])
         raise MediaError(f"ffmpeg 执行失败：{tail}")
+
+
+def _terminate(process: subprocess.Popen) -> None:
+    """先礼后兵地结束 ffmpeg，并回收管道，避免僵尸进程。"""
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        try:
+            process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:  # pragma: no cover - 极端情况下放弃回收
+            pass
 
 
 @dataclass

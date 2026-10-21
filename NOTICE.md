@@ -51,6 +51,11 @@ SOFTWARE.
 使用 SIL Open Font License 1.1，许可全文见 `resources/fonts/OFL-NotoSansSC.txt`。
 为兼容字幕渲染，原始 OTF 已转换为 TrueType 轮廓，字形未做修改。
 
+`resources/fonts/NotoSansKR-Bold.ttf`（韩文）与 `resources/fonts/NotoSansThai-Bold.ttf`（泰文）来自
+Google Fonts（<https://github.com/google/fonts>，`ofl/notosanskr`、`ofl/notosansthai`），使用 SIL Open Font
+License 1.1，许可全文分别见 `resources/fonts/OFL-NotoSansKR.txt`、`resources/fonts/OFL-NotoSansThai.txt`。
+为方便字幕渲染，从可变字体中导出了 Bold（字重 700）静态实例，字形未做修改。
+
 ## 素材
 
 通过 Pixabay、Pexels 等素材库下载的视频遵循各自平台的许可协议。AI 生成的画面遵循对应服务商的使用条款，Shotwright 会在素材信息里记录作者与来源页面。

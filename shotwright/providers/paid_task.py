@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -22,6 +23,8 @@ from typing import Any
 import httpx
 
 from shotwright.providers.base import ProviderError, UnconfirmedTaskError
+
+log = logging.getLogger(__name__)
 
 RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
 MAX_DOWNLOAD = 500 * 1024 * 1024
@@ -72,7 +75,7 @@ def error_detail(response: httpx.Response, secret: str) -> str:
     return redact(str(message)[:300], secret)
 
 
-def submit(
+def _submit(
     client: httpx.Client,
     url: str,
     payload: Mapping[str, Any],
@@ -120,7 +123,7 @@ class PollSettings:
     error_of: Callable[[dict], Any] = field(default=lambda body: body.get("error"))
 
 
-def poll(
+def _poll(
     client: httpx.Client,
     url: str,
     *,
@@ -171,7 +174,7 @@ def poll(
         sleep(min(settings.interval, max(deadline - clock(), 0)))
 
 
-def download(client: httpx.Client, url: str, output: Path, *, label: str, task_id: str = "") -> Path:
+def _download(client: httpx.Client, url: str, output: Path, *, label: str, task_id: str = "") -> Path:
     """下载生成结果。远端已经成功扣费，失败时在消息里保留任务 id。"""
     if not url.startswith(("https://", "http://")):
         raise ProviderError(f"{label} 没有返回可下载的地址")
@@ -196,3 +199,80 @@ def download(client: httpx.Client, url: str, output: Path, *, label: str, task_i
         output.unlink(missing_ok=True)
         raise ProviderError(f"{label} 返回了空文件，任务 id：{task_id}")
     return output
+
+
+# ---- 带日志的入口 -------------------------------------------------------------
+# 收费任务的每一步都写日志：提交了什么模型、拿到的任务 id、最终结果。扣费有疑问时，
+# 可以拿日志里的任务 id 到服务商控制台核对。
+
+
+def submit(
+    client: httpx.Client,
+    url: str,
+    payload: Mapping[str, Any],
+    *,
+    headers: Mapping[str, str],
+    label: str,
+    secret: str,
+    task_id_field: str = "id",
+) -> str:
+    """提交收费任务，返回远端任务 id。不重试。"""
+    model = str(payload.get("model") or "")
+    log.info("%s 提交收费任务：模型 %s", label, model)
+    try:
+        task_id = _submit(
+            client, url, payload, headers=headers, label=label, secret=secret, task_id_field=task_id_field
+        )
+    except UnconfirmedTaskError as exc:
+        log.error("%s 提交结果无法确认，可能已扣费：%s", label, exc)
+        raise
+    except ProviderError as exc:
+        log.warning("%s 提交被拒绝（未扣费）：%s", label, exc)
+        raise
+    log.info("%s 已创建任务 %s（模型 %s）", label, task_id, model)
+    return task_id
+
+
+def poll(
+    client: httpx.Client,
+    url: str,
+    *,
+    task_id: str,
+    headers: Mapping[str, str],
+    secret: str,
+    settings: PollSettings,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> dict:
+    """轮询同一个任务直到成功；失败抛 ProviderError，无法确认抛 UnconfirmedTaskError。"""
+    started = clock()
+    try:
+        body = _poll(
+            client,
+            url,
+            task_id=task_id,
+            headers=headers,
+            secret=secret,
+            settings=settings,
+            sleep=sleep,
+            clock=clock,
+        )
+    except UnconfirmedTaskError as exc:
+        log.error("%s 任务 %s 状态无法确认：%s", settings.label, task_id, exc)
+        raise
+    except ProviderError as exc:
+        log.warning("%s 任务 %s 失败：%s", settings.label, task_id, exc)
+        raise
+    log.info("%s 任务 %s 已完成，用时 %.0f 秒", settings.label, task_id, clock() - started)
+    return body
+
+
+def download(client: httpx.Client, url: str, output: Path, *, label: str, task_id: str = "") -> Path:
+    """下载生成结果。远端已经成功扣费，失败时在消息里保留任务 id。"""
+    try:
+        path = _download(client, url, output, label=label, task_id=task_id)
+    except ProviderError as exc:
+        log.error("%s 结果下载失败（已扣费），任务 %s：%s", label, task_id or "-", exc)
+        raise
+    log.info("%s 结果已下载（任务 %s，%d 字节）", label, task_id or "-", path.stat().st_size)
+    return path
