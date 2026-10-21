@@ -36,6 +36,9 @@ _HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
 Aspect = Literal["9:16", "16:9", "1:1"]
 VisualMode = Literal["stock", "ai", "image", "upload", "color"]
 AssetKind = Literal["video", "image", "audio"]
+AssetFolder = Literal["ai-video", "ai-image", "stock", "upload", "other"]
+"""素材在 ``assets/`` 下的子目录：AI 视频、AI 图片、素材库下载、用户上传、其他。"""
+ASSET_FOLDERS: tuple[str, ...] = ("ai-video", "ai-image", "stock", "upload", "other")
 ShotStatus = Literal["draft", "ready", "rendering", "done", "failed"]
 
 _RESOLUTIONS: dict[str, tuple[int, int]] = {
@@ -172,6 +175,8 @@ class Asset(_Model):
     source: str
     """来源：pexels、upload、tts、ffmpeg 等。"""
     filename: str
+    folder: AssetFolder | None = None
+    """所在子目录（见 :data:`AssetFolder`）。为空表示旧项目，文件直接放在 ``assets/`` 下。"""
     sha256: str
     width: int | None = None
     height: int | None = None

@@ -2,7 +2,12 @@
 
     <root>/<project_id>/
         project.json        项目状态（原子写入）
-        assets/             素材，文件名为 <sha256 前 16 位><扩展名>，自动去重
+        assets/             素材，按来源分子目录，文件名为 <sha256 前 16 位><扩展名>，自动去重
+            ai-video/       AI 生成的视频（Seedance 等）
+            ai-image/       AI 生成的图片（Seedream 等）
+            stock/          素材库下载（Pixabay、Pexels）
+            upload/         用户上传的画面和音频
+            other/          其他来源
         cache/              渲染缓存，按指纹命名，可随时删除
         renders/<id>/       每次渲染的产出
 
@@ -19,9 +24,10 @@ import shutil
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
-from shotwright.core.models import Asset, AssetKind, Project, validate_id
+from shotwright.core.models import ASSET_FOLDERS, Asset, AssetFolder, AssetKind, Project, validate_id
 
 
 class ProjectNotFound(KeyError):
@@ -86,7 +92,40 @@ class ProjectStore:
 
     def asset_path(self, project: Project, asset_id: str) -> Path:
         asset = project.assets[validate_id(asset_id)]
-        return self._inside(project.id, "assets", asset.filename)
+        if asset.folder:
+            return self._inside(project.id, "assets", asset.folder, asset.filename)
+        legacy = self._inside(project.id, "assets", asset.filename)
+        if not legacy.exists():
+            # 旧项目整理到一半（文件已移动、project.json 还没保存）时，到子目录里找。
+            for folder in ASSET_FOLDERS:
+                moved = self._inside(project.id, "assets", folder, asset.filename)
+                if moved.exists():
+                    return moved
+        return legacy
+
+    def organize_assets(self, project: Project, folder_of: Callable[[Asset], AssetFolder]) -> bool:
+        """把旧项目直接放在 ``assets/`` 下的素材移到按来源划分的子目录。
+
+        先移动文件再保存项目；中途中断时 :meth:`asset_path` 仍能找到文件，下次继续整理。
+        返回是否有改动（有改动时已保存项目）。
+        """
+        with self.lock(project.id):
+            changed = False
+            for asset in project.assets.values():
+                if asset.folder:
+                    continue
+                folder = folder_of(asset)
+                src = self._inside(project.id, "assets", asset.filename)
+                dst = self._inside(project.id, "assets", folder, asset.filename)
+                if src.is_file() and not dst.exists():
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(src, dst)
+                if dst.is_file():
+                    asset.folder = folder  # type: ignore[assignment]
+                    changed = True
+            if changed:
+                self.save(project)
+            return changed
 
     def lock(self, project_id: str) -> threading.RLock:
         with self._locks_guard:
@@ -152,6 +191,7 @@ class ProjectStore:
         duration: float | None = None,
         meta: dict[str, str] | None = None,
         move: bool = False,
+        folder: AssetFolder = "other",
     ) -> Asset:
         """把文件放进项目素材目录并登记到 ``project.assets``。
 
@@ -169,7 +209,7 @@ class ProjectStore:
         if ext and (not ext.startswith(".") or len(ext) > 8 or not ext[1:].isalnum()):
             raise ValueError(f"不支持的扩展名：{ext}")
         filename = f"{asset_id}{ext}"
-        target = self._inside(project.id, "assets", filename)
+        target = self._inside(project.id, "assets", folder, filename)
         target.parent.mkdir(parents=True, exist_ok=True)
         if move:
             shutil.move(str(source_file), target)
@@ -180,6 +220,7 @@ class ProjectStore:
             kind=kind,
             source=source,
             filename=filename,
+            folder=folder,
             sha256=digest,
             width=width,
             height=height,

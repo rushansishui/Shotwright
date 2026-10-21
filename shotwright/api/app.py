@@ -53,6 +53,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
     log.info("Shotwright %s 启动，日志写入 %s", __version__, log_path)
     ffmpeg.configure(settings.ffmpeg, settings.ffprobe)
     store = ProjectStore(settings.storage_dir)
+    visuals.organize_all(store)
     jobs = job_manager or JobManager(store, settings)
 
     @asynccontextmanager

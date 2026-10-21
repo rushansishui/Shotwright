@@ -70,10 +70,17 @@ tests/                   pytest
 ```text
 storage/projects/<项目id>/
 ├── project.json      项目状态（原子替换写入）
-├── assets/           <sha256 前 16 位>.<扩展名>
+├── assets/           素材按来源分目录，文件名 <sha256 前 16 位>.<扩展名>
+│   ├── ai-video/     AI 生成的视频（Seedance 等）
+│   ├── ai-image/     AI 生成的图片（Seedream 等）
+│   ├── stock/        素材库下载（Pixabay、Pexels）
+│   ├── upload/       用户上传的画面和音频
+│   └── other/        其他来源
 ├── cache/            voice/ shots/ assembly/ final/，按指纹命名，可随时删除
 └── renders/<渲染id>/ video.mp4、subtitles.srt、render.json
 ```
+
+素材的子目录记在 `Asset.folder`。v0.3 之前的项目素材直接放在 `assets/` 下，服务或命令行启动时会自动按来源移到对应子目录（先移动文件再保存项目，中途中断也能找到文件）；渲染缓存按内容哈希计算，移动后不会重新渲染。
 
 所有 id 只允许 `[A-Za-z0-9_-]`，路径都在项目目录内解析并校验，杜绝路径穿越。密钥不进入项目文件。
 

@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 from shotwright.config import Settings
-from shotwright.core.models import Asset, Project, Shot
+from shotwright.core.models import Asset, AssetFolder, Project, Shot
 from shotwright.core.store import ProjectStore
 from shotwright.media.ffmpeg import MediaError, probe
 from shotwright.providers import registry
@@ -30,6 +30,7 @@ def _register_media(
     path: Path,
     *,
     source: str,
+    folder: AssetFolder,
     meta: dict[str, str] | None = None,
 ) -> Asset:
     try:
@@ -51,6 +52,7 @@ def _register_media(
         duration=info.duration if kind == "video" else None,
         meta=meta,
         move=True,
+        folder=folder,
     )
 
 
@@ -94,7 +96,9 @@ def fetch_stock_candidates(
                 continue
             path = provider.download(candidate, Path(temp) / f"c{index}")
             meta = {**candidate.meta, "remote_id": candidate.remote_id, "preview_url": candidate.preview_url}
-            asset = _register_media(store, project, path, source=candidate.provider, meta=meta)
+            asset = _register_media(
+                store, project, path, source=candidate.provider, folder="stock", meta=meta
+            )
             added.append(asset.id)
             if len(added) >= limit:
                 break
@@ -217,7 +221,9 @@ def generate_ai_candidate(
             output=Path(temp) / "gen",
             first_frame=first_frame,
         )
-        asset = _register_media(store, project, path, source=provider_id or "video_gen", meta=meta)
+        asset = _register_media(
+            store, project, path, source=provider_id or "video_gen", folder="ai-video", meta=meta
+        )
     _attach(shot, [asset.id], select=True)
     return [asset.id]
 
@@ -239,7 +245,12 @@ def generate_image_candidate(
     with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
         path = provider.generate(shot.visual.prompt, aspect=project.canvas.aspect, output=Path(temp) / "gen")
         asset = _register_media(
-            store, project, path, source=provider_id or "image_gen", meta={"prompt": shot.visual.prompt[:500]}
+            store,
+            project,
+            path,
+            source=provider_id or "image_gen",
+            folder="ai-image",
+            meta={"prompt": shot.visual.prompt[:500]},
         )
     _attach(shot, [asset.id], select=True)
     return [asset.id]
@@ -312,7 +323,9 @@ def add_upload(store: ProjectStore, project: Project, path: Path, *, filename: s
         raise ProviderError("无法识别上传的文件，请上传常见的视频、图片或音频格式") from exc
     suffix = Path(filename).suffix.lower()
     if info.has_video and suffix not in {".mp3", ".m4a", ".wav", ".aac", ".flac", ".ogg"}:
-        return _register_media(store, project, path, source="upload", meta={"filename": filename[:200]})
+        return _register_media(
+            store, project, path, source="upload", folder="upload", meta={"filename": filename[:200]}
+        )
     if info.has_audio:
         return store.add_asset(
             project,
@@ -323,5 +336,39 @@ def add_upload(store: ProjectStore, project: Project, path: Path, *, filename: s
             duration=info.duration,
             meta={"filename": filename[:200]},
             move=True,
+            folder="upload",
         )
     raise ProviderError("上传的文件既没有画面也没有声音")
+
+
+# ---- 旧项目素材整理 ---------------------------------------------------------
+
+
+def asset_folder(asset: Asset) -> AssetFolder:
+    """按来源推断素材应放的子目录，用于整理 v0.3 之前的项目。"""
+    if asset.source == "upload":
+        return "upload"
+    ids = {kind: {spec.id for spec in registry.specs(kind)} for kind in ("stock", "video_gen", "image_gen")}
+    if asset.source in ids["stock"]:
+        return "stock"
+    if asset.kind == "video" and (asset.source in ids["video_gen"] or asset.source == "video_gen"):
+        return "ai-video"
+    if asset.kind == "image" and (asset.source in ids["image_gen"] or asset.source == "image_gen"):
+        return "ai-image"
+    return "other"
+
+
+def organize_all(store: ProjectStore) -> int:
+    """启动时把所有旧项目的素材移到按来源划分的子目录，返回整理了几个项目。"""
+    count = 0
+    for project in store.list():
+        if all(asset.folder for asset in project.assets.values()):
+            continue
+        try:
+            if store.organize_assets(project, asset_folder):
+                count += 1
+        except OSError as exc:
+            log.warning("整理项目 %s 的素材失败：%s", project.id, exc)
+    if count:
+        log.info("已把 %d 个旧项目的素材按来源分到子目录", count)
+    return count
