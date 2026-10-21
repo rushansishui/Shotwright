@@ -29,6 +29,7 @@ _BUILTIN_MODULES = (
     "shotwright.providers.stock.pexels",
     "shotwright.providers.video_gen.seedance",
     "shotwright.providers.image_gen.openai_images",
+    "shotwright.providers.music.archive",
 )
 
 

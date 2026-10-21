@@ -107,12 +107,22 @@ class SubtitleStyle(_Model):
 
 class BgmSettings(_Model):
     asset_id: str | None = None
+    """选中的背景音乐；为空时不用背景音乐。"""
+    candidates: list[str] = Field(default_factory=list)
+    """自动检索到的候选音频，界面用来切换。与 asset_id 独立，换来源时不清空。"""
+    query: str = ""
+    """上次检索用的词，界面上回填。"""
     volume: float = Field(0.2, ge=0.0, le=1.0)
 
     @field_validator("asset_id")
     @classmethod
     def _check_asset(cls, value: str | None) -> str | None:
         return None if value is None else validate_id(value)
+
+    @field_validator("candidates")
+    @classmethod
+    def _check_candidates(cls, value: list[str]) -> list[str]:
+        return [validate_id(item) for item in value]
 
 
 class ShotVisual(_Model):

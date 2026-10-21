@@ -64,7 +64,7 @@ export interface Project {
   canvas: { aspect: Aspect; fps: number };
   voice: VoiceSettings;
   subtitle: SubtitleStyle;
-  bgm: { asset_id: string | null; volume: number };
+  bgm: { asset_id: string | null; candidates?: string[]; query?: string; volume: number };
   shots: Shot[];
   assets: Record<string, Asset>;
   revision: number;

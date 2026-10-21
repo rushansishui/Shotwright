@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol
 
-ProviderKind = Literal["llm", "tts", "stock", "video_gen", "image_gen"]
+ProviderKind = Literal["llm", "tts", "stock", "video_gen", "image_gen", "music"]
 
 
 class ProviderError(RuntimeError):
@@ -127,3 +127,26 @@ class VideoGenProvider(Protocol):
 
 class ImageGenProvider(Protocol):
     def generate(self, prompt: str, *, aspect: str, output: Path) -> Path: ...
+
+
+@dataclass
+class MusicCandidate:
+    provider: str
+    remote_id: str
+    url: str
+    """下载地址。"""
+    title: str
+    duration: float
+    author: str = ""
+    preview_url: str = ""
+    meta: dict[str, str] = field(default_factory=dict)
+
+
+class MusicProvider(Protocol):
+    """背景音乐检索。返回的音频会作为普通 Asset 存进项目，渲染时循环到整片时长。"""
+
+    def search(
+        self, query: str, *, min_duration: float, max_duration: float, limit: int
+    ) -> list[MusicCandidate]: ...
+
+    def download(self, candidate: MusicCandidate, output: Path) -> Path: ...

@@ -735,6 +735,46 @@ input[type="color"] {
   display: flex;
   gap: 8px;
 }
+
+/* 背景音乐候选：一行一首，带试听。 */
+.bgm-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.bgm-candidate {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bgm-candidate.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.bgm-candidate-title {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bgm-candidate audio {
+  width: 100%;
+  height: 32px;
+}
+
 /* ---- 首页与设置 ---- */
 
 .project-list {
