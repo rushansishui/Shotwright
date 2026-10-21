@@ -174,7 +174,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
     @api.post("/projects", status_code=201)
     def create_project(body: CreateProject):
         lang = languages.get(body.language)
-        project = Project(title=body.title, subject=body.subject)
+        project = Project(title=body.title, subject=body.subject, target_seconds=body.duration)
         if body.canvas:
             project.canvas = body.canvas
         if not body.voice and settings.default_provider("tts"):
@@ -186,13 +186,14 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             project.voice = body.voice
         if body.mode == "llm":
             if not body.subject.strip():
-                raise HTTPException(422, "请填写视频主题")
+                raise HTTPException(422, "请填写视频诉求")
             llm = registry.create("llm", None, settings)
             title, shots = storyboard.generate_storyboard(
                 llm,
                 body.subject.strip(),
                 language=lang.prompt_name,
-                shots=body.shots,  # type: ignore[arg-type]
+                shots=body.shots,
+                duration=body.duration,
             )
             project.title = project.title or title
             project.shots = shots

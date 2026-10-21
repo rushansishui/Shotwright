@@ -48,7 +48,9 @@ def cmd_serve(args) -> int:
 
 def cmd_new(args) -> int:
     settings, store = _store(args)
-    project = Project(subject=args.subject or "", canvas=Canvas(aspect=args.aspect))
+    project = Project(
+        subject=args.subject or "", canvas=Canvas(aspect=args.aspect), target_seconds=args.duration
+    )
     tts = args.tts or settings.default_provider("tts") or "edge"
     project.voice = VoiceSettings(provider=tts)
     localize.apply_language(project, args.language)
@@ -62,7 +64,8 @@ def cmd_new(args) -> int:
             registry.create("llm", None, settings),
             args.subject,
             language=languages.get(args.language).prompt_name,
-            shots=args.shots,  # type: ignore[arg-type]
+            shots=args.shots,
+            duration=args.duration,
         )
         project.title, project.shots = title, shots
     else:
@@ -170,11 +173,12 @@ def build_parser() -> argparse.ArgumentParser:
     serve.set_defaults(func=cmd_serve)
 
     new = sub.add_parser("new", help="新建项目")
-    new.add_argument("--subject", help="视频主题")
+    new.add_argument("--subject", help="视频诉求：想要什么内容（最多 4096 字节）")
     new.add_argument("--script", help="视频文案")
     new.add_argument("--script-file", help="从文件读取文案（UTF-8）")
     new.add_argument("--llm", action="store_true", help="让大模型根据主题写文案并拆镜头")
-    new.add_argument("--shots", type=int, default=6, help="期望的镜头数量（--llm 时有效）")
+    new.add_argument("--shots", type=int, default=None, help="期望的镜头数量；默认由大模型决定")
+    new.add_argument("--duration", type=float, default=None, help="目标总时长（秒）；默认由大模型决定")
     new.add_argument("--aspect", choices=["9:16", "16:9", "1:1"], default="9:16")
     new.add_argument(
         "--language", choices=list(languages.LANGUAGES), default=languages.DEFAULT_LANGUAGE, help="视频语言"

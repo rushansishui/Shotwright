@@ -4,12 +4,20 @@ import { useI18n } from "../i18n";
 import type { Aspect, LanguageInfo, ProjectSummary, Providers } from "../types";
 import { Segmented } from "./Controls";
 
+/** 视频诉求的上限，和后端 schemas.MAX_SUBJECT_BYTES 一致。 */
+const MAX_SUBJECT_BYTES = 4096;
+
+/** 按 UTF-8 计算字节数：中文一个字 3 字节，emoji 4 字节。 */
+function utf8Bytes(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
 export function Home() {
   const [mode, setMode] = useState<"llm" | "split">("llm");
   const [subject, setSubject] = useState("");
   const [script, setScript] = useState("");
   const [aspect, setAspect] = useState<Aspect>("9:16");
-  const [shots, setShots] = useState(6);
+  const [duration, setDuration] = useState(30);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -25,7 +33,9 @@ export function Home() {
   }, []);
 
   const llmReady = providers?.llm?.some((p) => p.default && p.configured) ?? false;
-  const canSubmit = mode === "llm" ? subject.trim().length > 0 : script.trim().length > 0;
+  const subjectBytes = utf8Bytes(subject);
+  const tooLong = subjectBytes > MAX_SUBJECT_BYTES;
+  const canSubmit = mode === "llm" ? subject.trim().length > 0 && !tooLong : script.trim().length > 0;
 
   async function create() {
     setBusy(true);
@@ -37,7 +47,9 @@ export function Home() {
         script: mode === "split" ? script : "",
         canvas: { aspect },
         language,
-        shots,
+        // 镜头数交给大模型按诉求和时长决定。
+        shots: null,
+        duration: mode === "llm" ? duration : null,
       });
       window.location.hash = `#/p/${project.id}`;
     } catch (e) {
@@ -64,15 +76,22 @@ export function Home() {
         />
         {mode === "llm" ? (
           <div className="field">
-            <label htmlFor="subject">{t("home.subject")}</label>
-            <input
+            <div className="field-row">
+              <label htmlFor="subject">{t("home.subject")}</label>
+              <span className={`muted small ${tooLong ? "bad" : ""}`}>
+                {subjectBytes} / {MAX_SUBJECT_BYTES} {t("home.subjectBytes")}
+              </span>
+            </div>
+            <textarea
               id="subject"
               className="input"
+              rows={5}
               placeholder={t("home.subjectPlaceholder")}
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && canSubmit && !busy && create()}
+              aria-invalid={tooLong}
             />
+            {tooLong && <p className="hint error">{t("home.subjectTooLong")}</p>}
             {providers && !llmReady && (
               <p className="hint warn">{t("home.llmMissing")}</p>
             )}
@@ -120,10 +139,19 @@ export function Home() {
           {mode === "llm" && (
             <div className="field">
               <div className="field-row">
-                <label htmlFor="shots">{t("home.shots")}</label>
-                <span className="muted">{t("home.shotsValue", { n: shots })}</span>
+                <label htmlFor="duration">{t("home.duration")}</label>
+                <span className="muted">{t("home.durationValue", { n: duration })}</span>
               </div>
-              <input id="shots" type="range" min={3} max={15} value={shots} onChange={(e) => setShots(Number(e.target.value))} />
+              <input
+                id="duration"
+                type="range"
+                min={10}
+                max={180}
+                step={5}
+                value={duration}
+                onChange={(e) => setDuration(Number(e.target.value))}
+              />
+              <p className="hint">{t("home.durationHint")}</p>
             </div>
           )}
         </div>

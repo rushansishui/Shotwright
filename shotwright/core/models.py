@@ -186,8 +186,11 @@ class Project(_Model):
     id: str = Field(default_factory=new_id)
     title: str = ""
     subject: str = ""
+    """视频诉求：用户想要的内容。最多 4096 字节（UTF-8），由 API 层校验。"""
     language: str = "zh-CN"
     """视频内容的语言（BCP-47，例如 zh-CN、en-US），决定文案语言、默认配音和字幕字体。"""
+    target_seconds: float | None = None
+    """目标总时长（秒）。只影响生成时的镜头数和文案长度；成片以实际配音为准。"""
     group: str | None = None
     """同一个视频的不同语言版本共用一个 group（原始项目的 id）。"""
     canvas: Canvas = Field(default_factory=Canvas)

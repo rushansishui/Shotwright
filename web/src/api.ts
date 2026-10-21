@@ -63,7 +63,10 @@ export const api = {
     script?: string;
     canvas?: { aspect: string; fps?: number };
     voice?: Partial<VoiceSettings>;
-    shots?: number;
+    /** 为空时由大模型按目标时长和诉求自行决定镜头数。 */
+    shots?: number | null;
+    /** 目标总时长（秒）；为空时由大模型估算。 */
+    duration?: number | null;
   }) => request<Project>("/projects", json("POST", body)),
   updateProject: (
     id: string,
