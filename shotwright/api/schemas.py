@@ -6,16 +6,14 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from shotwright.core.models import BgmSettings, Canvas, SubtitleStyle, VisualMode, VoiceSettings
-
-MAX_SUBJECT_BYTES = 4096
-"""视频诉求内容的上限（UTF-8 字节）。中文一个字占 3 字节，约 1365 个汉字。"""
-
-
-def _check_subject_bytes(value: str) -> str:
-    if len(value.encode("utf-8")) > MAX_SUBJECT_BYTES:
-        raise ValueError(f"视频诉求最多 {MAX_SUBJECT_BYTES} 字节")
-    return value
+from shotwright.core.models import (
+    BgmSettings,
+    Canvas,
+    SubtitleStyle,
+    VisualMode,
+    VoiceSettings,
+    check_subject,
+)
 
 
 class _Body(BaseModel):
@@ -41,7 +39,7 @@ class CreateProject(_Body):
     @field_validator("subject")
     @classmethod
     def _subject_within_limit(cls, value: str) -> str:
-        return _check_subject_bytes(value)
+        return check_subject(value)
 
 
 class UpdateProject(_Body):
@@ -60,7 +58,7 @@ class UpdateProject(_Body):
     @field_validator("subject")
     @classmethod
     def _subject_within_limit(cls, value: str | None) -> str | None:
-        return None if value is None else _check_subject_bytes(value)
+        return None if value is None else check_subject(value)
 
 
 class VisualPatch(_Body):

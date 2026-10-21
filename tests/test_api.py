@@ -255,3 +255,42 @@ def test_delete_refuses_while_rendering(client):
         with jobs._lock:
             jobs._jobs.pop(running.id, None)
             jobs._cancel.pop(running.id, None)
+
+
+def test_subject_limit_is_enforced_by_api(client):
+    from shotwright.core.models import MAX_SUBJECT_BYTES
+
+    ok = client.post("/api/v2/projects", json={"mode": "empty", "subject": "a" * MAX_SUBJECT_BYTES})
+    assert ok.status_code == 201
+    too_long = client.post(
+        "/api/v2/projects", json={"mode": "empty", "subject": "a" * (MAX_SUBJECT_BYTES + 1)}
+    )
+    assert too_long.status_code == 422
+    # 中文按 UTF-8 字节算：1366 个汉字 = 4098 字节，超限。
+    chinese = client.post("/api/v2/projects", json={"mode": "empty", "subject": "字" * 1366})
+    assert chinese.status_code == 422
+    assert client.post("/api/v2/projects", json={"mode": "empty", "subject": "字" * 1365}).status_code == 201
+
+
+def test_subject_limit_is_enforced_by_model():
+    import pytest
+
+    from shotwright.core.models import MAX_SUBJECT_BYTES, Project
+
+    assert len(Project(subject="a" * MAX_SUBJECT_BYTES).subject) == MAX_SUBJECT_BYTES
+    with pytest.raises(ValueError, match="4096"):
+        Project(subject="a" * (MAX_SUBJECT_BYTES + 1))
+
+
+def test_patch_updates_target_seconds(client):
+    pid = _create(client)["id"]
+    r = client.patch(f"/api/v2/projects/{pid}", json={"target_seconds": 45})
+    assert r.status_code == 200 and r.json()["target_seconds"] == 45
+    assert client.patch(f"/api/v2/projects/{pid}", json={"target_seconds": 0}).status_code == 422
+
+
+def test_create_project_saves_duration(client):
+    project = client.post(
+        "/api/v2/projects", json={"mode": "split", "script": "一。二。", "duration": 30}
+    ).json()
+    assert project["target_seconds"] == 30

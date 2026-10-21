@@ -58,6 +58,8 @@ export interface Project {
   title: string;
   subject: string;
   language: string;
+  target_seconds: number | null;
+  /** 目标总时长（秒）；成片以实际配音为准。 */
   group: string | null;
   canvas: { aspect: Aspect; fps: number };
   voice: VoiceSettings;

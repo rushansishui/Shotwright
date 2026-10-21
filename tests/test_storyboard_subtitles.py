@@ -125,3 +125,16 @@ def test_llm_presets_only_need_a_key(settings):
     assert llm.base_url == "https://api.deepseek.com" and llm.model == "deepseek-flash"
     settings.providers["llm"]["kimi"] = {"api_key": "k", "model": "kimi-custom"}
     assert registry.create("llm", "kimi", settings).model == "kimi-custom"
+
+
+def test_length_rule_combinations():
+    from shotwright.services.storyboard import _length_rule
+
+    assert "6 个镜头" in _length_rule(6, None)
+    assert "30 秒" in _length_rule(None, 30)
+    # 30 秒按每镜头 4–8 秒推算：约 4–8 个。
+    assert "4–8" in _length_rule(None, 30)
+    both = _length_rule(5, 40)
+    assert "5 个镜头" in both and "40 秒" in both
+    # 都没给时由模型自己定。
+    assert "由你" in _length_rule(None, None)
