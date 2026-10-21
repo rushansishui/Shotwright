@@ -566,6 +566,27 @@ input[type="color"] {
   border-color: var(--accent);
 }
 
+/* 「这个镜头还有 N 个其他来源的素材」提示，里面的来源名可以点击切换。 */
+.elsewhere {
+  margin: 6px 0 0;
+}
+
+.linkish {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.linkish:disabled {
+  color: inherit;
+  text-decoration: none;
+  cursor: default;
+}
+
 .candidate-media {
   display: block;
   width: 64px;
@@ -714,7 +735,6 @@ input[type="color"] {
   display: flex;
   gap: 8px;
 }
-
 /* ---- 首页与设置 ---- */
 
 .project-list {

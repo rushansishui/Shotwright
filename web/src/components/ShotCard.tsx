@@ -67,6 +67,14 @@ export function ShotCard(props: {
     return mode;
   };
   const shown = visual.mode === "color" ? [] : visual.candidates.filter((id) => modeOf(project.assets[id]) === visual.mode);
+  /** 属于其他画面来源的候选素材：切过去就能看到，这里给出数量提示。 */
+  const elsewhere: { mode: VisualMode; count: number }[] = ["stock", "ai", "image", "upload"]
+    .filter((mode) => mode !== visual.mode)
+    .map((mode) => ({
+      mode: mode as VisualMode,
+      count: visual.candidates.filter((id) => modeOf(project.assets[id]) === mode).length,
+    }))
+    .filter((entry) => entry.count > 0);
   // AI 视频的首帧可以从这个镜头的任意图片里选（AI 图片或上传的图片）。
   const frameChoices = visual.mode === "ai" ? visual.candidates.filter((id) => project.assets[id]?.kind === "image") : [];
   const firstFrame = visual.mode === "ai" && !!visual.first_frame && !!project.assets[visual.first_frame];
@@ -300,6 +308,25 @@ export function ShotCard(props: {
               </button>
             ))}
           </div>
+        )}
+        {elsewhere.length > 0 && (
+          <p className="muted small elsewhere">
+            {t("shot.elsewhere")}{" "}
+            {elsewhere.map((entry, position) => (
+              <span key={entry.mode}>
+                {position > 0 && "、"}
+                <button
+                  type="button"
+                  className="linkish"
+                  disabled={visual.locked}
+                  onClick={() => props.onUpdate({ visual: { mode: entry.mode } })}
+                >
+                  {t(`shot.mode.${entry.mode}`)} {t("shot.elsewhereCount", { n: entry.count })}
+                </button>
+              </span>
+            ))}
+            {t("shot.elsewhereHint")}
+          </p>
         )}
         {shot.error && <p className="hint error">{shot.error}</p>}
       </div>
