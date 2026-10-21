@@ -49,6 +49,8 @@ class SilentTTS:
 
 
 registry.register(
-    ProviderSpec(kind="tts", id="silent", name="静音（离线预览）", offline=True),
+    ProviderSpec(
+        kind="tts", id="silent", name="静音（离线预览）", name_en="Silent (offline preview)", offline=True
+    ),
     lambda settings: SilentTTS(),
 )

@@ -186,6 +186,7 @@ registry.register(
         kind="music",
         id="archive",
         name="Internet Archive（免 Key）",
+        name_en="Internet Archive (no key)",
         fields=(
             ConfigField("collection", "限定合集", help="留空搜索全部公开音频，例如 opensource_audio"),
             ConfigField("timeout", "超时（秒）", default="30"),

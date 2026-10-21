@@ -55,6 +55,7 @@ PRESETS: tuple[dict, ...] = (
     {
         "id": "doubao",
         "name": "豆包 Seed（火山方舟）",
+        "name_en": "Doubao Seed (Volcengine Ark)",
         "base_url": "https://ark.cn-beijing.volces.com/api/v3",
         "model": "doubao-seed-2-1-pro-260915",
         "timeout": "300",
@@ -63,6 +64,7 @@ PRESETS: tuple[dict, ...] = (
     {
         "id": "deepseek",
         "name": "DeepSeek",
+        "name_en": "DeepSeek",
         "base_url": "https://api.deepseek.com",
         "model": "deepseek-flash",
         "timeout": "180",
@@ -71,6 +73,7 @@ PRESETS: tuple[dict, ...] = (
     {
         "id": "kimi",
         "name": "Kimi（月之暗面）",
+        "name_en": "Kimi (Moonshot AI)",
         "base_url": "https://api.moonshot.cn/v1",
         "model": "kimi-k3",
         "timeout": "300",
@@ -79,6 +82,7 @@ PRESETS: tuple[dict, ...] = (
     {
         "id": "qwen",
         "name": "通义千问（阿里云百炼）",
+        "name_en": "Qwen (Alibaba Cloud Model Studio)",
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "model": "qwen-plus",
         "timeout": "180",
@@ -92,6 +96,7 @@ for preset in PRESETS:
             kind="llm",
             id=preset["id"],
             name=preset["name"],
+            name_en=preset["name_en"],
             fields=(
                 ConfigField("api_key", "API Key", required=True, secret=True),
                 ConfigField("model", "模型", required=True, default=preset["model"]),
@@ -109,6 +114,7 @@ registry.register(
         kind="llm",
         id="openai",
         name="OpenAI 兼容接口（自定义）",
+        name_en="OpenAI-compatible API (custom)",
         fields=(
             ConfigField("api_key", "API Key", secret=True),
             ConfigField("base_url", "Base URL", default="https://api.openai.com/v1"),

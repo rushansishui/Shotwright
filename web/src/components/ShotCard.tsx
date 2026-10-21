@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { assetUrl, estimateSeconds } from "../api";
-import { useI18n } from "../i18n";
+import { providerName, useI18n } from "../i18n";
 import type { Asset, Project, ProviderInfo, Shot, VisualMode, VisualPatch } from "../types";
 import { Icon, Segmented } from "./Controls";
 
@@ -51,7 +51,7 @@ export function ShotCard(props: {
   const [terms, setTerms] = useState(visual.terms.join(", "));
   const [prompt, setPrompt] = useState(visual.prompt);
   const fileInput = useRef<HTMLInputElement>(null);
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
 
   useEffect(() => setText(shot.text), [shot.text]);
   useEffect(() => setTerms(visual.terms.join(", ")), [visual.terms]);
@@ -90,7 +90,7 @@ export function ShotCard(props: {
       visual.mode === "ai"
         ? t(firstFrame ? "shot.confirm.videoFirstFrame" : "shot.confirm.video")
         : t("shot.confirm.image");
-    const cost = generator.paid ? `\n${t("shot.confirm.cost", { name: generator.name })}` : "";
+    const cost = generator.paid ? `\n${t("shot.confirm.cost", { name: providerName(generator, lang) })}` : "";
     if (window.confirm(t("shot.confirm.question", { n: index + 1, what }) + cost)) {
       props.onCandidates(true, prompt !== visual.prompt ? prompt : undefined);
     }
@@ -150,7 +150,7 @@ export function ShotCard(props: {
               if (provider === null && visual.mode !== value) {
                 return { ...m, disabled: true, title: t("shot.notConfigured", { name: m.label }) };
               }
-              return provider?.paid ? { ...m, title: `${provider.name}${t("common.paidSuffix")}` } : m;
+              return provider?.paid ? { ...m, title: `${providerName(provider, lang)}${t("common.paidSuffix")}` } : m;
             })}
             disabled={visual.locked || props.busy}
             onChange={(mode) => props.onUpdate({ visual: { mode } })}
@@ -205,7 +205,7 @@ export function ShotCard(props: {
               type="button"
               className="btn"
               disabled={props.busy || visual.locked || !generator || !prompt.trim()}
-              title={generator ? `${generator.name}${generator.paid ? t("common.paidSuffix") : ""}` : t("shot.noGenerator")}
+              title={generator ? `${providerName(generator, lang)}${generator.paid ? t("common.paidSuffix") : ""}` : t("shot.noGenerator")}
               onClick={generate}
             >
               {props.busy ? (
@@ -314,7 +314,7 @@ export function ShotCard(props: {
             {t("shot.elsewhere")}{" "}
             {elsewhere.map((entry, position) => (
               <span key={entry.mode}>
-                {position > 0 && "、"}
+                {position > 0 && t("shot.elsewhereSep")}
                 <button
                   type="button"
                   className="linkish"

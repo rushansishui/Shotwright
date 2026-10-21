@@ -52,6 +52,8 @@ class ProviderSpec:
     id: str
     name: str
     fields: tuple[ConfigField, ...] = ()
+    name_en: str = ""
+    """英文界面显示的名称；为空时用 ``name``。"""
     capabilities: frozenset[str] = field(default_factory=frozenset)
     paid: bool = False
     """调用是否会产生费用。收费操作在界面和 API 上都需要用户确认。"""

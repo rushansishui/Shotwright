@@ -84,6 +84,7 @@ export interface ProjectSummary {
 export interface ProviderInfo {
   id: string;
   name: string;
+  name_en: string;
   paid: boolean;
   offline: boolean;
   configured: boolean;

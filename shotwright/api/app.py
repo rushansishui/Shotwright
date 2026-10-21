@@ -119,6 +119,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 {
                     "id": spec.id,
                     "name": spec.name,
+                    "name_en": spec.name_en or spec.name,
                     "paid": spec.paid,
                     "offline": spec.offline,
                     "docs_url": spec.docs_url,

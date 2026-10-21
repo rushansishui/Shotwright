@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { useI18n } from "../i18n";
+import { providerName, useI18n } from "../i18n";
 import type { MessageKey } from "../messages";
 import type { Providers } from "../types";
 
@@ -8,7 +8,7 @@ import type { Providers } from "../types";
 export function Settings() {
   const [providers, setProviders] = useState<Providers | null>(null);
   const [error, setError] = useState("");
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const kindName = (kind: string) =>
     ["llm", "tts", "stock", "video_gen", "image_gen"].includes(kind) ? t(`status.kind.${kind}` as MessageKey) : kind;
 
@@ -42,10 +42,10 @@ export function Settings() {
                       <td>
                         {p.docs_url ? (
                           <a href={p.docs_url} target="_blank" rel="noreferrer">
-                            {p.name}
+                            {providerName(p, lang)}
                           </a>
                         ) : (
-                          p.name
+                          providerName(p, lang)
                         )}
                         {p.default && <span className="tag">{t("status.default")}</span>}
                         {p.paid && <span className="tag warn">{t("status.paid")}</span>}
