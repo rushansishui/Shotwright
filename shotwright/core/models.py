@@ -19,6 +19,17 @@ from shotwright.core.ids import new_id
 
 SCHEMA_VERSION = 1
 
+MAX_SUBJECT_BYTES = 4096
+"""视频诉求内容的上限（UTF-8 字节）。中文一个字占 3 字节，约 1365 个汉字。"""
+
+
+def check_subject(subject: str) -> str:
+    """校验视频诉求长度。三个入口（网页、API、命令行）都走这里。"""
+    if len(subject.encode("utf-8")) > MAX_SUBJECT_BYTES:
+        raise ValueError(f"视频诉求最多 {MAX_SUBJECT_BYTES} 字节")
+    return subject
+
+
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 _HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
@@ -186,10 +197,10 @@ class Project(_Model):
     id: str = Field(default_factory=new_id)
     title: str = ""
     subject: str = ""
-    """视频诉求：用户想要的内容。最多 4096 字节（UTF-8），由 API 层校验。"""
+    """视频诉求：用户想要的内容。最多 4096 字节（UTF-8）。"""
     language: str = "zh-CN"
     """视频内容的语言（BCP-47，例如 zh-CN、en-US），决定文案语言、默认配音和字幕字体。"""
-    target_seconds: float | None = None
+    target_seconds: float | None = Field(None, gt=0, le=1800)
     """目标总时长（秒）。只影响生成时的镜头数和文案长度；成片以实际配音为准。"""
     group: str | None = None
     """同一个视频的不同语言版本共用一个 group（原始项目的 id）。"""
@@ -202,6 +213,11 @@ class Project(_Model):
     revision: int = 0
     created_at: float = Field(default_factory=time.time)
     updated_at: float = Field(default_factory=time.time)
+
+    @field_validator("subject")
+    @classmethod
+    def _check_subject(cls, value: str) -> str:
+        return check_subject(value)
 
     @field_validator("group")
     @classmethod

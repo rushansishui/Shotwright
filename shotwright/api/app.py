@@ -215,7 +215,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 if body.language not in languages.LANGUAGES:
                     raise ValueError("不支持的语言")
                 localize.apply_language(project, body.language)
-            for name in ("title", "subject", "canvas", "voice", "subtitle", "bgm"):
+            for name in ("title", "subject", "target_seconds", "canvas", "voice", "subtitle", "bgm"):
                 value = getattr(body, name)
                 if value is not None:
                     setattr(project, name, value)

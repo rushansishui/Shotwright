@@ -1,17 +1,19 @@
 # Shotwright 镜匠
 
-**从一句话到成片：AI 写文案、按分镜生成或检索画面、自动配音和字幕，每个镜头都可以单独调整。**
+简体中文 | [English](README.en.md)
+
+**从一段视频诉求到成片：AI 写文案、按分镜生成或检索画面、自动配音和字幕，每个镜头都可以单独调整。**
 
 Shotwright 以"镜头"为核心：文案被拆成一个个镜头，每个镜头可以单独选择画面来源（素材库检索、AI 生成、上传图片或视频），可以替换、锁定、单独重做。改一个镜头，只会重新渲染这个镜头，再加上最后的拼接导出。
 
-> 当前版本：v0.2.0（开发中）。路线图见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+> 当前版本：v0.3.0（开发中）。路线图见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 ## 功能
 
-- **分镜编辑**：按句子拆分镜头，或者让大模型根据主题写文案、拆镜头，并给出检索词和画面提示词。
+- **分镜编辑**：按句子拆分镜头，或者写下视频诉求（受众、风格、要讲的重点，最多 4096 字节）并选好时长，让大模型写文案、自动决定镜头数，并给出检索词和画面提示词。
 - **画面混用**：同一个视频里，有的镜头用 Pixabay / Pexels 素材，有的用 AI 视频（Seedance）或 AI 图片（Seedream + 慢推镜头），有的用自己上传的图片或视频。AI 图片还可以作为 AI 视频的首帧。
 - **收费确认**：所有收费生成都需要在界面上确认后才会提交；提交结果无法确认时不会自动重试，避免重复扣费。
-- **增量渲染**：每个阶段按输入计算指纹并缓存，没改的镜头直接复用。
+- **增量渲染**：每个阶段按输入计算指纹并缓存，没改的镜头直接复用；渲染可以随时取消。
 - **配音与字幕**：免费的 Edge 在线语音；字幕按真实字体宽度自动换行，行长均衡。
 - **三种入口**：网页界面、REST API（`/api/v2`）、命令行，共用同一套服务和渲染队列。
 - **多语种**：视频可以是中文、英语、日语、韩语、西班牙语等 16 种语言，自动匹配配音声音和字幕字体；一个视频可以一键翻译出其他语言版本（画面共用，只换文案、配音和字幕）。网页界面支持中文 / English 切换。
@@ -44,7 +46,7 @@ shotwright serve
 
 ```bash
 shotwright new --script-file 文案.txt --aspect 9:16       # 按句拆成镜头
-shotwright new --subject "人工智能如何改变日常生活" --llm   # 让大模型写文案并拆镜头
+shotwright new --subject "人工智能如何改变日常生活" --llm --duration 45   # 让大模型写约 45 秒的文案并拆镜头
 shotwright show <项目id>
 shotwright shot <项目id> 2 --text "新的文案" --terms "city night,traffic"
 shotwright render <项目id>                                # 只重做有改动的镜头
@@ -82,4 +84,4 @@ Shotwright 是一个全新编写的项目，部分设计和实现参考了 [Mone
 
 ## 许可证
 
-[MIT](LICENSE)。内置字体 Noto Sans SC 使用 [SIL Open Font License 1.1](resources/fonts/OFL-NotoSansSC.txt)。
+[MIT](LICENSE)。内置字体 Noto Sans SC / KR / Thai 使用 SIL Open Font License 1.1（见 [resources/fonts](resources/fonts)）。

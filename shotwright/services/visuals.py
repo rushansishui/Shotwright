@@ -54,6 +54,17 @@ def _register_media(
     )
 
 
+def _fallback_terms(project: Project) -> list[str]:
+    """镜头没填检索词时的兜底：只有视频诉求足够短才拿来当检索词。
+
+    视频诉求可以是 4096 字节的整段说明，直接当检索词基本搜不到东西，还会浪费请求。
+    """
+    subject = project.subject.strip()
+    if not subject or len(subject.encode("utf-8")) > MAX_FALLBACK_TERM_BYTES:
+        return []
+    return [subject]
+
+
 def fetch_stock_candidates(
     store: ProjectStore,
     settings: Settings,
@@ -64,7 +75,7 @@ def fetch_stock_candidates(
 ) -> list[str]:
     """按检索词找素材并下载前 ``limit`` 个，返回新增的素材 id。"""
     provider: StockProvider = registry.create("stock", _provider_id(settings, "stock", shot), settings)  # type: ignore[assignment]
-    terms = shot.visual.terms or ([project.subject] if project.subject else [])
+    terms = shot.visual.terms or _fallback_terms(project)
     if not terms:
         raise ProviderError("这个镜头没有检索词，请先填写英文检索词")
     min_duration = min(estimated_shot_seconds(project, shot), 10.0)
@@ -121,6 +132,8 @@ def require_charge_confirmation(
 
 
 MAX_CANDIDATES = 30
+MAX_FALLBACK_TERM_BYTES = 80
+"""视频诉求短于这个长度才拿它当兜底检索词（见 :func:`_fallback_terms`）。"""
 _MODE_KINDS = (("stock", "stock"), ("ai", "video_gen"), ("image", "image_gen"))
 
 

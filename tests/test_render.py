@@ -211,3 +211,26 @@ def test_color_mode_ignores_selected_asset(store, settings, tmp_path):
     )
     r, g, b = out.read_bytes()[:3]
     assert r > 200 and g < 60 and b < 60  # 纯红，没有用到选中的视频
+
+
+def test_long_brief_is_not_used_as_stock_query(store, settings):
+    """视频诉求可能是整段说明，不能直接当素材检索词。"""
+    settings.auto_fetch_visuals = True
+    FakeStock.calls.clear()
+    long_brief = "请做一条关于城市夜景的片子，" * 20  # 远超 80 字节
+    shot = Shot(text="画面。", visual=ShotVisual(mode="stock"))
+    project = store.create(Project(subject=long_brief, voice=VoiceSettings(provider="silent"), shots=[shot]))
+    result = Renderer(store, settings).render(project.id)
+    assert FakeStock.calls == []
+    assert result.warnings and "检索词" in result.warnings[0]
+
+
+def test_short_topic_is_still_a_fallback_query(store, settings):
+    settings.auto_fetch_visuals = True
+    FakeStock.calls.clear()
+    shot = Shot(text="画面。", visual=ShotVisual(mode="stock"))
+    project = store.create(
+        Project(subject="city night", voice=VoiceSettings(provider="silent"), shots=[shot])
+    )
+    Renderer(store, settings).render(project.id)
+    assert FakeStock.calls == ["city night"]
