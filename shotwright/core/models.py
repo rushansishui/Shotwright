@@ -36,10 +36,21 @@ _HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
 Aspect = Literal["9:16", "16:9", "1:1"]
 VisualMode = Literal["stock", "ai", "image", "upload", "color"]
 AssetKind = Literal["video", "image", "audio"]
-AssetFolder = Literal["ai-video", "ai-image", "stock", "upload", "music", "other"]
-"""素材在 ``assets/`` 下的子目录：AI 视频、AI 图片、素材库下载、用户上传、背景音乐、其他。"""
-ASSET_FOLDERS: tuple[str, ...] = ("ai-video", "ai-image", "stock", "upload", "music", "other")
+AssetFolder = Literal["ai-video", "ai-image", "stock", "upload", "music", "reference", "other"]
+"""素材在 ``assets/`` 下的子目录：AI 视频、AI 图片、素材库下载、用户上传、背景音乐、参考素材、其他。"""
+ASSET_FOLDERS: tuple[str, ...] = (
+    "ai-video",
+    "ai-image",
+    "stock",
+    "upload",
+    "music",
+    "reference",
+    "other",
+)
 ShotStatus = Literal["draft", "ready", "rendering", "done", "failed"]
+
+ReferenceRole = Literal["product", "person", "logo", "style"]
+"""参考素材的角色：产品外观、人物形象、品牌 Logo、整体风格。"""
 
 _RESOLUTIONS: dict[str, tuple[int, int]] = {
     "9:16": (1080, 1920),
@@ -231,6 +242,27 @@ class Asset(_Model):
         return value
 
 
+class ReferenceAsset(_Model):
+    """项目级参考素材：生成画面时作为产品外观、人物形象、Logo 或风格参考。"""
+
+    asset_id: str
+    role: ReferenceRole = "product"
+    label: str = ""
+    """界面上的简短说明，例如「正面包装」「模特 A」。"""
+    enabled: bool = True
+    """关闭后不参与生成，但保留在库里。"""
+
+    @field_validator("asset_id")
+    @classmethod
+    def _check_asset(cls, value: str) -> str:
+        return validate_id(value)
+
+    @field_validator("label")
+    @classmethod
+    def _check_label(cls, value: str) -> str:
+        return value[:100]
+
+
 class Project(_Model):
     schema_version: int = SCHEMA_VERSION
     id: str = Field(default_factory=new_id)
@@ -247,6 +279,8 @@ class Project(_Model):
     voice: VoiceSettings = Field(default_factory=VoiceSettings)
     subtitle: SubtitleStyle = Field(default_factory=SubtitleStyle)
     bgm: BgmSettings = Field(default_factory=BgmSettings)
+    references: list[ReferenceAsset] = Field(default_factory=list)
+    """项目级参考素材库：产品图、人物设定、Logo、风格图。镜头生成时作为参考。"""
     shots: list[Shot] = Field(default_factory=list)
     assets: dict[str, Asset] = Field(default_factory=dict)
     revision: int = 0

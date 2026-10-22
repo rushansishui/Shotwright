@@ -62,6 +62,15 @@ export interface Asset {
   meta: Record<string, string>;
 }
 
+export type ReferenceRole = "product" | "person" | "logo" | "style";
+
+export interface ReferenceAsset {
+  asset_id: string;
+  role: ReferenceRole;
+  label: string;
+  enabled: boolean;
+}
+
 export interface Project {
   id: string;
   title: string;
@@ -74,6 +83,7 @@ export interface Project {
   voice: VoiceSettings;
   subtitle: SubtitleStyle;
   bgm: { asset_id: string | null; candidates?: string[]; query?: string; volume: number };
+  references: ReferenceAsset[];
   shots: Shot[];
   assets: Record<string, Asset>;
   revision: number;

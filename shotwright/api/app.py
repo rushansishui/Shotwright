@@ -371,12 +371,19 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 "voice",
                 "subtitle",
                 "bgm",
+                "references",
             ):
                 value = getattr(body, name)
                 if value is not None:
                     setattr(project, name, value)
             if project.bgm.asset_id and project.bgm.asset_id not in project.assets:
                 raise ValueError("背景音乐素材不存在")
+            for ref in project.references:
+                asset = project.assets.get(ref.asset_id)
+                if asset is None:
+                    raise ValueError("参考素材不存在")
+                if asset.kind != "image":
+                    raise ValueError("参考素材必须是图片")
 
         return _mutate(project_id, change)
 

@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from shotwright.core.models import (
     BgmSettings,
     Canvas,
+    ReferenceAsset,
     SubtitleStyle,
     VisualMode,
     VoiceSettings,
@@ -54,6 +55,8 @@ class UpdateProject(_Body):
     voice: VoiceSettings | None = None
     subtitle: SubtitleStyle | None = None
     bgm: BgmSettings | None = None
+    references: list[ReferenceAsset] | None = None
+    """项目级参考素材库；整体替换。"""
 
     @field_validator("subject")
     @classmethod

@@ -7,6 +7,7 @@ import { Versions } from "./Versions";
 import { ShotCard } from "./ShotCard";
 import { useEditor } from "./editor/useEditor";
 import { BgmSection } from "./editor/BgmSection";
+import { ReferencesSection } from "./editor/ReferencesSection";
 
 export function Editor({ projectId }: { projectId: string }) {
   const {
@@ -149,7 +150,11 @@ export function Editor({ projectId }: { projectId: string }) {
           </div>
         </Section>
 
-        <Section step={2} title={t("editor.audio")}>
+        <Section step={2} title={t("references.title")}>
+          <ReferencesSection project={project} run={run} setError={setError} />
+        </Section>
+
+        <Section step={3} title={t("editor.audio")}>
           <div className="field">
             <div className="field-row">
               <label htmlFor="language">{t("editor.language")}</label>
@@ -231,7 +236,7 @@ export function Editor({ projectId }: { projectId: string }) {
         </Section>
 
         <Section
-          step={3}
+          step={4}
           title={t("editor.subtitles")}
           extra={
             <label className="switch">

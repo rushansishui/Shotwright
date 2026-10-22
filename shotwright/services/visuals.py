@@ -252,6 +252,48 @@ def _first_frame(store: ProjectStore, project: Project, shot: Shot) -> Path | No
     return store.asset_path(project, asset.id)
 
 
+_ROLE_HINTS = {
+    "product": "产品外观参考：保持商品形状、颜色、材质、logo 位置与参考图一致，不要重新设计商品",
+    "person": "人物参考：保持人物的五官、发型、肤色与参考图一致",
+    "logo": "Logo 参考：保持 Logo 的图形与颜色不变，清晰可辨",
+    "style": "风格参考：沿用参考图的色调、光线与画面质感",
+}
+
+
+def reference_assets(project: Project, *, roles: tuple[str, ...] | None = None) -> list:
+    """项目里启用的参考素材（按角色过滤）。"""
+    result = []
+    for ref in project.references:
+        if not ref.enabled:
+            continue
+        if roles is not None and ref.role not in roles:
+            continue
+        asset = project.assets.get(ref.asset_id)
+        if asset is None or asset.kind != "image":
+            continue
+        result.append((ref, asset))
+    return result
+
+
+def _reference_prompt(project: Project) -> str:
+    """把启用的参考素材写成提示词前缀，让模型知道要参照什么。"""
+    lines = []
+    for ref, _asset in reference_assets(project):
+        hint = _ROLE_HINTS.get(ref.role, "")
+        if hint:
+            lines.append(f"- {hint}" + (f"（{ref.label}）" if ref.label else ""))
+    if not lines:
+        return ""
+    return "参考素材要求：\n" + "\n".join(lines) + "\n\n"
+
+
+def _reference_first_frame(store: ProjectStore, project: Project) -> tuple[Path | None, str]:
+    """没有显式首帧时，用第一张产品/人物参考图作为首帧，保证商品外观不走样。"""
+    for _ref, asset in reference_assets(project, roles=("product", "person")):
+        return store.asset_path(project, asset.id), asset.id
+    return None, ""
+
+
 def generate_ai_candidate(
     store: ProjectStore,
     settings: Settings,
@@ -271,9 +313,14 @@ def generate_ai_candidate(
     provider: VideoGenProvider = registry.create("video_gen", provider_id, settings)  # type: ignore[assignment]
     require_charge_confirmation(settings, "video_gen", provider_id, confirm_charge)
     first_frame = _first_frame(store, project, shot)
-    meta = {"prompt": shot.visual.prompt[:500]}
+    frame_source = shot.visual.first_frame or ""
+    if first_frame is None:
+        # 没有显式首帧时，优先用产品/人物参考图，保证商品外观不走样。
+        first_frame, frame_source = _reference_first_frame(store, project)
+    prompt = _reference_prompt(project) + shot.visual.prompt
+    meta = {"prompt": prompt[:500]}
     if first_frame is not None:
-        meta["first_frame"] = shot.visual.first_frame or ""
+        meta["first_frame"] = frame_source
 
     def remember_task(task_id: str) -> None:
         """任务 id 一拿到就落盘。这里直接用 store 的锁与最新项目，避免覆盖并发编辑。"""
@@ -291,7 +338,7 @@ def generate_ai_candidate(
 
     with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
         path = provider.generate(
-            shot.visual.prompt,
+            prompt,
             aspect=project.canvas.aspect,
             duration=estimated_shot_seconds(project, shot),
             output=Path(temp) / "gen",
@@ -320,15 +367,16 @@ def generate_image_candidate(
     provider_id = _provider_id(settings, "image_gen", shot)
     provider: ImageGenProvider = registry.create("image_gen", provider_id, settings)  # type: ignore[assignment]
     require_charge_confirmation(settings, "image_gen", provider_id, confirm_charge)
+    prompt = _reference_prompt(project) + shot.visual.prompt
     with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
-        path = provider.generate(shot.visual.prompt, aspect=project.canvas.aspect, output=Path(temp) / "gen")
+        path = provider.generate(prompt, aspect=project.canvas.aspect, output=Path(temp) / "gen")
         asset = _register_media(
             store,
             project,
             path,
             source=provider_id or "image_gen",
             folder="ai-image",
-            meta={"prompt": shot.visual.prompt[:500]},
+            meta={"prompt": prompt[:500]},
         )
     _attach(shot, [asset.id], select=True)
     return [asset.id]
