@@ -3,6 +3,7 @@ import { assetUrl, estimateSeconds } from "../api";
 import { providerName, useI18n } from "../i18n";
 import type { Asset, Project, ProviderInfo, Shot, VisualMode, VisualPatch } from "../types";
 import { Icon, Segmented } from "./Controls";
+import { ShotEdit } from "./ShotEdit";
 
 export function Thumb(props: { project: Project; assetId: string | null; color: string; className?: string }) {
   const asset = props.assetId ? props.project.assets[props.assetId] : undefined;
@@ -43,6 +44,8 @@ export function ShotCard(props: {
   onUpload: (file: File) => void;
   onMove: (delta: number) => void;
   onInsert: () => void;
+  onSplit: (at: number) => void;
+  onMerge: () => void;
   onDelete: () => void;
 }) {
   const { project, shot, index } = props;
@@ -105,6 +108,8 @@ export function ShotCard(props: {
    * 结果作为新的候选素材，原素材保留。
    */
   const selectedAsset = visual.selected ? project.assets[visual.selected] : undefined;
+  const editable =
+    visual.mode !== "color" && (selectedAsset?.kind === "video" || selectedAsset?.kind === "image");
   const canModify =
     !!props.aiVideo &&
     props.aiVideo.video_to_video &&
@@ -378,6 +383,16 @@ export function ShotCard(props: {
             {t("shot.elsewhereHint")}
           </p>
         )}
+        {editable && selectedAsset && (
+          <ShotEdit
+            project={project}
+            shot={shot}
+            asset={selectedAsset}
+            disabled={visual.locked || props.busy}
+            onUpdate={(patch) => props.onUpdate({ visual: patch })}
+            onSplit={props.onSplit}
+          />
+        )}
         {shot.error && <p className="hint error">{shot.error}</p>}
       </div>
 
@@ -390,6 +405,16 @@ export function ShotCard(props: {
         </button>
         <button type="button" className="btn icon ghost" aria-label={t("shot.insert")} onClick={props.onInsert}>
           <Icon name="plus" />
+        </button>
+        <button
+          type="button"
+          className="btn icon ghost"
+          aria-label={t("shot.merge")}
+          title={t("shot.mergeHint")}
+          disabled={isLast || props.busy}
+          onClick={props.onMerge}
+        >
+          <Icon name="merge" />
         </button>
         <button type="button" className="btn icon ghost danger" aria-label={t("shot.delete")} onClick={props.onDelete}>
           <Icon name="trash" />

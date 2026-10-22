@@ -26,6 +26,9 @@ export interface PendingTask {
   since: number;
 }
 
+export type FitMode = "cover" | "contain" | "blur";
+export type FillMode = "slow_hold" | "hold" | "loop";
+
 export interface ShotVisual {
   mode: VisualMode;
   terms: string[];
@@ -35,7 +38,18 @@ export interface ShotVisual {
   selected: string | null;
   first_frame: string | null;
   color: string;
-  fit: "cover" | "contain";
+  fit: FitMode;
+  /** 铺满裁切时的取景中心，0–1。 */
+  focus_x: number;
+  focus_y: number;
+  /** 视频素材的入点、出点（秒）；出点为 null 表示到结尾。 */
+  trim_start: number;
+  trim_end: number | null;
+  /** 入出点和取景是针对哪个素材设的；和 selected 不同时按默认处理。 */
+  edit_asset: string | null;
+  fill: FillMode;
+  /** 原声音量，0 表示不用原声。 */
+  source_volume: number;
   locked: boolean;
   /** 已提交、尚未取回结果的收费任务；服务重启后会继续轮询。 */
   pending?: PendingTask | null;
@@ -168,7 +182,7 @@ export interface Job {
 }
 
 /** 修改镜头画面时可以传的字段；clear_first_frame 取消首帧。 */
-export type VisualPatch = Partial<ShotVisual> & { clear_first_frame?: boolean };
+export type VisualPatch = Partial<ShotVisual> & { clear_first_frame?: boolean; clear_trim_end?: boolean };
 
 export interface LanguageInfo {
   code: string;

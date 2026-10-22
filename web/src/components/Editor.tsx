@@ -176,6 +176,12 @@ export function Editor({ projectId }: { projectId: string }) {
                 onUpload={(file) => uploadForShot(shot.id, file)}
                 onMove={(delta) => moveShot(index, delta)}
                 onInsert={() => run(() => api.addShot(id, shot.id))}
+                onSplit={(at) => run(() => api.splitShot(id, shot.id, at), shot.id)}
+                onMerge={() => {
+                  if (window.confirm(t("editor.mergeShot", { n: index + 1, m: index + 2 }))) {
+                    run(() => api.mergeShot(id, shot.id));
+                  }
+                }}
                 onDelete={() => {
                   if (window.confirm(t("editor.deleteShot", { n: index + 1 }))) {
                     run(() => api.deleteShot(id, shot.id));

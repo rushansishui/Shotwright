@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from shotwright.core.models import (
     BgmSettings,
     Canvas,
+    FillMode,
+    FitMode,
     Overlay,
     ReferenceAsset,
     SubtitleStyle,
@@ -81,7 +83,15 @@ class VisualPatch(_Body):
     clear_first_frame: bool = False
     """为真时取消首帧，改为纯文字生成视频。"""
     color: str | None = None
-    fit: Literal["cover", "contain"] | None = None
+    fit: FitMode | None = None
+    focus_x: float | None = Field(None, ge=0.0, le=1.0)
+    focus_y: float | None = Field(None, ge=0.0, le=1.0)
+    trim_start: float | None = Field(None, ge=0.0, le=36000)
+    trim_end: float | None = Field(None, gt=0.0, le=36000)
+    clear_trim_end: bool = False
+    """为真时出点回到素材结尾。"""
+    fill: FillMode | None = None
+    source_volume: float | None = Field(None, ge=0.0, le=2.0)
     locked: bool | None = None
 
 
@@ -98,6 +108,11 @@ class AddShot(_Body):
     text: str = Field("", max_length=2000)
     after: str | None = None
     """插在哪个镜头之后；为空时追加到末尾。"""
+
+
+class SplitShot(_Body):
+    at: float = Field(..., gt=0, le=36000)
+    """拆分点：从镜头片段开头算起的秒数。"""
 
 
 class ReorderShots(_Body):

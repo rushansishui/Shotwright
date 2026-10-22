@@ -1,10 +1,12 @@
 """原片导入：把一段手机拍的视频按画面变化切成镜头。
 
 流程：
-1. 原片登记为普通上传素材（保留源文件，方便重新切）；
+1. 原片登记为普通上传素材；
 2. ``ffmpeg`` 的 scene 检测给出切镜点；
-3. 逐段切出来（只留画面，声音由配音取代），各自登记为素材；
-4. 生成或替换镜头，每个镜头引用对应片段，时长设为片段时长。
+3. 生成或替换镜头：每个镜头都引用这段原片，用入出点（``trim_start`` / ``trim_end``）
+   选出自己那一段，时长设为片段时长，原声默认保留。
+
+不再把每段切成单独的文件：入出点可以随时微调，拆分、合并镜头也只是改入出点。
 
 切得太多（例如手持抖动被误判）时，按最大镜头数合并相邻段。
 """
@@ -12,14 +14,13 @@
 from __future__ import annotations
 
 import logging
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 from shotwright.config import Settings
 from shotwright.core.models import Project, Shot, ShotVisual
 from shotwright.core.store import ProjectStore
-from shotwright.media.ffmpeg import MediaError, cut_segment, detect_scenes, probe
+from shotwright.media.ffmpeg import MediaError, detect_scenes, probe
 from shotwright.services.visuals import _register_media
 
 log = logging.getLogger(__name__)
@@ -99,43 +100,29 @@ def import_footage(
     starts = _merge_short_starts(starts, total)
     starts = _limit_shots(starts, total, max_shots)
 
-    # 3. 逐段切出画面。
+    # 3. 每段一个镜头，引用原片的一段。
     shot_ids: list[str] = []
-    with tempfile.TemporaryDirectory(prefix="shotwright-cut-") as temp:
-        bounds = [*starts, total]
-        for index in range(len(starts)):
-            begin, end = bounds[index], bounds[index + 1]
-            duration = max(0.05, round(end - begin, 3))
-            segment_path = Path(temp) / f"segment-{index}.mp4"
-            try:
-                cut_segment(source_path, segment_path, start=begin, duration=duration)
-            except MediaError as exc:
-                log.warning("原片第 %d 段切分失败，跳过：%s", index + 1, exc)
-                continue
-            asset = _register_media(
-                store,
-                project,
-                segment_path,
-                source="upload",
-                folder="upload",
-                meta={
-                    "filename": f"{Path(filename).stem}-{index + 1}.mp4"[:200],
-                    "from_footage": source.id,
-                    "segment_start": f"{begin:.3f}",
-                },
-            )
-            shot = Shot(
-                text="",
-                duration=duration,
-                visual=ShotVisual(mode="upload", selected=asset.id, locked=True),
-            )
-            shot_ids.append(shot.id)
-            project.shots.append(shot)
+    bounds = [*starts, total]
+    for index in range(len(starts)):
+        begin, end = round(bounds[index], 3), round(bounds[index + 1], 3)
+        shot = Shot(
+            text="",
+            duration=max(0.1, round(end - begin, 3)),
+            visual=ShotVisual(
+                mode="upload",
+                candidates=[source.id],
+                selected=source.id,
+                edit_asset=source.id,
+                trim_start=begin,
+                trim_end=end,
+                source_volume=1.0 if info.has_audio else 0.0,
+            ),
+        )
+        shot_ids.append(shot.id)
+        project.shots.append(shot)
 
     if replace_shots:
         # 新镜头已经在末尾，去掉原来那些。
         project.shots = [s for s in project.shots if s.id in shot_ids]
-    if not shot_ids:
-        raise MediaError("没有切出可用的镜头")
     log.info("原片 %s：切成 %d 个镜头", filename, len(shot_ids))
     return ImportResult(source_asset=source.id, shot_ids=shot_ids, segments=len(shot_ids))

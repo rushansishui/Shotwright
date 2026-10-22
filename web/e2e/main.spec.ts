@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 
 /**
@@ -74,5 +78,43 @@ test.describe("Shotwright 主流程", () => {
     await expect(draft).toBeVisible();
     await draft.click();
     await expect(draft).toHaveAttribute("aria-checked", "true");
+  });
+
+  test("原片导入后可以拆分、合并镜头", async ({ page }) => {
+    // 两段画面完全不同的测试视频拼成一段"原片"。用 VP9 编码，无头浏览器也能播放和跳转。
+    const dir = mkdtempSync(join(tmpdir(), "shotwright-e2e-"));
+    const footage = join(dir, "footage.mp4");
+    execFileSync("ffmpeg", [
+      "-loglevel", "error", "-y",
+      "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:duration=3",
+      "-f", "lavfi", "-i", "smptebars=size=640x360:rate=30:duration=3",
+      "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+      "-map", "[v]", "-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "8", "-b:v", "500k",
+      footage,
+    ]);
+
+    await createProject(page, `原片${RUN_ID}。`);
+    const shots = page.locator("article.shot");
+    await page.locator('input[type="file"][accept="video/*"]').setInputFiles(footage);
+    await expect(shots).toHaveCount(2, { timeout: 60_000 });
+
+    // 打开第一个镜头的剪辑面板，播放位置跳到 1 秒，在这里拆分。
+    const first = shots.first();
+    await first.locator("details.shot-edit summary").click();
+    const video = first.locator("video.edit-video");
+    await expect(video).toBeVisible();
+    await video.evaluate(async (el: HTMLVideoElement) => {
+      if (el.readyState < 1) await new Promise((resolve) => el.addEventListener("loadedmetadata", resolve, { once: true }));
+      el.currentTime = 1;
+    });
+    const split = first.getByRole("button", { name: /处拆分|Split at/ });
+    await expect(split).toBeEnabled();
+    await split.click();
+    await expect(shots).toHaveCount(3);
+
+    // 合并回去。
+    page.once("dialog", (dialog) => dialog.accept());
+    await shots.first().getByRole("button", { name: /与下一个镜头合并|Merge with the next shot/ }).click();
+    await expect(shots).toHaveCount(2);
   });
 });

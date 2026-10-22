@@ -72,7 +72,7 @@ export function Section(props: { step?: number; title: string; extra?: ReactNode
   );
 }
 
-export function Icon({ name }: { name: "up" | "down" | "trash" | "plus" | "lock" | "unlock" | "refresh" | "upload" }) {
+export function Icon({ name }: { name: "up" | "down" | "trash" | "plus" | "lock" | "unlock" | "refresh" | "upload" | "merge" }) {
   const paths: Record<string, ReactNode> = {
     up: <path d="M12 19V5M5 12l7-7 7 7" />,
     down: <path d="M12 5v14M19 12l-7 7-7-7" />,
@@ -92,6 +92,7 @@ export function Icon({ name }: { name: "up" | "down" | "trash" | "plus" | "lock"
     ),
     refresh: <path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" />,
     upload: <path d="M12 16V4M6 10l6-6 6 6M4 20h16" />,
+    merge: <path d="M6 4v3a6 6 0 0 0 6 6M18 4v3a6 6 0 0 1-6 6v7M9 17l3 3 3-3" />,
   };
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

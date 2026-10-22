@@ -88,6 +88,9 @@ export const api = {
     request<Project>(`/projects/${id}`, json("PATCH", body)),
   deleteProject: (id: string) => request<void>(`/projects/${id}`, json("DELETE")),
   addShot: (id: string, after?: string) => request<Project>(`/projects/${id}/shots`, json("POST", { text: "", after })),
+  splitShot: (id: string, shotId: string, at: number) =>
+    request<Project>(`/projects/${id}/shots/${shotId}/split`, json("POST", { at })),
+  mergeShot: (id: string, shotId: string) => request<Project>(`/projects/${id}/shots/${shotId}/merge`, json("POST", {})),
   reorder: (id: string, order: string[]) => request<Project>(`/projects/${id}/shots/order`, json("PUT", { order })),
   updateShot: (
     id: string,

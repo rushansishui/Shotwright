@@ -221,6 +221,11 @@ def test_footage_import_splits_into_shots(settings, store, tmp_path):
     assert len(body["shots"]) >= 2
     saved = store.load(project.id)
     assert [s.id for s in saved.shots] == body["shots"]
+    # 镜头引用原片的一段，首尾相接，覆盖整段原片。
+    first, second = saved.shots[0].visual, saved.shots[1].visual
+    assert first.selected == second.selected == body["source_asset"]
+    assert first.trim_start == 0.0 and first.trim_end == second.trim_start
+    assert saved.shots[-1].visual.trim_end == pytest.approx(4.0, abs=0.1)
 
 
 # ---- 重启后恢复收费任务 -----------------------------------------------------

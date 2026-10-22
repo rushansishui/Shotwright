@@ -58,6 +58,15 @@ OverlayPosition = Literal["top", "middle", "bottom"]
 TransitionKind = Literal["none", "fade", "slide", "wipe"]
 """镜头之间的转场：无、淡入淡出、滑动、擦除。"""
 
+FitMode = Literal["cover", "contain", "blur"]
+"""画面适配画布：铺满裁切、完整显示加黑边、完整显示加模糊背景（横竖屏互转时不裁主体）。"""
+
+FillMode = Literal["slow_hold", "hold", "loop"]
+"""视频素材比镜头短时怎么补足：适度慢放再定格最后一帧、直接定格、循环播放。"""
+
+MIN_SLOW_SPEED = 0.8
+"""「慢放加定格」最多慢到原速的 0.8 倍，再慢动作会明显发飘。"""
+
 _RESOLUTIONS: dict[str, tuple[int, int]] = {
     "9:16": (1080, 1920),
     "16:9": (1920, 1080),
@@ -179,7 +188,19 @@ class ShotVisual(_Model):
     """ai 模式的首帧图片（图生视频）；为空时纯文字生成。"""
     color: str = "#1F2937"
     """color 模式或没有可用素材时的纯色画面。"""
-    fit: Literal["cover", "contain"] = "cover"
+    fit: FitMode = "cover"
+    focus_x: float = Field(0.5, ge=0.0, le=1.0)
+    focus_y: float = Field(0.5, ge=0.0, le=1.0)
+    """铺满裁切时的取景中心（0 = 最左 / 最上，1 = 最右 / 最下）。"""
+    trim_start: float = Field(0.0, ge=0.0, le=36000)
+    trim_end: float | None = Field(None, gt=0.0, le=36000)
+    """视频素材的入点和出点（秒）；出点为空表示到素材结尾。"""
+    edit_asset: str | None = None
+    """入出点和取景是针对哪个素材设的。换了素材后这些设置不再生效，按默认处理。"""
+    fill: FillMode = "slow_hold"
+    """所选片段比镜头短时的补足方式。"""
+    source_volume: float = Field(0.0, ge=0.0, le=2.0)
+    """视频素材原声的音量，0 表示不用原声。有配音时原声自动压低。"""
     locked: bool = False
     """锁定后，自动补素材和\"全部重新生成\"都不会改动这个镜头的画面。"""
     pending: PendingTask | None = None
@@ -190,7 +211,7 @@ class ShotVisual(_Model):
     def _check_candidates(cls, value: list[str]) -> list[str]:
         return [validate_id(item) for item in value]
 
-    @field_validator("selected", "first_frame")
+    @field_validator("selected", "first_frame", "edit_asset")
     @classmethod
     def _check_selected(cls, value: str | None) -> str | None:
         return None if value is None else validate_id(value)
@@ -201,6 +222,18 @@ class ShotVisual(_Model):
         if not _HEX_COLOR.fullmatch(value):
             raise ValueError("颜色必须是 #RRGGBB 格式")
         return value.upper()
+
+    @model_validator(mode="after")
+    def _check_trim(self) -> ShotVisual:
+        if self.trim_end is not None and self.trim_end <= self.trim_start + 0.05:
+            raise ValueError("出点必须晚于入点")
+        return self
+
+    def effective_edit(self) -> ShotVisual:
+        """当前选中素材实际生效的剪辑设置：入出点和取景属于别的素材时恢复默认。"""
+        if self.edit_asset is not None and self.edit_asset == self.selected:
+            return self
+        return self.model_copy(update={"trim_start": 0.0, "trim_end": None, "focus_x": 0.5, "focus_y": 0.5})
 
 
 class Shot(_Model):

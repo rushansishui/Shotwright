@@ -18,6 +18,7 @@ from fastapi import APIRouter, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from shotwright import __version__
@@ -32,6 +33,7 @@ from shotwright.api.schemas import (
     CreateProject,
     CreateVersion,
     ReorderShots,
+    SplitShot,
     UpdateProject,
     UpdateShot,
 )
@@ -45,7 +47,7 @@ from shotwright.providers import registry
 from shotwright.providers.base import ChargeConfirmationRequired, ProviderError
 from shotwright.providers.tts.edge import VOICES
 from shotwright.services import cost as cost_service
-from shotwright.services import footage, localize, music, storyboard, visuals
+from shotwright.services import editing, footage, localize, music, storyboard, visuals
 
 log = logging.getLogger("shotwright.api")
 
@@ -448,6 +450,24 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
         return _mutate(project_id, change)
 
+    @api.post("/projects/{project_id}/shots/{shot_id}/split")
+    def split_shot(project_id: str, shot_id: str, body: SplitShot):
+        """在镜头片段的第 ``at`` 秒处拆成两个镜头（只适用于视频镜头）。"""
+
+        def change(project: Project) -> None:
+            editing.split_shot(project, _id(shot_id), body.at)
+
+        return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/shots/{shot_id}/merge")
+    def merge_shot(project_id: str, shot_id: str):
+        """把镜头和后一个镜头合并；同一段视频里相邻的片段会连成一段。"""
+
+        def change(project: Project) -> None:
+            editing.merge_with_next(project, _id(shot_id))
+
+        return _mutate(project_id, change)
+
     @api.patch("/projects/{project_id}/shots/{shot_id}")
     def update_shot(project_id: str, shot_id: str, body: UpdateShot):
         def change(project: Project) -> None:
@@ -477,12 +497,27 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     patch["candidates"] = [*shot.visual.candidates, patch["selected"]][
                         -visuals.MAX_CANDIDATES :
                     ]
+                if patch.pop("clear_trim_end", False):
+                    patch["trim_end"] = None
                 mode = patch.pop("mode", None)
                 if mode is not None:
                     # 切换来源时自动选中该来源的素材（显式传了 selected 时以它为准）。
                     visuals.switch_mode(project, shot, mode)
-                shot.visual = shot.visual.model_copy(update=patch)
-                ShotVisual.model_validate(shot.visual.model_dump())
+                edit_fields = {"trim_start", "trim_end", "focus_x", "focus_y"} & patch.keys()
+                if edit_fields:
+                    # 入出点和取景记在当前选中的素材名下；之前针对别的素材的设置先清掉。
+                    target = patch.get("selected", shot.visual.selected)
+                    if target is None:
+                        raise ValueError("请先选中素材再设置入出点或取景")
+                    if shot.visual.edit_asset != target:
+                        patch = {"trim_start": 0.0, "trim_end": None, "focus_x": 0.5, "focus_y": 0.5, **patch}
+                    patch["edit_asset"] = target
+                try:
+                    shot.visual = ShotVisual.model_validate({**shot.visual.model_dump(), **patch})
+                except ValidationError as exc:
+                    # 只把第一条原因（例如「出点必须晚于入点」）返回给界面，便于翻译。
+                    message = str(exc.errors()[0].get("msg", exc))
+                    raise ValueError(message.removeprefix("Value error, ")) from None
             shot.status, shot.error = "draft", None
 
         return _mutate(project_id, change)
