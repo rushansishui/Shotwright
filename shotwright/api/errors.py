@@ -68,6 +68,14 @@ EN: dict[str, str] = {
     "大模型返回的 JSON 无法解析": "The model returned JSON that could not be parsed",
     "大模型返回的格式无法解析": "The model returned an unexpected format",
     "大模型没有返回任何镜头": "The model returned no shots",
+    # MiniMax 配音（配置与返回格式）
+    "MiniMax 没有返回可下载的音频地址": "MiniMax did not return a downloadable audio URL",
+    "MiniMax 返回的格式无法解析": "MiniMax returned an unexpected format",
+    "MiniMax 返回的音频数据损坏": "MiniMax returned corrupted audio data",
+    "MiniMax 返回的音频大小异常": "MiniMax returned audio of an unexpected size",
+    "MiniMax 返回的音频过大": "The audio returned by MiniMax is too large",
+    "region 不能为空": "region must not be empty",
+    "min_duration 必须大于 0 且不大于 max_duration": "min_duration must be greater than 0 and no greater than max_duration",
     # 素材库
     "Pexels API Key 无效": "The Pexels API key is invalid",
     "Pixabay 拒绝了请求，请检查 API Key": "Pixabay rejected the request. Check the API key.",
@@ -77,6 +85,8 @@ EN: dict[str, str] = {
     "Pexels 返回的格式无法解析": "Pexels returned an unexpected format",
     "Pixabay 返回的格式无法解析": "Pixabay returned an unexpected format",
     "Internet Archive 返回的格式无法解析": "Internet Archive returned an unexpected format",
+    # 渲染
+    "项目里还没有镜头": "This project has no shots yet",
     # 语言版本
     "目标语言和当前项目相同": "The target language is the same as this project's",
 }
