@@ -84,6 +84,8 @@ class ShotTiming:
     start: float
     voice_duration: float
     duration: float
+    words: list[tuple[str, float, float]] = field(default_factory=list)
+    """配音服务的逐词时间戳（相对本镜头音频开头）；为空时字幕按字数估算。"""
 
 
 @dataclass
@@ -179,7 +181,7 @@ class Renderer:
         self._prepare_visuals(project)
 
         total = len(project.shots)
-        voices: list[tuple[str, Path, float]] = []
+        voices: list[tuple[str, Path, float, list[tuple[str, float, float]]]] = []
         for index, shot in enumerate(project.shots):
             self._report(0.10 + 0.25 * index / total, f"配音 {index + 1}/{total}")
             voices.append(self._voice(project, shot))
@@ -187,14 +189,14 @@ class Renderer:
         shot_files: list[tuple[str, Path]] = []
         timings: list[ShotTiming] = []
         cursor = 0.0
-        for index, (shot, (voice_fp, voice_path, voice_duration)) in enumerate(
+        for index, (shot, (voice_fp, voice_path, voice_duration, words)) in enumerate(
             zip(project.shots, voices, strict=True)
         ):
             self._report(0.35 + 0.45 * index / total, f"渲染镜头 {index + 1}/{total}")
             duration = round(shot.duration or voice_duration + VOICE_PADDING, 3)
             fp, path = self._shot(project, shot, voice_fp, voice_path, duration)
             shot_files.append((fp, path))
-            timings.append(ShotTiming(shot.id, round(cursor, 3), voice_duration, duration))
+            timings.append(ShotTiming(shot.id, round(cursor, 3), voice_duration, duration, words))
             cursor += duration
 
         self._report(0.80, "拼接镜头")
@@ -286,7 +288,7 @@ class Renderer:
 
     # ---- 配音 ---------------------------------------------------------------
 
-    def _voice(self, project: Project, shot: Shot) -> tuple[str, Path, float]:
+    def _voice(self, project: Project, shot: Shot) -> tuple[str, Path, float, list[tuple[str, float, float]]]:
         voice = project.voice_for(shot)
         text = shot.text.strip()
         provider_id = voice.provider if text else "silence"
@@ -296,9 +298,11 @@ class Renderer:
         meta = read_json(meta_path)
         if meta and (cache / meta.get("file", "")).is_file():
             self.stages.append(StageRecord(f"{shot.id}:voice", "voice", fp, True, 0.0))
-            return fp, cache / meta["file"], float(meta["duration"])
+            words = [(str(w[0]), float(w[1]), float(w[2])) for w in meta.get("words") or [] if len(w) == 3]
+            return fp, cache / meta["file"], float(meta["duration"]), words
 
         started = time.monotonic()
+        words: list[tuple[str, float, float]] = []
         with tempfile.TemporaryDirectory(prefix="shotwright-voice-") as temp:
             if not text:
                 seconds = shot.duration or 2.0
@@ -331,13 +335,22 @@ class Renderer:
                     index = project.shots.index(shot) + 1
                     raise RenderError(f"镜头 {index} 配音失败：{exc}") from exc
                 path, duration = speech.path, speech.duration
+                words = [(word.text, word.start, word.end) for word in speech.words]
             filename = f"{fp}{path.suffix}"
             shutil.move(str(path), cache / filename)
-        write_json(meta_path, {"file": filename, "duration": round(duration, 3), "provider": provider_id})
+        write_json(
+            meta_path,
+            {
+                "file": filename,
+                "duration": round(duration, 3),
+                "provider": provider_id,
+                "words": [list(word) for word in words],
+            },
+        )
         self.stages.append(
             StageRecord(f"{shot.id}:voice", "voice", fp, False, round(time.monotonic() - started, 3))
         )
-        return fp, cache / filename, round(duration, 3)
+        return fp, cache / filename, round(duration, 3), words
 
     # ---- 镜头 ---------------------------------------------------------------
 
@@ -500,6 +513,7 @@ class Renderer:
                     font_path=font,
                     size=style.size,
                     max_width=max_width,
+                    words=timing.words,
                 )
             )
         return cues

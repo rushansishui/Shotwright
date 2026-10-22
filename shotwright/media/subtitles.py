@@ -141,6 +141,36 @@ def _units(text: str) -> int:
     return cjk + words * 2 + thai // 3 or 1
 
 
+def _word_spans(text: str, words: list[tuple[str, float, float]]) -> list[tuple[int, int, float, float]]:
+    """把逐词时间戳对到原文的字符区间；对不上的词跳过，不影响其它词。"""
+    spans: list[tuple[int, int, float, float]] = []
+    cursor = 0
+    for word_text, word_start, word_end in words:
+        token = word_text.strip()
+        if not token:
+            continue
+        index = text.find(token, cursor)
+        if index < 0:
+            continue
+        spans.append((index, index + len(token), word_start, word_end))
+        cursor = index + len(token)
+    return spans
+
+
+def _span_time(
+    spans: list[tuple[int, int, float, float]], char_start: int, char_end: int
+) -> tuple[float, float] | None:
+    """某个字符区间对应的起止时间；区间里没有完整词时用中点最近的词兜底。"""
+    if not spans:
+        return None
+    inside = [span for span in spans if span[0] >= char_start and span[1] <= char_end]
+    if inside:
+        return inside[0][2], inside[-1][3]
+    middle = (char_start + char_end) / 2
+    nearest = min(spans, key=lambda span: abs((span[0] + span[1]) / 2 - middle))
+    return nearest[2], nearest[3]
+
+
 def split_cues(
     text: str,
     start: float,
@@ -150,39 +180,84 @@ def split_cues(
     size: int,
     max_width: int,
     max_lines: int = 2,
+    words: list[tuple[str, float, float]] | None = None,
 ) -> list[Cue]:
-    """把一段文案切成若干条字幕，每条最多 ``max_lines`` 行。"""
-    phrases = [p.strip() for p in _BREAK_AFTER.split(text.strip()) if p.strip()]
-    groups: list[str] = []
+    """把一段文案切成若干条字幕，每条最多 ``max_lines`` 行。
+
+    给了 ``words``（配音服务的逐词时间戳，相对本镜头音频开头）时按词对齐；
+    否则按字数比例在 ``[start, end]`` 内分配。
+    """
+    source = text.strip()
+    phrases: list[tuple[str, int, int]] = []
+    search_from = 0
+    for part in _BREAK_AFTER.split(source):
+        phrase = part.strip()
+        if not phrase:
+            continue
+        index = source.find(phrase, search_from)
+        if index < 0:
+            index = search_from
+        phrases.append((phrase, index, index + len(phrase)))
+        search_from = index + len(phrase)
+
+    groups: list[tuple[str, int, int]] = []
     current = ""
-    for phrase in phrases:
+    current_start = current_end = 0
+    for phrase, phrase_start, phrase_end in phrases:
         joiner = "" if not current or _CJK_CHAR.search(phrase[:1]) or _CJK_CHAR.search(current[-1:]) else " "
         candidate = current + joiner + phrase
         if current and len(wrap(candidate, font_path, size, max_width)) > max_lines:
-            groups.append(current)
-            current = phrase
+            groups.append((current, current_start, current_end))
+            current, current_start, current_end = phrase, phrase_start, phrase_end
         else:
+            if not current:
+                current_start = phrase_start
             current = candidate
+            current_end = phrase_end
     if current:
-        groups.append(current)
+        groups.append((current, current_start, current_end))
 
-    # 单个短语本身超过两行时再按行切开。
-    pieces: list[str] = []
-    for group in groups:
+    # 单个短语本身超过两行时再按行切开；字符区间按各段长度比例分配。
+    pieces: list[tuple[str, int, int]] = []
+    for group, group_start, group_end in groups:
         lines = wrap(group, font_path, size, max_width)
-        for i in range(0, len(lines), max_lines):
-            pieces.append("\n".join(lines[i : i + max_lines]))
+        if len(lines) <= max_lines:
+            pieces.append((group, group_start, group_end))
+            continue
+        total = sum(len(line) for line in lines) or 1
+        cursor = group_start
+        for offset in range(0, len(lines), max_lines):
+            chunk = lines[offset : offset + max_lines]
+            span = sum(len(line) for line in chunk)
+            piece_end = min(group_end, cursor + round((group_end - group_start) * span / total))
+            pieces.append(("\n".join(chunk), cursor, max(0, piece_end)))
+            cursor = piece_end
 
-    total = sum(_units(p) for p in pieces) or 1
+    spans = _word_spans(source, words) if words else []
+    total_units = sum(_units(piece) for piece, _, _ in pieces) or 1
     cues: list[Cue] = []
     cursor = start
     span = max(end - start, 0.1)
-    for index, piece in enumerate(pieces):
-        length = span * _units(piece) / total
-        cue_end = end if index == len(pieces) - 1 else cursor + length
+    for index, (piece, char_start, char_end) in enumerate(pieces):
+        if spans:
+            timing = _span_time(spans, char_start, char_end)
+            cue_start = start + timing[0] if timing else cursor
+            cue_end = start + timing[1] if timing else cursor
+            # 词之间有空隙时，字幕保持到下一个词开始，避免闪烁。
+            if index + 1 < len(pieces):
+                following = _span_time(spans, pieces[index + 1][1], pieces[index + 1][2])
+                if following:
+                    cue_end = start + following[0]
+            cue_start = max(start, min(cue_start, end))
+            cue_end = max(cue_end, cue_start + 0.1)
+            cue_end = min(end, cue_end)
+        else:
+            length = span * _units(piece) / total_units
+            cue_start = cursor
+            cue_end = end if index == len(pieces) - 1 else cursor + length
+            cursor = cue_end
         display = "\n".join(line.rstrip(_TRAILING_PUNCT) or line for line in piece.split("\n"))
-        cues.append(Cue(round(cursor, 3), round(cue_end, 3), display))
-        cursor = cue_end
+        cues.append(Cue(round(cue_start, 3), round(cue_end, 3), display))
     return cues
 
 

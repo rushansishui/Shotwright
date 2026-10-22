@@ -78,9 +78,20 @@ class LLMProvider(Protocol):
 
 
 @dataclass
+class WordTiming:
+    """配音里一个词/字的时间段（相对音频开头，秒）。"""
+
+    text: str
+    start: float
+    end: float
+
+
+@dataclass
 class SpeechResult:
     path: Path
     duration: float
+    words: list[WordTiming] = field(default_factory=list)
+    """逐词时间戳；配音服务不提供时为空，字幕退回按字数估算分配。"""
 
 
 class TTSProvider(Protocol):
