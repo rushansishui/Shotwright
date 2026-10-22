@@ -8,9 +8,9 @@ Shotwright 以**镜头（Shot）**为基本单位：一个视频是一个项目�
 ┌──────────────────────────────────────────────────────────────┐
 │ 入口层     web/（React）   shotwright/api（FastAPI）   shotwright/cli.py │
 ├──────────────────────────────────────────────────────────────┤
-│ 服务层     services/storyboard.py   services/visuals.py   api/jobs.py   │
+│ 服务层     services/（分镜、画面、剪辑、原片、费用、本地化）  api/jobs.py │
 ├──────────────────────────────────────────────────────────────┤
-│ 渲染引擎   pipeline/render.py（阶段 + 指纹缓存）  media/（FFmpeg、字幕）  │
+│ 渲染引擎   pipeline/（整片调度、镜头、配音、元数据）  media/（FFmpeg、字幕） │
 ├──────────────────────────────────────────────────────────────┤
 │ Provider   providers/{llm,tts,stock,video_gen,image_gen}/ + registry.py │
 ├──────────────────────────────────────────────────────────────┤
@@ -47,18 +47,26 @@ shotwright/
 │   ├── tts/elevenlabs.py    ElevenLabs
 │   ├── music/archive.py Internet Archive 背景音乐（免 Key，按授权过滤）
 │   ├── paid_task.py     收费异步任务：提交不重试、轮询、下载
-│   ├── video_gen/seedance.py      火山方舟 Seedance：文生视频、首帧图生视频
+│   ├── video_gen/seedance.py      火山方舟 Seedance：文生视频、首帧图生视频、视频转视频（改画面）
 │   └── image_gen/openai_images.py Seedream / OpenAI 兼容文生图
 ├── services/
 │   ├── storyboard.py    主题 → 文案 → 镜头（大模型或按句切分）
-│   ├── visuals.py       检索（带检索缓存）/ 生成候选素材，登记上传文件
+│   ├── visuals.py       检索（带检索缓存）/ 生成候选素材，登记上传文件，改画面，恢复收费任务
+│   ├── editing.py       镜头内剪辑：拆分、合并镜头（改入出点，不切文件）
+│   ├── footage.py       原片导入：按画面变化切镜，每个镜头引用原片的一段
+│   ├── cost.py          费用预估与累计（参考单价）
 │   ├── music.py         背景音乐：提炼检索词、检索、登记候选
-│   ├── localize.py      语言版本：翻译文案、共用素材
+│   ├── localize.py      语言版本：翻译文案和叠加文字、共用素材
 │   └── durations.py     时长估算
 ├── media/
 │   ├── ffmpeg.py        FFmpeg / FFprobe 封装（禁止网络协议）
 │   └── subtitles.py     字幕切分、像素级换行、ASS / SRT
-├── pipeline/render.py   增量渲染
+├── pipeline/
+│   ├── render.py        整片调度：画面准备、时间轴（含转场重叠）、拼接、字幕与叠加、导出
+│   ├── voice.py         配音阶段
+│   ├── shots.py         镜头渲染：入出点、慢放定格 / 循环、取景、原声与压低
+│   ├── metadata.py      成片元数据：AI 生成标识、背景音乐署名
+│   └── render_types.py  阶段记录、渲染结果等公共类型
 ├── api/                 FastAPI 应用、请求体、任务队列
 ├── config.py            config.toml + 环境变量
 └── cli.py
@@ -71,9 +79,9 @@ tests/                   pytest
 
 | 对象 | 说明 |
 | --- | --- |
-| `Project` | 一个视频的全部状态：画布（比例、帧率）、默认配音、字幕样式、背景音乐、镜头列表、素材表、修订号 |
+| `Project` | 一个视频的全部状态：画布（比例、帧率）、默认配音、字幕样式、背景音乐、叠加文字与图形、转场、AI 角标、主体库（参考素材）、镜头列表、素材表、累计生成费用、修订号 |
 | `Shot` | 文案、固定时长（为空则跟随配音）、画面 `ShotVisual`、可选的单独配音设置 |
-| `ShotVisual` | 画面来源 `mode`（`stock` 检索 / `ai` AI 视频 / `image` AI 图片 / `upload` 上传 / `color` 纯色）、检索词、提示词、候选素材、已选素材、锁定标记 |
+| `ShotVisual` | 画面来源 `mode`（`stock` 检索 / `ai` AI 视频 / `image` AI 图片 / `upload` 上传 / `color` 纯色）、检索词、提示词、候选素材、已选素材、首帧、锁定标记、未取回的收费任务 `pending`，以及剪辑设置（见下） |
 | `Asset` | 落盘的媒体文件：类型、来源、SHA-256、尺寸与时长、作者和授权信息 |
 
 存储结构：
@@ -93,6 +101,18 @@ storage/projects/<项目id>/
 └── renders/<渲染id>/ video.mp4、subtitles.srt、render.json
 ```
 
+镜头内剪辑的设置都在 `ShotVisual` 里：
+
+| 字段 | 说明 |
+| --- | --- |
+| `trim_start` / `trim_end` | 视频素材的入点、出点（秒）；出点为空表示到素材结尾 |
+| `fill` | 选段比镜头短时的补足方式：`slow_hold`（默认，先慢放到不低于 0.8 倍，再定格最后一帧）、`hold`（直接定格）、`loop`（循环） |
+| `fit`、`focus_x` / `focus_y` | 适配方式：`cover` 铺满裁切（按取景中心裁）、`contain` 完整加黑边、`blur` 完整加模糊背景 |
+| `source_volume` | 原声音量，0 表示不用原声；有配音时用侧链压缩自动压低 |
+| `edit_asset` | 入出点和取景是针对哪个素材设的；换了素材后这些设置自动失效，不会把旧素材的入出点套到新素材上 |
+
+原片导入后不再切成单独的文件：每个镜头都引用同一段原片，用入出点选出自己那一段，原声默认保留。拆分、合并镜头只是改入出点，可以随时撤回重来。
+
 素材的子目录记在 `Asset.folder`。v0.3 之前的项目素材直接放在 `assets/` 下，服务或命令行启动时会自动按来源移到对应子目录（先移动文件再保存项目，中途中断也能找到文件）；渲染缓存按内容哈希计算，移动后不会重新渲染。
 
 所有 id 只允许 `[A-Za-z0-9_-]`，路径都在项目目录内解析并校验，杜绝路径穿越。密钥不进入项目文件。
@@ -100,7 +120,7 @@ storage/projects/<项目id>/
 ## 渲染流水线
 
 ```text
-每个镜头：  画面准备 ─→ 配音 ─→ 镜头渲染（画面缩放裁切、循环到时长、混入配音）
+每个镜头：  画面准备 ─→ 配音 ─→ 镜头渲染（选段、慢放定格、取景、混入原声与配音）
                                       │
 整片：                        拼接 ─→ 字幕与背景音乐 ─→ 导出
 ```
@@ -108,9 +128,9 @@ storage/projects/<项目id>/
 | 阶段 | 范围 | 指纹输入（任一变化即重做） |
 | --- | --- | --- |
 | 配音 | 每个镜头 | 文案、配音服务、声音、语速、音量 |
-| 镜头渲染 | 每个镜头 | 配音指纹、时长、所选素材的 SHA-256（或纯色）、适配方式、图片运动效果版本、画布 |
-| 拼接 | 整片 | 所有镜头渲染指纹及顺序 |
-| 字幕与背景音乐 | 整片 | 拼接指纹、字幕条目与样式、字体文件、背景音乐及音量 |
+| 镜头渲染 | 每个镜头 | 配音指纹、时长、所选素材的 SHA-256（或纯色）、适配方式与取景、选段与补足方式、原声音量、图片运动效果版本、画布、草稿 / 成片 |
+| 拼接 | 整片 | 所有镜头渲染指纹及顺序、转场类型与时长 |
+| 字幕与背景音乐 | 整片 | 拼接指纹、字幕条目与样式、叠加文字与图形、AI 角标、字体文件、背景音乐及音量、草稿 / 成片 |
 
 规则：
 
@@ -119,7 +139,9 @@ storage/projects/<项目id>/
 3. **锁定**：锁定的镜头不会被自动补素材，也不允许重新检索。
 4. **配音失败会中断渲染**，并指出是第几个镜头。
 5. 渲染期间对项目的编辑不会被覆盖：自动补的素材只合并进最新的项目文件。
-6. 字幕在每个镜头的配音时段内，按标点切分、按真实字体的像素宽度换行，并尽量让两行等长。时间分配优先用配音服务返回的逐词时间戳（Edge 会返回）；服务不提供时间戳、或时间戳与文案对不上时，退回按字数比例分配。
+6. **镜头内剪辑**：视频素材按入出点取一段（`-ss` / `-t`）。选段比镜头短时，默认先 `setpts` 慢放（最慢 0.8 倍，原声同步 `atempo`），还不够就用 `tpad` 定格最后一帧；选 `loop` 时循环播放（选段先切成临时文件再循环）。原声开启时，原声以配音为侧链做压缩（`sidechaincompress`），配音响起时自动压低，再和配音混合。
+7. **转场**：有转场时，相邻镜头在交界处重叠转场时长，时间轴和拼接用同一条规则；没设时长的镜头尾部至少留出转场那么长的空白，配音不会叠在一起。音频不做交叉淡化，每个镜头的音轨按它的起点延迟后混合。任何镜头比转场还短时整片改为硬切。
+8. 字幕在每个镜头的配音时段内，按标点切分、按真实字体的像素宽度换行，并尽量让两行等长。时间分配优先用配音服务返回的逐词时间戳（Edge 会返回）；服务不提供时间戳、或时间戳与文案对不上时，退回按字数比例分配。
 
 ## Provider 插件
 
@@ -193,13 +215,18 @@ Base URL 误填成完整的 `/chat/completions` 地址时会自动纠正。
 | GET / PATCH / DELETE | `/projects/{id}` | 读取、修改设置、删除（渲染进行中需 `?force=true`） |
 | POST | `/projects/{id}/shots` | 新增镜头（可指定插在哪个镜头之后） |
 | PUT | `/projects/{id}/shots/order` | 调整镜头顺序 |
-| PATCH / DELETE | `/projects/{id}/shots/{shot}` | 修改、删除镜头 |
+| PATCH / DELETE | `/projects/{id}/shots/{shot}` | 修改、删除镜头（含入出点、补足方式、取景、原声音量） |
+| POST | `/projects/{id}/shots/{shot}/split` | 在镜头片段的第 `at` 秒处拆成两个镜头 |
+| POST | `/projects/{id}/shots/{shot}/merge` | 和后一个镜头合并；同一段视频里相邻的片段连成一段 |
+| POST | `/projects/{id}/footage` | 导入原片，按画面变化切成镜头（`?replace_shots=true` 替换现有镜头） |
+| GET | `/projects/{id}/cost-estimate` | 渲染前的预计费用 |
 | GET | `/projects/{id}/in-progress` | 正在检索或生成的镜头，页面刷新后用来恢复"生成中"状态 |
-| POST | `/projects/{id}/shots/{shot}/candidates` | 为镜头检索或生成候选素材；收费生成需带 `{"confirm_charge": true}`，否则返回 402 |
-| POST | `/projects/{id}/bgm/candidates` | 检索背景音乐并登记为候选；`{"query": "..."}` 留空时由大模型提炼 |
+| POST | `/projects/{id}/shots/{shot}/candidates` | 为镜头检索或生成候选素材；收费生成需带 `{"confirm_charge": true}`，否则返回 402；`{"edit_selected": true}` 是改画面（把当前选中的视频交给支持视频转视频的服务） |
+| POST | `/projects/{id}/bgm/candidates` | 检索背景音乐候选（只返回试听地址）；`{"query": "..."}` 留空时由大模型提炼 |
+| POST | `/projects/{id}/bgm/download` | 下载选中的背景音乐整首并登记为素材 |
 | POST | `/projects/{id}/assets` | 上传图片、视频或音频 |
 | GET | `/projects/{id}/assets/{asset}` | 读取素材文件 |
-| POST | `/projects/{id}/renders` | 提交渲染任务；`{"confirm_charge": true}` 时允许为缺画面的 AI 镜头收费生成 |
+| POST | `/projects/{id}/renders` | 提交渲染任务；`{"confirm_charge": true}` 时允许为缺画面的 AI 镜头收费生成；`{"quality": "draft"}` 是草稿档 |
 | POST | `/renders/{job}/cancel` | 取消渲染（会终止正在运行的 FFmpeg） |
 | GET | `/renders/{job}`、`/projects/{id}/renders` | 任务进度、历史渲染 |
 | GET | `/projects/{id}/renders/{render}/video.mp4` | 下载成片（还有 `subtitles.srt`） |
@@ -214,3 +241,5 @@ Base URL 误填成完整的 `/chat/completions` 地址时会自动纠正。
 - 上传文件限制 500MB，先用 FFprobe 识别类型再入库；素材下载限制 500MB。
 - 错误信息不包含密钥；`/providers` 不返回配置值。
 - 字体只能是 `resources/fonts` 中的文件名。
+- 只接受发给本机地址（或 `allowed_hosts` 里配置的地址）的请求，写请求还校验 `Origin`，防止 DNS 重绑定和跨站请求。
+- 收费任务的远端 id 一拿到就写进项目（`ShotVisual.pending`），服务重启后继续轮询，不会重复提交。
