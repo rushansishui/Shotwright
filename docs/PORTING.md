@@ -18,16 +18,24 @@ Shotwright 是全新编写的项目，MoneyPrinterTurbo（下称 MPT，MIT Licen
 | `providers/video_gen/seedance.py` | `app/services/video_providers/seedance.py` | 方舟任务接口的请求格式、首帧参数 |
 | `services/visuals.py` 收费确认 | `app/services/ai_video_studio.py` → `AIVideoChargeConfirmationRequired` | 未确认时拒绝提交 |
 
-## 待移植（按优先级）
+## 已自行实现（未复制 MPT 代码）
+
+以下功能原列在待移植清单里，v0.3 已按 Shotwright 的接口和各服务的官方文档另行实现：
+
+| 功能 | Shotwright 位置 | MPT 对应位置 |
+| --- | --- | --- |
+| Azure / 硅基流动 / MiniMax / ElevenLabs 配音 | `providers/tts/` | `app/services/voice.py` |
+| 逐词时间戳字幕（Edge） | `TTSProvider` 返回值、`media/subtitles.py` | `voice.py` 中 SubMaker 相关处理 |
+| Coverr 素材库（免 Key 接口） | `providers/stock/coverr.py` | `material.py` → `search_videos_coverr` |
+| 素材检索缓存（按项目、7 天） | `services/visuals.py` | `app/services/material_cache.py` |
+| 背景音乐（改为 Internet Archive 检索，按授权过滤） | `providers/music/archive.py`、`services/music.py` | `app/services/elevenlabs_music.py`、`sonilo.py`（AI 生成音乐） |
+
+## 待移植
 
 | 功能 | MPT 位置 | 目标位置 | 备注 |
 | --- | --- | --- | --- |
-| 更多 AI 视频服务 | `app/services/video_providers/sources/*`（Wavespeed、Muapi 等） | `providers/video_gen/` | 复用 `providers/paid_task.py`；参考素材（`ReferenceAsset`）待补 |
-| Azure / 硅基流动 / MiniMax / ElevenLabs 配音 | `app/services/voice.py` 中的 `azure_tts_v2`、`siliconflow_tts`、`minimax_tts`、`elevenlabs_tts` | `providers/tts/` | 每家一个文件；远程音频校验逻辑见 `_validate_remote_tts_audio` |
-| 逐词时间戳字幕 | `voice.py` 中 SubMaker 相关处理 | `TTSProvider` 返回值增加时间戳 | 用于字幕精确对齐 |
-| Coverr | `material.py` → `search_videos_coverr` | `providers/stock/` | Pixabay 已按官方文档另行实现 |
-| 素材缓存 | `app/services/material_cache.py` | `services/visuals.py` | 相同检索词复用下载结果 |
-| AI 背景音乐 | `app/services/elevenlabs_music.py`、`sonilo.py` | `providers/music/` | |
+| 更多 AI 视频服务 | `app/services/video_providers/sources/*`（Wavespeed、Muapi 等） | `providers/video_gen/` | 计划改由 v0.5 的聚合 Provider（Runway API / fal.ai）覆盖；参考素材（`ReferenceAsset`）由 v0.4 的主体库替代 |
+| AI 生成背景音乐（可选） | `app/services/elevenlabs_music.py`、`sonilo.py` | `providers/music/` | 目前用检索；需要原创配乐时再考虑 |
 
 ## 不移植
 

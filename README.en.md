@@ -6,7 +6,7 @@
 
 Shotwright is built around the *shot*. The script is split into shots, and each shot picks its own visual source (stock search, AI generation, or your own uploaded image or video). Any shot can be replaced, locked or redone by itself. Change one shot and only that shot is re-rendered, plus the final assembly.
 
-> Current version: v0.3.0 (in development). See the [roadmap](docs/ROADMAP.md).
+> Current version: v0.3.0. Next up is v0.4, "product ads": product references, importing raw footage, AI edits of existing clips, text overlays and ad localization. See the [roadmap](docs/ROADMAP.md).
 
 ## Features
 
