@@ -36,9 +36,9 @@ _HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
 Aspect = Literal["9:16", "16:9", "1:1"]
 VisualMode = Literal["stock", "ai", "image", "upload", "color"]
 AssetKind = Literal["video", "image", "audio"]
-AssetFolder = Literal["ai-video", "ai-image", "stock", "upload", "other"]
-"""素材在 ``assets/`` 下的子目录：AI 视频、AI 图片、素材库下载、用户上传、其他。"""
-ASSET_FOLDERS: tuple[str, ...] = ("ai-video", "ai-image", "stock", "upload", "other")
+AssetFolder = Literal["ai-video", "ai-image", "stock", "upload", "music", "other"]
+"""素材在 ``assets/`` 下的子目录：AI 视频、AI 图片、素材库下载、用户上传、背景音乐、其他。"""
+ASSET_FOLDERS: tuple[str, ...] = ("ai-video", "ai-image", "stock", "upload", "music", "other")
 ShotStatus = Literal["draft", "ready", "rendering", "done", "failed"]
 
 _RESOLUTIONS: dict[str, tuple[int, int]] = {

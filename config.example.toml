@@ -54,8 +54,27 @@ model = "gpt-4o-mini"
 # model = "qwen2.5:7b"
 
 # ---- 配音 --------------------------------------------------------------------
+# 默认用 Edge 在线语音：免 Key、不收费。下面几家是收费服务，按需启用：
+# 在 [defaults] 把 tts 改成对应的 id，再在对应小节填 api_key。
 [providers.tts.edge]
 timeout = "60"
+
+# Azure 官方语音：https://portal.azure.com（语音服务 → 密钥和终结点）
+[providers.tts.azure]
+api_key = ""
+# region = "eastasia"        # 必填，例如 eastasia、westus2
+
+# 硅基流动：https://cloud.siliconflow.cn（API 密钥）
+[providers.tts.siliconflow]
+api_key = ""
+
+# MiniMax：https://platform.minimaxi.com（接口密钥）
+[providers.tts.minimax]
+api_key = ""
+
+# ElevenLabs：https://elevenlabs.io（Profile → API Keys）
+[providers.tts.elevenlabs]
+api_key = ""
 
 # ---- 素材库 ------------------------------------------------------------------
 # Pixabay：注册后在 https://pixabay.com/api/docs/ 页面即可看到自己的 Key（免费）
@@ -66,12 +85,19 @@ api_key = ""
 [providers.stock.pexels]
 api_key = ""
 
+# Coverr：免 Key，素材以横屏为主（https://coverr.co/developers）
+[providers.stock.coverr]
+# timeout = "30"
+
 # ---- 背景音乐 ----------------------------------------------------------------
 # Internet Archive：免 Key。音频授权不一（有的禁止商用或改编，有的没有标注），
 # 发布前请确认授权；可以用 collection 限定在授权明确的合集。
 [providers.music.archive]
 # collection = ""             # 合集标识符；留空搜索全部公开音频。注意 opensource_audio 等社区合集的授权也不统一
 # timeout = "30"
+# allow_unknown_license = "true"
+#   为 "false" 时只返回明确可商用的授权（CC0 / 公共领域 / CC BY / CC BY-SA）。
+#   Archive 上很多条目没有标注授权，默认保留并在界面上标"未标注授权"，发布前请自行确认。
 
 # ---- AI 画面（收费）----------------------------------------------------------
 # Seedance / Seedream 与豆包大模型同属火山方舟：api_key 留空时自动使用

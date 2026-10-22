@@ -37,12 +37,23 @@ shotwright/
 │   ├── tts/silent.py    静音配音（离线预览、测试）
 │   ├── stock/pixabay.py      默认素材库，方向与画布一致的素材优先
 │   ├── stock/pexels.py
+│   ├── stock/coverr.py       免 Key，横屏为主；下载地址要二次查询
+│   ├── tts/edge.py      Edge 在线语音（免费，返回逐词时间戳）
+│   ├── tts/silent.py    静音配音（离线预览、测试）
+│   ├── tts/http_tts.py  收费配音的公共部分：发请求、校验音频、抹掉密钥
+│   ├── tts/azure.py     Azure 官方语音（SSML）
+│   ├── tts/siliconflow.py   硅基流动
+│   ├── tts/minimax.py   MiniMax（返回 JSON，需二次下载或十六进制解码）
+│   ├── tts/elevenlabs.py    ElevenLabs
+│   ├── music/archive.py Internet Archive 背景音乐（免 Key，按授权过滤）
 │   ├── paid_task.py     收费异步任务：提交不重试、轮询、下载
 │   ├── video_gen/seedance.py      火山方舟 Seedance：文生视频、首帧图生视频
 │   └── image_gen/openai_images.py Seedream / OpenAI 兼容文生图
 ├── services/
 │   ├── storyboard.py    主题 → 文案 → 镜头（大模型或按句切分）
-│   ├── visuals.py       检索 / 生成候选素材，登记上传文件
+│   ├── visuals.py       检索（带检索缓存）/ 生成候选素材，登记上传文件
+│   ├── music.py         背景音乐：提炼检索词、检索、登记候选
+│   ├── localize.py      语言版本：翻译文案、共用素材
 │   └── durations.py     时长估算
 ├── media/
 │   ├── ffmpeg.py        FFmpeg / FFprobe 封装（禁止网络协议）
@@ -73,10 +84,12 @@ storage/projects/<项目id>/
 ├── assets/           素材按来源分目录，文件名 <sha256 前 16 位>.<扩展名>
 │   ├── ai-video/     AI 生成的视频（Seedance 等）
 │   ├── ai-image/     AI 生成的图片（Seedream 等）
-│   ├── stock/        素材库下载（Pixabay、Pexels）
+│   ├── stock/        素材库下载（Pixabay、Pexels、Coverr）
 │   ├── upload/       用户上传的画面和音频
+│   ├── music/        自动检索到的背景音乐
 │   └── other/        其他来源
 ├── cache/            voice/ shots/ assembly/ final/，按指纹命名，可随时删除
+│                     stock-search/ 检索结果缓存，相同检索词 7 天内复用
 └── renders/<渲染id>/ video.mp4、subtitles.srt、render.json
 ```
 
@@ -106,7 +119,7 @@ storage/projects/<项目id>/
 3. **锁定**：锁定的镜头不会被自动补素材，也不允许重新检索。
 4. **配音失败会中断渲染**，并指出是第几个镜头。
 5. 渲染期间对项目的编辑不会被覆盖：自动补的素材只合并进最新的项目文件。
-6. 字幕在每个镜头的配音时段内，按标点切分、按字数比例分配时间，按真实字体的像素宽度换行，并尽量让两行等长。
+6. 字幕在每个镜头的配音时段内，按标点切分、按真实字体的像素宽度换行，并尽量让两行等长。时间分配优先用配音服务返回的逐词时间戳（Edge 会返回）；服务不提供时间戳、或时间戳与文案对不上时，退回按字数比例分配。
 
 ## Provider 插件
 
@@ -173,20 +186,25 @@ Base URL 误填成完整的 `/chat/completions` 地址时会自动纠正。
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| GET | `/providers`、`/voices?language=` | 服务状态、某种语言可选的声音 |
+| GET | `/providers`、`/voices?language=`、`/voices?provider=` | 服务状态、可选声音（Edge 按语言，其他配音服务按服务） |
 | GET | `/languages` | 支持的视频语言 |
 | GET / POST | `/projects/{id}/versions` | 同一视频的语言版本；POST `{"language": "en-US"}` 翻译出新版本 |
 | GET / POST | `/projects` | 列出、创建项目（`mode`：`llm` / `split` / `empty`） |
-| GET / PATCH / DELETE | `/projects/{id}` | 读取、修改设置、删除 |
+| GET / PATCH / DELETE | `/projects/{id}` | 读取、修改设置、删除（渲染进行中需 `?force=true`） |
 | POST | `/projects/{id}/shots` | 新增镜头（可指定插在哪个镜头之后） |
 | PUT | `/projects/{id}/shots/order` | 调整镜头顺序 |
 | PATCH / DELETE | `/projects/{id}/shots/{shot}` | 修改、删除镜头 |
+| GET | `/projects/{id}/in-progress` | 正在检索或生成的镜头，页面刷新后用来恢复"生成中"状态 |
 | POST | `/projects/{id}/shots/{shot}/candidates` | 为镜头检索或生成候选素材；收费生成需带 `{"confirm_charge": true}`，否则返回 402 |
+| POST | `/projects/{id}/bgm/candidates` | 检索背景音乐并登记为候选；`{"query": "..."}` 留空时由大模型提炼 |
 | POST | `/projects/{id}/assets` | 上传图片、视频或音频 |
 | GET | `/projects/{id}/assets/{asset}` | 读取素材文件 |
 | POST | `/projects/{id}/renders` | 提交渲染任务；`{"confirm_charge": true}` 时允许为缺画面的 AI 镜头收费生成 |
+| POST | `/renders/{job}/cancel` | 取消渲染（会终止正在运行的 FFmpeg） |
 | GET | `/renders/{job}`、`/projects/{id}/renders` | 任务进度、历史渲染 |
 | GET | `/projects/{id}/renders/{render}/video.mp4` | 下载成片（还有 `subtitles.srt`） |
+
+错误响应的 `detail` 会按请求的 `Accept-Language` 返回中文或英文；带变量的消息（例如"镜头 2 配音失败：…"）保持原文。
 
 渲染任务在进程内的单线程队列中执行。需要多进程或多机部署时，把 `api/jobs.py` 换成 Redis 等外部队列即可，接口不变。
 

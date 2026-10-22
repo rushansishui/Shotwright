@@ -89,12 +89,16 @@ export function Editor({ projectId }: { projectId: string }) {
     api.languages().then(setLanguages).catch(() => setLanguages([]));
   }, [load]);
 
-  // 声音下拉框只列当前视频语言的声音。
+  // 声音下拉框：Edge 按语言列，其他配音服务列自己的声音。
   const projectLanguage = project?.language;
+  const voiceProvider = project?.voice.provider;
   useEffect(() => {
     if (!projectLanguage) return;
-    api.voices(projectLanguage).then(setVoices).catch(() => setVoices([]));
-  }, [projectLanguage]);
+    api
+      .voices(projectLanguage, voiceProvider)
+      .then(setVoices)
+      .catch(() => setVoices([]));
+  }, [projectLanguage, voiceProvider]);
 
   async function run(action: () => Promise<Project>, shotId?: string) {
     setError("");
@@ -390,7 +394,11 @@ export function Editor({ projectId }: { projectId: string }) {
                       <span className="muted small">
                         {asset.duration ? t("editor.bgmDuration", { n: Math.round(asset.duration) }) : ""}
                         {asset.meta.author ? ` · ${asset.meta.author}` : ""}
+                        {asset.meta.license_kind === "unknown" ? ` · ${t("editor.bgmLicenseUnknown")}` : ""}
                       </span>
+                      {asset.meta.license && (
+                        <span className="muted small ellipsis">{t("editor.bgmLicense", { license: asset.meta.license })}</span>
+                      )}
                       <audio src={assetUrl(id, asset.id)} controls preload="none" onClick={(e) => e.stopPropagation()} />
                     </button>
                   ))}

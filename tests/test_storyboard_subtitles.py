@@ -138,3 +138,47 @@ def test_length_rule_combinations():
     assert "5 个镜头" in both and "40 秒" in both
     # 都没给时由模型自己定。
     assert "由你" in _length_rule(None, None)
+
+
+def test_split_cues_uses_word_timings():
+    """有逐词时间戳时，字幕起止跟着配音走，而不是平均分配。"""
+    text = "今天天气不错，我们出去走走吧，顺便去公园看看湖边的风景，然后一起吃个饭。"
+    words = [
+        ("今天", 0.10, 0.50),
+        ("天气", 0.54, 0.86),
+        ("不错", 0.88, 1.31),
+        ("我们", 1.56, 1.75),
+        ("出去", 1.76, 2.05),
+        ("走走", 2.06, 2.55),
+        ("吧", 2.60, 2.75),
+        ("顺便", 3.00, 3.40),
+        ("公园", 3.55, 3.90),
+        ("看看", 3.95, 4.30),
+        ("湖边", 4.40, 4.80),
+        ("风景", 4.95, 5.40),
+        ("然后", 5.90, 6.20),
+        ("一起", 6.25, 6.60),
+        ("吃个饭", 6.70, 7.30),
+    ]
+    aligned = subs.split_cues(text, 0.0, 7.5, font_path=FONT, size=64, max_width=900, words=words)
+    plain = subs.split_cues(text, 0.0, 7.5, font_path=FONT, size=64, max_width=900)
+    assert len(aligned) == len(plain)
+    # 第一条不再是 0 开始，而是第一个词的时间。
+    assert aligned[0].start > 0
+    # 分界点落在「然后」上（5.90），而不是按字数算出来的位置。
+    assert abs(aligned[1].start - 5.90) < 0.01
+    assert plain[1].start != aligned[1].start
+
+
+def test_split_cues_falls_back_when_words_do_not_match():
+    """时间戳对不上原文时不能崩，退回按字数分配。"""
+    cues = subs.split_cues(
+        "完全没有对应的文字。",
+        0.0,
+        2.0,
+        font_path=FONT,
+        size=64,
+        max_width=900,
+        words=[("xyz", 0.1, 0.5)],
+    )
+    assert cues and cues[0].end > cues[0].start

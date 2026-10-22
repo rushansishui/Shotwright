@@ -33,6 +33,46 @@ MAX_ITEMS = 10
 
 _AUDIO_FORMATS = frozenset({"vbr mp3", "mp3", "128kbps mp3", "64kbps mp3", "256kbps mp3", "320kbps mp3"})
 
+# 可商用的授权类别。条目没有 licenseurl 时算 unknown，是否采用由配置决定。
+LICENSE_LABELS = {
+    "cc0": "CC0",
+    "public-domain": "Public Domain",
+    "cc-by": "CC BY",
+    "cc-by-sa": "CC BY-SA",
+    "unknown": "未标注授权",
+    "restricted": "受限授权",
+}
+
+
+def license_kind(url: str) -> str:
+    """把 licenseurl 归一成几类。非商用授权归到 restricted，默认不采用。"""
+    text = (url or "").lower()
+    if not text:
+        return "unknown"
+    if "publicdomain/zero" in text or "/cc0" in text:
+        return "cc0"
+    if "publicdomain/mark" in text or "publicdomain" in text:
+        return "public-domain"
+    if "by-nc" in text or "by-nd" in text or "by-nc-nd" in text or "by-nc-sa" in text:
+        return "restricted"
+    if "by-sa" in text:
+        return "cc-by-sa"
+    if "/by/" in text or text.rstrip("/").endswith("/by"):
+        return "cc-by"
+    return "restricted"
+
+
+def license_text(kind: str, url: str) -> str:
+    label = LICENSE_LABELS.get(kind, kind)
+    return f"{label} {url}".strip() if url else label
+
+
+def _flag(value: object, *, default: bool) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return default
+    return text in {"1", "true", "yes", "on"}
+
 
 def parse_length(value: object) -> float | None:
     """Internet Archive 的时长可能是秒数（"3725.53"）或 "MM:SS" / "H:MM:SS"。"""
@@ -71,6 +111,9 @@ class ArchiveMusic:
         self.timeout = float(settings.get("timeout", "30"))
         self.collection = (settings.get("collection") or "").strip()
         self.user_agent = settings.get("user_agent") or "Shotwright/0.4"
+        # Archive 上大量条目没有 licenseurl。默认保留但标注"未标注"，便于发布前人工确认；
+        # 设为 false 就只返回明确可商用的授权。
+        self.allow_unknown = _flag(settings.get("allow_unknown_license"), default=True)
 
     def _client(self) -> httpx.Client:
         return httpx.Client(
@@ -136,6 +179,11 @@ class ArchiveMusic:
         if chosen is None:
             return None
         meta = payload.get("metadata") or {}
+        license_url = str(meta.get("licenseurl") or "")
+        kind = license_kind(license_url)
+        if kind == "restricted" or (kind == "unknown" and not self.allow_unknown):
+            # 非商用或未标注授权：不放进来，免得用户踩坑。
+            return None
         name = str(chosen.get("name") or "")
         creator = meta.get("creator")
         if isinstance(creator, list):
@@ -151,7 +199,8 @@ class ArchiveMusic:
                 "title": str(meta.get("title") or name)[:200],
                 "author": str(creator or "")[:200],
                 "source_url": f"https://archive.org/details/{identifier}",
-                "license": str(meta.get("licenseurl") or "Internet Archive item"),
+                "license": license_text(kind, license_url)[:300],
+                "license_kind": kind,
                 "query": str(doc.get("title") or ""),
             },
         )
@@ -190,6 +239,12 @@ registry.register(
         fields=(
             ConfigField("collection", "限定合集", help="留空搜索全部公开音频，例如 opensource_audio"),
             ConfigField("timeout", "超时（秒）", default="30"),
+            ConfigField(
+                "allow_unknown_license",
+                "保留未标注授权的曲目",
+                default="true",
+                help='设为 "false" 时只返回明确可商用的授权（CC0 / 公共领域 / CC BY / CC BY-SA）',
+            ),
         ),
         capabilities=frozenset({"audio"}),
         docs_url="https://archive.org/advancedsearch.php",

@@ -18,8 +18,10 @@ from fastapi import APIRouter, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from shotwright import __version__
+from shotwright.api import errors
 from shotwright.api.jobs import JobManager
 from shotwright.api.schemas import (
     AddShot,
@@ -73,16 +75,27 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
     @app.exception_handler(ProjectNotFound)
     async def _not_found(request: Request, exc: ProjectNotFound):
-        return JSONResponse(status_code=404, content={"detail": "项目不存在"})
+        return JSONResponse(status_code=404, content={"detail": errors.translate("项目不存在", request)})
 
     @app.exception_handler(ChargeConfirmationRequired)
     async def _charge_required(request: Request, exc: ChargeConfirmationRequired):
-        return JSONResponse(status_code=402, content={"detail": str(exc), "code": "confirm_charge"})
+        return JSONResponse(
+            status_code=402,
+            content={"detail": errors.translate(str(exc), request), "code": "confirm_charge"},
+        )
 
     @app.exception_handler(ProviderError)
     async def _provider_error(request: Request, exc: ProviderError):
         log.warning("%s %s 失败：%s", request.method, request.url.path, exc)
-        return JSONResponse(status_code=502, content={"detail": str(exc)})
+        return JSONResponse(status_code=502, content={"detail": errors.translate(str(exc), request)})
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_error(request: Request, exc: StarletteHTTPException):
+        """HTTPException 的 detail 默认原样返回；这里补上英文对照。"""
+        detail = exc.detail
+        if isinstance(detail, str):
+            detail = errors.translate(detail, request)
+        return JSONResponse(status_code=exc.status_code, content={"detail": detail})
 
     api = APIRouter(prefix="/api/v2")
 
@@ -134,8 +147,19 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         return result
 
     @api.get("/voices")
-    def voices(language: str | None = None):
-        """Edge 配音的可选声音；带 language 时只返回该语言的声音。"""
+    def voices(language: str | None = None, provider: str | None = None):
+        """可选声音。带 provider 时返回该配音服务自己的声音列表。
+
+        Edge 的声音按语言从语言目录取；其他服务的声音写在各自的 ProviderSpec 里。
+        """
+        chosen = provider or settings.default_provider("tts")
+        if chosen and chosen != "edge":
+            try:
+                spec = registry.spec("tts", chosen)
+            except ProviderError:
+                spec = None
+            if spec is not None and spec.voices:
+                return [{"id": vid, "name": label, "language": None} for vid, label in spec.voices]
         if language:
             lang = languages.get(language)
             return [{"id": vid, "name": label, "language": lang.code} for vid, label in lang.voices]
