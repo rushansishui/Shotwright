@@ -25,6 +25,7 @@ from shotwright.api import errors
 from shotwright.api.jobs import JobManager
 from shotwright.api.schemas import (
     AddShot,
+    BgmDownload,
     BgmSearch,
     ChargeConsent,
     CreateProject,
@@ -445,32 +446,64 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
     @api.post("/projects/{project_id}/bgm/candidates")
     def search_bgm(project_id: str, body: BgmSearch | None = None):
-        """检索背景音乐并登记为候选。``query`` 留空时由大模型提炼检索词。"""
+        """检索背景音乐候选（只返回元数据+试听地址，不下载文件）。"""
         _id(project_id)
         project = store.load(project_id)
-        # 一次检索要几十秒，连点会各自下载一遍。用和镜头生成相同的锁挡住。
+        # 一次检索要几十秒，连点会各自查一遍。用和镜头生成相同的锁挡住。
         key = (project_id, BGM_KEY)
         with in_progress_lock:
             if key in in_progress:
                 raise HTTPException(409, "背景音乐正在检索，请等它完成")
             in_progress[key] = {"mode": "music", "since": time.time()}
         try:
-            added, query = music.search_bgm(store, settings, project, query=(body.query if body else ""))
-
-            def change(latest: Project) -> None:
-                for asset_id, asset in project.assets.items():
-                    latest.assets.setdefault(asset_id, asset)
-                merged = [*latest.bgm.candidates]
-                for asset_id in added:
-                    if asset_id not in merged:
-                        merged.append(asset_id)
-                latest.bgm.candidates = merged[-music.MAX_CANDIDATES :]
-                latest.bgm.query = query
-
-            return _mutate(project_id, change)
+            candidates, query = music.search_bgm_candidates(
+                settings, project, query=(body.query if body else "")
+            )
+            return {
+                "query": query,
+                "candidates": [
+                    {
+                        "provider": c.provider,
+                        "remote_id": c.remote_id,
+                        "url": c.url,
+                        "preview_url": c.preview_url,
+                        "title": c.title,
+                        "duration": c.duration,
+                        "author": c.author,
+                        "meta": c.meta,
+                    }
+                    for c in candidates
+                ],
+            }
         finally:
             with in_progress_lock:
                 in_progress.pop(key, None)
+
+    @api.post("/projects/{project_id}/bgm/download")
+    def download_bgm(project_id: str, body: BgmDownload):
+        """下载选中的背景音乐候选并注册为素材，设为当前背景音乐，返回更新后的项目。"""
+        _id(project_id)
+        project = store.load(project_id)
+        from shotwright.providers.base import MusicCandidate
+
+        candidate = MusicCandidate(
+            provider=body.provider,
+            remote_id=body.remote_id,
+            url=body.url,
+            title=body.title,
+            duration=body.duration,
+            author=body.author,
+            meta=body.meta,
+        )
+        asset = music.download_candidate(store, settings, project, candidate)
+
+        def change(latest: Project) -> None:
+            latest.assets.setdefault(asset.id, asset)
+            latest.bgm.asset_id = asset.id
+            if asset.id not in (latest.bgm.candidates or []):
+                latest.bgm.candidates = [*(latest.bgm.candidates or []), asset.id]
+
+        return _mutate(project_id, change)
 
     # ---- 渲染 ---------------------------------------------------------------
 

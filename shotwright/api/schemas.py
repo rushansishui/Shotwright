@@ -107,3 +107,16 @@ class CreateVersion(_Body):
 class BgmSearch(_Body):
     query: str = Field("", max_length=200)
     """检索词；留空时由大模型从视频诉求和镜头提示词提炼。"""
+
+
+class BgmDownload(_Body):
+    provider: str
+    """候选所属的 Provider id，例如 "archive"。"""
+    remote_id: str = Field(..., max_length=400)
+    """候选的远端唯一标识，来自搜索结果的 remote_id。"""
+    url: str = Field(..., max_length=2000)
+    """下载地址，来自搜索结果的 url。"""
+    title: str = Field("", max_length=200)
+    author: str = Field("", max_length=200)
+    duration: float = Field(0.0, ge=0)
+    meta: dict[str, str] = Field(default_factory=dict)

@@ -132,3 +132,20 @@ export interface VersionInfo {
   language: string;
   updated_at: number;
 }
+
+/** 背景音乐搜索结果中的单个候选（含试听地址，未下载）。 */
+export interface BgmCandidate {
+  provider: string;
+  remote_id: string;
+  url: string;
+  preview_url: string;
+  title: string;
+  duration: number;
+  author: string;
+  meta: Record<string, string>;
+}
+
+export interface BgmSearchResult {
+  query: string;
+  candidates: BgmCandidate[];
+}

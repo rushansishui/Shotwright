@@ -403,16 +403,19 @@ def add_upload(store: ProjectStore, project: Project, path: Path, *, filename: s
 
 
 def asset_folder(asset: Asset) -> AssetFolder:
-    """按来源推断素材应放的子目录，用于整理 v0.3 之前的项目。"""
+    """按来源推断素材应放的子目录，用于整理旧项目。"""
     if asset.source == "upload":
         return "upload"
-    ids = {kind: {spec.id for spec in registry.specs(kind)} for kind in ("stock", "video_gen", "image_gen")}
+    ids = {kind: {spec.id for spec in registry.specs(kind)} for kind in ("stock", "video_gen", "image_gen", "music")}
     if asset.source in ids["stock"]:
         return "stock"
     if asset.kind == "video" and (asset.source in ids["video_gen"] or asset.source == "video_gen"):
         return "ai-video"
     if asset.kind == "image" and (asset.source in ids["image_gen"] or asset.source == "image_gen"):
         return "ai-image"
+    # 旧项目里已检索的背景音乐可能落在 other/，按来源或类型归到 music/。
+    if asset.kind == "audio" and (asset.source in ids["music"] or asset.source == "music"):
+        return "music"
     return "other"
 
 

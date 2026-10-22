@@ -39,8 +39,8 @@ LICENSE_LABELS = {
     "public-domain": "Public Domain",
     "cc-by": "CC BY",
     "cc-by-sa": "CC BY-SA",
-    "unknown": "未标注授权",
-    "restricted": "受限授权",
+    "unknown": "License not stated",
+    "restricted": "Restricted license",
 }
 
 
@@ -192,6 +192,8 @@ class ArchiveMusic:
             provider="archive",
             remote_id=f"{identifier}/{name}",
             url=f"{DOWNLOAD_URL}/{identifier}/{name}",
+            # /stream/ 端点可直接在浏览器 <audio> 中播放，无需先下载整首。
+            preview_url=f"https://archive.org/stream/{identifier}/{name}",
             title=str(meta.get("title") or doc.get("title") or name)[:200],
             duration=parse_length(chosen.get("length")) or 0.0,
             author=str(creator or "")[:200],

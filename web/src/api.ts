@@ -1,4 +1,6 @@
 import type {
+  BgmCandidate,
+  BgmSearchResult,
   Job,
   LanguageInfo,
   Project,
@@ -92,9 +94,12 @@ export const api = {
     request<Project>(`/projects/${id}/shots/${shotId}/candidates`, json("POST", { confirm_charge: confirmCharge })),
   /** 服务器上正在检索或生成的镜头（页面刷新后用来恢复"生成中"状态）。 */
   inProgress: (id: string) => request<Record<string, { mode: string; seconds: number }>>(`/projects/${id}/in-progress`),
-  /** 检索背景音乐；query 留空时由服务端用大模型从诉求和镜头提示词提炼。 */
+  /** 检索背景音乐候选（只返回元数据+试听地址，不下载）；query 留空时由服务端用大模型提炼。 */
   bgmCandidates: (id: string, query = "") =>
-    request<Project>(`/projects/${id}/bgm/candidates`, json("POST", { query })),
+    request<BgmSearchResult>(`/projects/${id}/bgm/candidates`, json("POST", { query })),
+  /** 下载选中的候选，注册为素材并设为当前背景音乐，返回更新后的项目。 */
+  bgmDownload: (id: string, candidate: BgmCandidate) =>
+    request<Project>(`/projects/${id}/bgm/download`, json("POST", candidate)),
   upload: (id: string, file: File) => {
     const form = new FormData();
     form.append("file", file);
