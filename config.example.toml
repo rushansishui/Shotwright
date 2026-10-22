@@ -85,6 +85,10 @@ api_key = ""
 [providers.stock.pexels]
 api_key = ""
 
+# Coverr：免 Key，素材以横屏为主（https://coverr.co/developers）
+[providers.stock.coverr]
+# timeout = "30"
+
 # ---- 背景音乐 ----------------------------------------------------------------
 # Internet Archive：免 Key。音频授权不一（有的禁止商用或改编，有的没有标注），
 # 发布前请确认授权；可以用 collection 限定在授权明确的合集。

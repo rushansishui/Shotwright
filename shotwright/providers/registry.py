@@ -31,6 +31,7 @@ _BUILTIN_MODULES = (
     "shotwright.providers.tts.elevenlabs",
     "shotwright.providers.stock.pixabay",
     "shotwright.providers.stock.pexels",
+    "shotwright.providers.stock.coverr",
     "shotwright.providers.video_gen.seedance",
     "shotwright.providers.image_gen.openai_images",
     "shotwright.providers.music.archive",
