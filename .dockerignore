@@ -1,0 +1,13 @@
+# 构建时不需要进入镜像的内容；只保留运行所需。
+.git
+.venv
+storage
+web/node_modules
+web/dist
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+config.toml
+*.bak-*
+tests
