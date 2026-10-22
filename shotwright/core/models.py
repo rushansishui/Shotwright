@@ -337,6 +337,8 @@ class Project(_Model):
     """项目级参考素材库：产品图、人物设定、Logo、风格图。镜头生成时作为参考。"""
     shots: list[Shot] = Field(default_factory=list)
     assets: dict[str, Asset] = Field(default_factory=dict)
+    cost_credits: float = Field(0.0, ge=0.0)
+    """项目累计花费的估算金额（元）：每次收费生成成功后按参考单价累加，供界面显示。"""
     revision: int = 0
     created_at: float = Field(default_factory=time.time)
     updated_at: float = Field(default_factory=time.time)

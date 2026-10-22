@@ -33,7 +33,17 @@ def ken_burns_filter(width: int, height: int, fps: int, duration: float, fit: st
     )
 
 
-def _video_args(fps: int) -> list[str]:
+def _video_args(fps: int, quality: str = "final") -> list[str]:
+    """编码参数。``draft`` 档用更快的预设和较低质量，用于快速预览。"""
+    if quality == "draft":
+        return [
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "30",
+            "-pix_fmt", "yuv420p",
+            "-r", str(fps),
+            "-g", str(fps * 2),
+        ]
     return [
         "-c:v", "libx264",
         "-preset", "veryfast",
@@ -54,6 +64,7 @@ def render_shot(
     *,
     stages: list[StageRecord],
     cancel: threading.Event,
+    quality: str = "final",
 ) -> tuple[str, Path]:
     """将单个镜头的画面与配音合成为 MP4，返回 (指纹, 输出路径)。"""
     canvas = project.canvas
@@ -71,6 +82,7 @@ def render_shot(
         KEN_BURNS if asset is not None and asset.kind == "image" else None,
         canvas.model_dump(),
         project.voice_for(shot).volume,
+        quality,
     )
     output = store.cache_dir(project.id, "shots") / f"{fp}.mp4"
     width, height, fps = canvas.width, canvas.height, canvas.fps
@@ -106,7 +118,7 @@ def render_shot(
                 "-map", "[v]",
                 "-map", "[a]",
                 "-t", f"{duration:.3f}",
-                *_video_args(fps),
+                *_video_args(fps, quality),
                 *AUDIO_ARGS,
                 "-movflags", "+faststart",
                 "-f", "mp4",

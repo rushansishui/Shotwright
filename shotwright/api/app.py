@@ -44,6 +44,7 @@ from shotwright.media import ffmpeg
 from shotwright.providers import registry
 from shotwright.providers.base import ChargeConfirmationRequired, ProviderError
 from shotwright.providers.tts.edge import VOICES
+from shotwright.services import cost as cost_service
 from shotwright.services import footage, localize, music, storyboard, visuals
 
 log = logging.getLogger("shotwright.api")
@@ -691,6 +692,14 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
         return _mutate(project_id, change)
 
+    # ---- 费用预估 ------------------------------------------------------------
+
+    @api.get("/projects/{project_id}/cost-estimate")
+    def get_cost_estimate(project_id: str):
+        """估算渲染本项目的费用（元），不实际触发任何 AI 调用。"""
+        project = store.load(_id(project_id))
+        return cost_service.estimate_render_cost(project, settings).to_dict()
+
     # ---- 渲染 ---------------------------------------------------------------
 
     @api.post("/projects/{project_id}/renders", status_code=202)
@@ -698,7 +707,11 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         """``confirm_charge: true`` 时，没有画面的 AI 镜头会提交收费生成；否则改用素材检索。"""
         if not store.exists(_id(project_id)):
             raise ProjectNotFound(project_id)
-        return jobs.submit(project_id, allow_paid=bool(body and body.confirm_charge)).to_dict()
+        return jobs.submit(
+            project_id,
+            allow_paid=bool(body and body.confirm_charge),
+            quality=body.quality if body else "final",
+        ).to_dict()
 
     @api.get("/projects/{project_id}/renders")
     def list_renders(project_id: str):

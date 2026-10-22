@@ -19,6 +19,7 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
+from typing import Literal
 
 from shotwright.config import Settings
 from shotwright.core.fingerprint import fingerprint
@@ -54,6 +55,8 @@ __all__ = [
 
 Progress = Callable[[float, str], None]
 
+Quality = Literal["draft", "final"]
+
 
 def _overlay_end(item) -> float:
     """叠加图片的结束时间；不限时长时给一个足够大的数。"""
@@ -82,10 +85,13 @@ class Renderer:
         progress: Progress | None = None,
         cancel: threading.Event | None = None,
         allow_paid: bool = False,
+        quality: Quality = "final",
     ):
         self.store = store
         self.allow_paid = allow_paid
         """用户是否已确认本次渲染可以调用收费的 AI 生成。"""
+        self.quality = quality
+        """草稿档用快速编码参数，成片档用正常质量。"""
         self.settings = settings
         self._progress = progress or (lambda value, message: None)
         self._cancel = cancel or threading.Event()
@@ -161,6 +167,7 @@ class Renderer:
                 duration,
                 stages=self.stages,
                 cancel=self._cancel,
+                quality=self.quality,
             )
             shot_files.append((fp, path))
             timings.append(ShotTiming(shot.id, round(cursor, 3), voice_duration, duration, words))
@@ -373,7 +380,7 @@ class Renderer:
                 "-filter_complex", ";".join([*chain, *audio_chain]),
                 "-map", f"[{previous}]",
                 "-map", "[aout]",
-                *_video_args(project.canvas.fps),
+                *_video_args(project.canvas.fps, self.quality),
                 *AUDIO_ARGS,
                 "-movflags", "+faststart",
                 "-f", "mp4",
@@ -454,6 +461,7 @@ class Renderer:
             style.model_dump() if cues else None,
             [o.model_dump() for o in text_overlays] if text_overlays else None,
             [(o.model_dump(), asset.sha256) for o, asset in image_overlays] if image_overlays else None,
+            self.quality,
             sha256_file(font) if font else None,
             bgm_asset.sha256 if bgm_asset else None,
             project.bgm.volume if bgm_asset else None,
@@ -530,7 +538,7 @@ class Renderer:
                 if filters:
                     command += ["-filter_complex", ";".join(filters)]
                 command += ["-map", f"[{video_in}]", "-map", audio_map]
-                command += _video_args(project.canvas.fps) if video_in != "0:v" else ["-c:v", "copy"]
+                command += _video_args(project.canvas.fps, self.quality) if video_in != "0:v" else ["-c:v", "copy"]
                 command += AUDIO_ARGS if audio_map != "0:a" else ["-c:a", "copy"]
                 command += [
                     "-t", f"{duration:.3f}",

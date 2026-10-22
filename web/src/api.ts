@@ -1,6 +1,7 @@
 import type {
   BgmCandidate,
   BgmSearchResult,
+  CostEstimate,
   Job,
   LanguageInfo,
   Project,
@@ -123,8 +124,9 @@ export const api = {
       { method: "POST", body: form },
     );
   },
-  render: (id: string, confirmCharge = false) =>
-    request<Job>(`/projects/${id}/renders`, json("POST", { confirm_charge: confirmCharge })),
+  render: (id: string, confirmCharge = false, quality: "draft" | "final" = "final") =>
+    request<Job>(`/projects/${id}/renders`, json("POST", { confirm_charge: confirmCharge, quality })),
+  costEstimate: (id: string) => request<CostEstimate>(`/projects/${id}/cost-estimate`),
   job: (jobId: string) => request<Job>(`/renders/${jobId}`),
   cancel: (jobId: string) => request<{ ok: boolean }>(`/renders/${jobId}/cancel`, json("POST")),
   renders: (id: string) =>

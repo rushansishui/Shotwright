@@ -105,6 +105,8 @@ class ReorderShots(_Body):
 class ChargeConsent(_Body):
     confirm_charge: bool = False
     """用户已确认这次操作可以调用收费服务（AI 视频、AI 图片）。"""
+    quality: Literal["draft", "final"] = "final"
+    """draft：快速低质量预览；final：正常成片。"""
 
 
 class CandidatesRequest(ChargeConsent):

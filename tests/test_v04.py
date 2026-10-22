@@ -2,6 +2,7 @@
 
 import subprocess
 
+import pytest
 from conftest import FakeVideoGen, make_clip
 from fastapi.testclient import TestClient
 
@@ -20,7 +21,7 @@ from shotwright.media.ffmpeg import probe
 from shotwright.pipeline.render import Renderer
 from shotwright.providers import registry
 from shotwright.providers.base import ProviderError, ProviderSpec
-from shotwright.services import visuals
+from shotwright.services import cost, visuals
 
 # ---- 测试用的服务 -----------------------------------------------------------
 
@@ -55,6 +56,34 @@ def _project(store, *, shots=None, **kwargs) -> Project:
 def _client(settings, store=None):
     store = store or ProjectStore(settings.storage_dir)
     return TestClient(create_app(settings, job_manager=JobManager(store, settings)))
+
+
+# ---- 费用估算 ---------------------------------------------------------------
+
+
+def test_cost_estimate_for_ai_shot_without_visual(store, settings):
+    settings.providers["video_gen"] = {"seedance": {"min_duration": "4", "max_duration": "12"}}
+    project = _project(
+        store,
+        shots=[
+            Shot(text="短句。", visual=ShotVisual(mode="ai", prompt="a cat", provider="seedance")),
+            Shot(text="长" * 400, visual=ShotVisual(mode="ai", prompt="a dog", provider="seedance")),
+            Shot(text="有时长", duration=6.2, visual=ShotVisual(mode="ai", prompt="x", provider="seedance")),
+        ],
+    )
+    estimate = cost.estimate_render_cost(project, settings)
+    seconds = [item.visual_cost / 0.14 for item in estimate.items]
+    # 短镜头按最短 4 秒计费，长镜头封顶在配置的 12 秒，手动时长向上取整到 7 秒。
+    assert [round(s) for s in seconds] == [4, 12, 7]
+    assert estimate.total > 0
+
+
+def test_cost_estimate_endpoint(settings, store):
+    project = _project(store, shots=[Shot(text="一句话。", visual=ShotVisual(mode="ai", prompt="sea"))])
+    with _client(settings, store) as client:
+        r = client.get(f"/api/v2/projects/{project.id}/cost-estimate")
+    assert r.status_code == 200, r.text
+    assert r.json()["items"][0]["shot_id"] == project.shots[0].id
 
 
 # ---- 转场 -------------------------------------------------------------------
@@ -205,3 +234,20 @@ def test_pending_task_is_resumed_without_resubmitting(store, settings):
     assert FakeResumable.resumed == ["task-42"]
     assert len(FakeVideoGen.calls) == before
     assert project.shots[0].visual.pending is None and project.shots[0].visual.selected == added[0]
+
+
+def test_paid_generation_adds_to_project_cost(store, settings):
+    registry.register(
+        ProviderSpec(kind="video_gen", id="seedance-fake", name="S", paid=True), FakeVideoGen
+    )
+    cost._VIDEO_GEN_PRICE["seedance-fake"] = 0.5
+    try:
+        project = _project(
+            store, shots=[Shot(text="一句话。", visual=ShotVisual(mode="ai", prompt="sea", provider="seedance-fake"))]
+        )
+        visuals.generate_ai_candidate(store, settings, project, project.shots[0], confirm_charge=True)
+        # 按最短 4 秒计费：0.5 × 4 = 2 元，直接写进项目文件。
+        assert store.load(project.id).cost_credits == pytest.approx(2.0)
+        assert project.cost_credits == pytest.approx(2.0)
+    finally:
+        del cost._VIDEO_GEN_PRICE["seedance-fake"]

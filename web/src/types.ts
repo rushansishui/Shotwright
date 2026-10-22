@@ -110,6 +110,8 @@ export interface Project {
   references: ReferenceAsset[];
   shots: Shot[];
   assets: Record<string, Asset>;
+  /** 累计收费生成的参考费用（元）。 */
+  cost_credits: number;
   revision: number;
   updated_at: number;
 }
@@ -197,4 +199,20 @@ export interface BgmCandidate {
 export interface BgmSearchResult {
   query: string;
   candidates: BgmCandidate[];
+}
+
+export interface CostEstimateItem {
+  shot_index: number;
+  shot_id: string;
+  visual_cost: number;
+  tts_cost: number;
+  note: string;
+}
+
+export interface CostEstimate {
+  currency: string;
+  total: number;
+  total_visual: number;
+  total_tts: number;
+  items: CostEstimateItem[];
 }

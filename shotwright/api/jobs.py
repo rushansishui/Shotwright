@@ -38,6 +38,8 @@ class Job:
     error: str | None = None
     result: dict | None = None
     allow_paid: bool = False
+    quality: str = "final"
+    """draft：低分辨率快速预览；final：正常成片。"""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -52,8 +54,8 @@ class JobManager:
         self._cancel: dict[str, threading.Event] = {}
         self._lock = threading.Lock()
 
-    def submit(self, project_id: str, *, allow_paid: bool = False) -> Job:
-        job = Job(id=new_id(), project_id=project_id, allow_paid=allow_paid)
+    def submit(self, project_id: str, *, allow_paid: bool = False, quality: str = "final") -> Job:
+        job = Job(id=new_id(), project_id=project_id, allow_paid=allow_paid, quality=quality)
         with self._lock:
             self._jobs[job.id] = job
             self._cancel[job.id] = threading.Event()
@@ -109,7 +111,12 @@ class JobManager:
 
         try:
             result = Renderer(
-                self.store, self.settings, progress=progress, cancel=cancel, allow_paid=job.allow_paid
+                self.store,
+                self.settings,
+                progress=progress,
+                cancel=cancel,
+                allow_paid=job.allow_paid,
+                quality=job.quality,  # type: ignore[arg-type]
             ).render(job.project_id, render_id=job.id)
         except RenderCancelled:
             job.state, job.message = "cancelled", "已取消"

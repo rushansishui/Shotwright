@@ -360,6 +360,7 @@ def generate_ai_candidate(
             store, project, path, source=provider_id or "video_gen", folder="ai-video", meta=meta
         )
     shot.visual.pending = None
+    record_spend(store, settings, project, shot, "video_gen", provider_id or "")
     _attach(shot, [asset.id], select=True)
     return [asset.id]
 
@@ -400,6 +401,7 @@ def generate_image_candidate(
             folder="ai-image",
             meta={"prompt": prompt[:500]},
         )
+    record_spend(store, settings, project, shot, "image_gen", provider_id or "")
     _attach(shot, [asset.id], select=True)
     return [asset.id]
 
@@ -480,8 +482,27 @@ def resume_pending(store: ProjectStore, settings: Settings, project: Project, sh
             store, project, path, source=provider_id, folder="ai-video", meta=meta
         )
     shot.visual.pending = None
+    record_spend(store, settings, project, shot, "video_gen", provider_id)
     _attach(shot, [asset.id], select=True)
     return [asset.id]
+
+
+def record_spend(
+    store: ProjectStore, settings: Settings, project: Project, shot: Shot, kind: str, provider_id: str
+) -> None:
+    """收费生成成功后，把参考费用累加到项目（直接写盘，调用方之后的合并不会覆盖它）。"""
+    from shotwright.services import cost
+
+    amount = cost.generation_cost(settings, project, shot, kind, provider_id)
+    if amount <= 0:
+        return
+    with store.lock(project.id):
+        latest = store.load(project.id)
+        latest.cost_credits = round(latest.cost_credits + amount, 4)
+        store.save(latest)
+        project.cost_credits = latest.cost_credits
+        project.revision = latest.revision
+    log.info("项目 %s：本次生成参考费用 %.2f 元，累计 %.2f 元", project.id, amount, project.cost_credits)
 
 
 def _attach(shot: Shot, asset_ids: list[str], *, select: bool = False) -> None:

@@ -67,4 +67,12 @@ test.describe("Shotwright 主流程", () => {
     await expect(page.getByRole("heading", { name: /文字与转场|Text & transitions/ })).toBeVisible();
     await expect(page.getByRole("heading", { name: /语言版本|Language versions/ })).toBeVisible();
   });
+
+  test("草稿/成片两档可以切换", async ({ page }) => {
+    await createProject(page, `画质${RUN_ID}，${TWO_SHOTS}`);
+    const draft = page.getByRole("radio", { name: /草稿|Draft/ });
+    await expect(draft).toBeVisible();
+    await draft.click();
+    await expect(draft).toHaveAttribute("aria-checked", "true");
+  });
 });
