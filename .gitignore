@@ -27,3 +27,4 @@ Thumbs.db
 .idea/
 *.tsbuildinfo
 config.toml.*
+storage/e2e-projects/

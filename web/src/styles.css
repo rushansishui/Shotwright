@@ -175,12 +175,18 @@ h2 {
   gap: 16px;
   position: sticky;
   top: 16px;
+  /* 侧栏比窗口高时自己滚动，否则下面的「成片」要等主栏滚到底才看得到。 */
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 @media (max-width: 1000px) {
   .side {
     position: static;
     max-width: none;
+    max-height: none;
+    overflow: visible;
   }
 }
 

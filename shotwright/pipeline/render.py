@@ -12,116 +12,47 @@
 
 from __future__ import annotations
 
-import math
 import shutil
 import tempfile
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from pathlib import Path
 
 from shotwright.config import Settings
 from shotwright.core.fingerprint import fingerprint
 from shotwright.core.ids import new_id
 from shotwright.core.models import Project, Shot
-from shotwright.core.store import ProjectStore, read_json, sha256_file, write_json
+from shotwright.core.store import ProjectStore, sha256_file, write_json
 from shotwright.media import subtitles as subs
 from shotwright.media.ffmpeg import LOCAL_PROTOCOLS, MediaCancelled, MediaError, probe, run_ffmpeg
-from shotwright.providers import registry
-from shotwright.providers.base import ProviderError, TTSProvider
+from shotwright.providers.base import ProviderError
 from shotwright.services import visuals
 
+from .render_types import (
+    AUDIO_ARGS,
+    VOICE_PADDING,
+    RenderCancelled,
+    RenderError,
+    RenderResult,
+    ShotTiming,
+    StageRecord,
+)
+from .shots import _video_args, render_shot
+from .voice import synthesize_shot
+
+# Re-export so existing importers keep working.
+__all__ = [
+    "RenderError",
+    "RenderCancelled",
+    "RenderResult",
+    "ShotTiming",
+    "StageRecord",
+    "Renderer",
+]
+
 Progress = Callable[[float, str], None]
-
-VOICE_PADDING = 0.25
-"""配音后留的空隙（秒），让镜头之间有呼吸感。"""
-
-
-KEN_BURNS = "ken-burns-1"
-"""图片镜头的运动效果版本；改动滤镜参数时同步修改，让旧缓存失效。"""
-
-
-def _fit_filter(width: int, height: int, fit: str) -> str:
-    if fit == "contain":
-        return (
-            f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black"
-        )
-    return f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
-
-
-def ken_burns_filter(width: int, height: int, fps: int, duration: float, fit: str) -> str:
-    """图片慢推：先按两倍画布适配（减少缩放抖动），再从 1.0 匀速放大到 1.1 倍。"""
-    frames = math.ceil(duration * fps) + 1
-    return (
-        f"{_fit_filter(width * 2, height * 2, fit)},"
-        f"zoompan=z='1+0.1*on/{frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-        f":d={frames}:s={width}x{height}:fps={fps},setsar=1,format=yuv420p"
-    )
-
-
-class RenderError(RuntimeError):
-    pass
-
-
-class RenderCancelled(RenderError):
-    pass
-
-
-@dataclass
-class StageRecord:
-    key: str
-    kind: str
-    fingerprint: str
-    reused: bool
-    seconds: float
-
-
-@dataclass
-class ShotTiming:
-    shot_id: str
-    start: float
-    voice_duration: float
-    duration: float
-    words: list[tuple[str, float, float]] = field(default_factory=list)
-    """配音服务的逐词时间戳（相对本镜头音频开头）；为空时字幕按字数估算。"""
-
-
-@dataclass
-class RenderResult:
-    render_id: str
-    project_id: str
-    revision: int
-    video: str
-    subtitles: str | None
-    duration: float
-    timings: list[ShotTiming]
-    stages: list[StageRecord]
-    warnings: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-
-def _video_args(fps: int) -> list[str]:
-    return [
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "20",
-        "-pix_fmt",
-        "yuv420p",
-        "-r",
-        str(fps),
-        "-g",
-        str(fps * 2),
-    ]
-
-
-AUDIO_ARGS = ["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"]
 
 
 class Renderer:
@@ -163,7 +94,6 @@ class Renderer:
             build(temp)
             temp.replace(output)
         except MediaCancelled as exc:
-            # ffmpeg 被取消：转成渲染取消，让队列记为 cancelled 而不是 failed。
             raise RenderCancelled(str(exc)) from exc
         finally:
             temp.unlink(missing_ok=True)
@@ -184,7 +114,16 @@ class Renderer:
         voices: list[tuple[str, Path, float, list[tuple[str, float, float]]]] = []
         for index, shot in enumerate(project.shots):
             self._report(0.10 + 0.25 * index / total, f"配音 {index + 1}/{total}")
-            voices.append(self._voice(project, shot))
+            voices.append(
+                synthesize_shot(
+                    self.store,
+                    self.settings,
+                    project,
+                    shot,
+                    stages=self.stages,
+                    cancel=self._cancel,
+                )
+            )
 
         shot_files: list[tuple[str, Path]] = []
         timings: list[ShotTiming] = []
@@ -194,7 +133,16 @@ class Renderer:
         ):
             self._report(0.35 + 0.45 * index / total, f"渲染镜头 {index + 1}/{total}")
             duration = round(shot.duration or voice_duration + VOICE_PADDING, 3)
-            fp, path = self._shot(project, shot, voice_fp, voice_path, duration)
+            fp, path = render_shot(
+                self.store,
+                project,
+                shot,
+                voice_fp,
+                voice_path,
+                duration,
+                stages=self.stages,
+                cancel=self._cancel,
+            )
             shot_files.append((fp, path))
             timings.append(ShotTiming(shot.id, round(cursor, 3), voice_duration, duration, words))
             cursor += duration
@@ -254,7 +202,6 @@ class Renderer:
                         self.store, self.settings, project, shot, confirm_charge=self.allow_paid
                     )
                 except ProviderError as exc:
-                    # AI 画面没生成时，有检索词就退回素材检索，而不是直接用纯色。
                     if visual.mode == "stock" or not visual.terms:
                         raise
                     visuals.fetch_stock_candidates(self.store, self.settings, project, shot)
@@ -264,7 +211,6 @@ class Renderer:
                 self.warnings.append(f"镜头 {index + 1} 没有拿到素材，已使用纯色画面：{exc}")
         if not changed:
             return
-        # 渲染期间用户可能在编辑：只把本次新增的素材合并进最新的项目文件。
         with self.store.lock(project.id):
             latest = self.store.load(project.id)
             for asset_id, asset in project.assets.items():
@@ -285,155 +231,6 @@ class Renderer:
         return bool(
             selected and selected in project.assets and project.assets[selected].kind in ("video", "image")
         )
-
-    # ---- 配音 ---------------------------------------------------------------
-
-    def _voice(self, project: Project, shot: Shot) -> tuple[str, Path, float, list[tuple[str, float, float]]]:
-        voice = project.voice_for(shot)
-        text = shot.text.strip()
-        provider_id = voice.provider if text else "silence"
-        fp = fingerprint("voice", text, voice.model_dump(), shot.duration if not text else None)
-        cache = self.store.cache_dir(project.id, "voice")
-        meta_path = cache / f"{fp}.json"
-        meta = read_json(meta_path)
-        if meta and (cache / meta.get("file", "")).is_file():
-            self.stages.append(StageRecord(f"{shot.id}:voice", "voice", fp, True, 0.0))
-            words = [(str(w[0]), float(w[1]), float(w[2])) for w in meta.get("words") or [] if len(w) == 3]
-            return fp, cache / meta["file"], float(meta["duration"]), words
-
-        started = time.monotonic()
-        words: list[tuple[str, float, float]] = []
-        with tempfile.TemporaryDirectory(prefix="shotwright-voice-") as temp:
-            if not text:
-                seconds = shot.duration or 2.0
-                path = Path(temp) / "voice.m4a"
-                run_ffmpeg(
-                    [
-                        "-f",
-                        "lavfi",
-                        "-i",
-                        "anullsrc=channel_layout=stereo:sample_rate=48000",
-                        "-t",
-                        f"{seconds:.3f}",
-                        *AUDIO_ARGS,
-                        str(path),
-                    ],
-                    cancel=self._cancel,
-                )
-                duration = seconds
-            else:
-                try:
-                    tts: TTSProvider = registry.create("tts", provider_id, self.settings)  # type: ignore[assignment]
-                    speech = tts.synthesize(
-                        text,
-                        voice=voice.voice,
-                        rate=voice.rate,
-                        volume=voice.volume,
-                        output=Path(temp) / "voice",
-                    )
-                except ProviderError as exc:
-                    index = project.shots.index(shot) + 1
-                    raise RenderError(f"镜头 {index} 配音失败：{exc}") from exc
-                path, duration = speech.path, speech.duration
-                words = [(word.text, word.start, word.end) for word in speech.words]
-            filename = f"{fp}{path.suffix}"
-            shutil.move(str(path), cache / filename)
-        write_json(
-            meta_path,
-            {
-                "file": filename,
-                "duration": round(duration, 3),
-                "provider": provider_id,
-                "words": [list(word) for word in words],
-            },
-        )
-        self.stages.append(
-            StageRecord(f"{shot.id}:voice", "voice", fp, False, round(time.monotonic() - started, 3))
-        )
-        return fp, cache / filename, round(duration, 3), words
-
-    # ---- 镜头 ---------------------------------------------------------------
-
-    def _shot(
-        self, project: Project, shot: Shot, voice_fp: str, voice_path: Path, duration: float
-    ) -> tuple[str, Path]:
-        canvas = project.canvas
-        visual = shot.visual
-        asset = project.assets.get(visual.selected) if visual.selected and visual.mode != "color" else None
-        if asset is not None and asset.kind not in ("video", "image"):
-            asset = None
-        visual_key = asset.sha256 if asset else f"color:{visual.color}"
-        fp = fingerprint(
-            "shot",
-            voice_fp,
-            duration,
-            visual_key,
-            visual.fit,
-            KEN_BURNS if asset is not None and asset.kind == "image" else None,
-            canvas.model_dump(),
-            project.voice_for(shot).volume,
-        )
-        output = self.store.cache_dir(project.id, "shots") / f"{fp}.mp4"
-        width, height, fps = canvas.width, canvas.height, canvas.fps
-
-        def build(temp: Path) -> None:
-            if asset is None:
-                video_input = [
-                    "-f",
-                    "lavfi",
-                    "-i",
-                    f"color=c=0x{visual.color[1:]}:s={width}x{height}:r={fps}",
-                ]
-            elif asset.kind == "image":
-                # 单帧输入，由 zoompan 展开成整段慢推镜头。
-                video_input = [
-                    "-protocol_whitelist",
-                    LOCAL_PROTOCOLS,
-                    "-i",
-                    str(self.store.asset_path(project, asset.id)),
-                ]
-            else:
-                video_input = [
-                    "-stream_loop",
-                    "-1",
-                    "-protocol_whitelist",
-                    LOCAL_PROTOCOLS,
-                    "-i",
-                    str(self.store.asset_path(project, asset.id)),
-                ]
-            if asset is not None and asset.kind == "image":
-                video_chain = ken_burns_filter(width, height, fps, duration, visual.fit)
-            else:
-                video_chain = f"{_fit_filter(width, height, visual.fit)},setsar=1,fps={fps},format=yuv420p"
-            graph = f"[0:v]{video_chain}[v];[1:a]aresample=48000,aformat=channel_layouts=stereo,apad[a]"
-            run_ffmpeg(
-                [
-                    *video_input,
-                    "-protocol_whitelist",
-                    LOCAL_PROTOCOLS,
-                    "-i",
-                    str(voice_path),
-                    "-filter_complex",
-                    graph,
-                    "-map",
-                    "[v]",
-                    "-map",
-                    "[a]",
-                    "-t",
-                    f"{duration:.3f}",
-                    *_video_args(fps),
-                    *AUDIO_ARGS,
-                    "-movflags",
-                    "+faststart",
-                    "-f",
-                    "mp4",
-                    str(temp),
-                ],
-                cancel=self._cancel,
-            )
-
-        self._stage(f"{shot.id}:shot", "shot", fp, output, build)
-        return fp, output
 
     # ---- 整片 ---------------------------------------------------------------
 
