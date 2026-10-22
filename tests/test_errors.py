@@ -33,7 +33,5 @@ def test_errors_translate_for_english_clients(client):
 
 
 def test_errors_stay_chinese_when_language_is_zh_first(client):
-    r = client.get(
-        "/api/v2/projects/doesnotexist", headers={"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"}
-    )
+    r = client.get("/api/v2/projects/doesnotexist", headers={"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"})
     assert r.json()["detail"] == "项目不存在"

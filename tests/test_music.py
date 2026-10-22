@@ -25,9 +25,7 @@ def test_license_kind_rejects_noncommercial():
     assert license_kind("https://creativecommons.org/licenses/by-nc-nd/4.0/") == "restricted"
 
 
-@pytest.mark.parametrize(
-    "raw,want", [("3725.53", 3725.53), ("4:12", 252.0), ("1:00:05", 3605.0), ("", None)]
-)
+@pytest.mark.parametrize("raw,want", [("3725.53", 3725.53), ("4:12", 252.0), ("1:00:05", 3605.0), ("", None)])
 def test_parse_length(raw, want):
     assert parse_length(raw) == want
 
