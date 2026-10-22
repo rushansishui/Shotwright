@@ -59,6 +59,8 @@ class UpdateProject(_Body):
     overlays: list[Overlay] | None = None
     """叠加文字与图形；整体替换。"""
     transition: TransitionSettings | None = None
+    ai_badge: bool | None = None
+    """画面上是否显示「AI 生成」角标。"""
     bgm: BgmSettings | None = None
     references: list[ReferenceAsset] | None = None
     """项目级参考素材库；整体替换。"""

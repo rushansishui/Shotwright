@@ -93,6 +93,8 @@ def _meta(candidate: MusicCandidate, query: str) -> dict[str, str]:
         "author": candidate.author,
         "license": candidate.meta.get("license", ""),
         "source_url": candidate.meta.get("source_url", ""),
+        # 导出时据此判断是否需要在视频元数据里写 CC BY 署名（见 pipeline/metadata.py）。
+        "license_kind": candidate.meta.get("license_kind", ""),
         "query": query,
     }
     return {key: value for key, value in meta.items() if value}

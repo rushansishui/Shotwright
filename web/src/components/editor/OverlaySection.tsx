@@ -151,6 +151,16 @@ export function OverlaySection({ project, run }: OverlaySectionProps) {
       ))}
 
       <div className="divider" />
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={project.ai_badge}
+          onChange={(e) => run(() => api.updateProject(project.id, { ai_badge: e.target.checked }))}
+        />
+        {t("overlay.aiBadge")}
+      </label>
+      <p className="muted small">{t("overlay.aiBadgeHint")}</p>
+      <div className="divider" />
       <div className="field">
         <span className="label">{t("overlay.transition")}</span>
         <div className="row">

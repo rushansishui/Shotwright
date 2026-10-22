@@ -1,5 +1,6 @@
 """v0.4 新功能的回归测试：费用估算、转场时间轴、改画面、Host 校验、原片导入、任务恢复、元数据。"""
 
+import json
 import subprocess
 
 import pytest
@@ -18,6 +19,7 @@ from shotwright.core.models import (
 )
 from shotwright.core.store import ProjectStore
 from shotwright.media.ffmpeg import probe
+from shotwright.pipeline.metadata import AI_LABEL
 from shotwright.pipeline.render import Renderer
 from shotwright.providers import registry
 from shotwright.providers.base import ProviderError, ProviderSpec
@@ -234,6 +236,35 @@ def test_pending_task_is_resumed_without_resubmitting(store, settings):
     assert FakeResumable.resumed == ["task-42"]
     assert len(FakeVideoGen.calls) == before
     assert project.shots[0].visual.pending is None and project.shots[0].visual.selected == added[0]
+
+
+# ---- AI 标识与署名 ----------------------------------------------------------
+
+
+def test_render_writes_ai_label_and_bgm_credit(store, settings, tmp_path):
+    project = _project(store)
+    bgm = tmp_path / "bgm.mp3"
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=3", str(bgm)],
+        check=True,
+    )
+    asset = visuals.add_upload(store, project, bgm, filename="bgm.mp3")
+    asset.meta.update(
+        {"title": "Song", "author": "Someone", "license": "CC BY 4.0", "license_kind": "cc-by"}
+    )
+    project.bgm.asset_id = asset.id
+    store.save(project)
+    result = Renderer(store, settings).render(project.id)
+    video = store.render_dir(project.id, result.render_id) / result.video
+    output = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format_tags", "-of", "json", str(video)],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    tags = {k.lower(): v for k, v in json.loads(output)["format"].get("tags", {}).items()}
+    assert tags.get("comment") == AI_LABEL
+    assert "Someone" in tags.get("description", "")
 
 
 def test_paid_generation_adds_to_project_cost(store, settings):

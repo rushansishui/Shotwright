@@ -106,6 +106,7 @@ export interface Project {
   subtitle: SubtitleStyle;
   overlays: Overlay[];
   transition: TransitionSettings;
+  ai_badge: boolean;
   bgm: { asset_id: string | null; candidates?: string[]; query?: string; volume: number };
   references: ReferenceAsset[];
   shots: Shot[];

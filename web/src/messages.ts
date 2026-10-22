@@ -211,6 +211,8 @@ export const zh = {
   "overlay.trans.slide": "滑动",
   "overlay.trans.wipe": "擦除",
   "overlay.transitionDuration": "转场时长",
+  "overlay.aiBadge": "在画面右下角显示「AI 生成」角标",
+  "overlay.aiBadgeHint": "成片的元数据里始终会写入 AI 标识，这个开关只控制画面上的角标。",
   "overlay.transitionHint": "转场需要重新编码，比硬切慢；镜头比转场还短时自动改回硬切。",
 
   "render.preview": "预览",
@@ -424,6 +426,8 @@ export const en: Record<MessageKey, string> = {
   "overlay.trans.slide": "Slide",
   "overlay.trans.wipe": "Wipe",
   "overlay.transitionDuration": "Transition length",
+  "overlay.aiBadge": "Show an \"AI generated\" badge in the bottom-right corner",
+  "overlay.aiBadgeHint": "AI metadata is always written into the file; this only controls the on-screen badge.",
   "overlay.transitionHint": "Transitions re-encode the video and are slower; shots shorter than the transition fall back to a hard cut.",
   "shot.source": "Visual source",
   "shot.notConfigured": "{name} is not configured; see config.toml",

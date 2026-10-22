@@ -31,6 +31,7 @@ from shotwright.media.ffmpeg import LOCAL_PROTOCOLS, MediaCancelled, MediaError,
 from shotwright.providers.base import ProviderError
 from shotwright.services import visuals
 
+from .metadata import tag_video
 from .render_types import (
     AUDIO_ARGS,
     VOICE_PADDING,
@@ -184,6 +185,8 @@ class Renderer:
         output_dir = self.store.render_dir(project.id, render_id)
         video_path = output_dir / "video.mp4"
         shutil.copyfile(final, video_path)
+        self._report(0.95, "写入元数据")
+        tag_video(project, video_path)
         srt_path = None
         if cues:
             srt_path = output_dir / "subtitles.srt"
@@ -448,11 +451,11 @@ class Renderer:
             for o in image_overlays
             if o.image in project.assets and project.assets[o.image].kind == "image"
         ]
-        if not cues and bgm_asset is None and not text_overlays and not image_overlays:
+        if not cues and bgm_asset is None and not text_overlays and not image_overlays and not project.ai_badge:
             self.stages.append(StageRecord("final", "final", assembly_fp, True, 0.0))
             return assembly
 
-        needs_ass = bool(cues or text_overlays)
+        needs_ass = bool(cues or text_overlays or project.ai_badge)
         font = self._font_path(project) if needs_ass else None
         fp = fingerprint(
             "final",
@@ -462,6 +465,7 @@ class Renderer:
             [o.model_dump() for o in text_overlays] if text_overlays else None,
             [(o.model_dump(), asset.sha256) for o, asset in image_overlays] if image_overlays else None,
             self.quality,
+            project.ai_badge,
             sha256_file(font) if font else None,
             bgm_asset.sha256 if bgm_asset else None,
             project.bgm.volume if bgm_asset else None,
@@ -498,6 +502,18 @@ class Renderer:
                     video_in = video_out
                     step += 1
                     video_out = f"v{step}"
+                    if project.ai_badge:
+                        # 角标：右下角一行小字，提示这是 AI 生成内容。
+                        badge = "AI"
+                        filters.append(
+                            f"[{video_in}]drawtext=fontfile=fonts/{font.name}:text='{badge}':"
+                            f"fontcolor=white@0.75:fontsize="
+                            f"{max(16, project.canvas.height // 40)}:x=w-tw-24:y=h-th-24:"
+                            f"box=1:boxcolor=black@0.35:boxborderw=8[{video_out}]"
+                        )
+                        video_in = video_out
+                        step += 1
+                        video_out = f"v{step}"
 
                 # 图片叠加：按位置缩放到合适大小，在指定时间段内显示。
                 for index, (item, asset) in enumerate(image_overlays, start=1):

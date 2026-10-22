@@ -332,6 +332,8 @@ class Project(_Model):
     overlays: list[Overlay] = Field(default_factory=list)
     """叠加在画面上的文字与图形（卖点、价格、Logo），与字幕分开。"""
     transition: TransitionSettings = Field(default_factory=TransitionSettings)
+    ai_badge: bool = False
+    """在画面上显示「AI 生成」角标（元数据标识始终写入，不受此开关影响）。"""
     bgm: BgmSettings = Field(default_factory=BgmSettings)
     references: list[ReferenceAsset] = Field(default_factory=list)
     """项目级参考素材库：产品图、人物设定、Logo、风格图。镜头生成时作为参考。"""

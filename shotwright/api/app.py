@@ -376,6 +376,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 "transition",
                 "bgm",
                 "references",
+                "ai_badge",
             ):
                 value = getattr(body, name)
                 if value is not None:
