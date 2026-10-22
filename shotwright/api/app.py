@@ -134,8 +134,19 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         return result
 
     @api.get("/voices")
-    def voices(language: str | None = None):
-        """Edge 配音的可选声音；带 language 时只返回该语言的声音。"""
+    def voices(language: str | None = None, provider: str | None = None):
+        """可选声音。带 provider 时返回该配音服务自己的声音列表。
+
+        Edge 的声音按语言从语言目录取；其他服务的声音写在各自的 ProviderSpec 里。
+        """
+        chosen = provider or settings.default_provider("tts")
+        if chosen and chosen != "edge":
+            try:
+                spec = registry.spec("tts", chosen)
+            except ProviderError:
+                spec = None
+            if spec is not None and spec.voices:
+                return [{"id": vid, "name": label, "language": None} for vid, label in spec.voices]
         if language:
             lang = languages.get(language)
             return [{"id": vid, "name": label, "language": lang.code} for vid, label in lang.voices]

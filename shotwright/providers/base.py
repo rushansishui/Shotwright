@@ -62,6 +62,8 @@ class ProviderSpec:
     """不需要网络即可工作（例如静音配音）。"""
     shared_key_from: tuple[tuple[str, str], ...] = ()
     """自己的 api_key 为空时，依次借用这些 (类别, id) 的 api_key（例如方舟的同一把 Key）。"""
+    voices: tuple[tuple[str, str], ...] = ()
+    """配音服务的可选声音 (id, 说明)。为空表示用语言目录里的 Edge 声音。"""
 
     def missing_fields(self, settings: dict[str, str]) -> list[str]:
         return [f.key for f in self.fields if f.required and not settings.get(f.key)]

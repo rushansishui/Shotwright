@@ -47,10 +47,15 @@ const json = (method: string, body?: unknown): RequestInit => ({
 
 export const api = {
   providers: () => request<Providers>("/providers"),
-  voices: (language?: string) =>
-    request<{ id: string; name: string; language: string | null }[]>(
-      language ? `/voices?language=${encodeURIComponent(language)}` : "/voices",
-    ),
+  voices: (language?: string, provider?: string) => {
+    const params = new URLSearchParams();
+    if (language) params.set("language", language);
+    if (provider) params.set("provider", provider);
+    const query = params.toString();
+    return request<{ id: string; name: string; language: string | null }[]>(
+      query ? `/voices?${query}` : "/voices",
+    );
+  },
   languages: () => request<LanguageInfo[]>("/languages"),
   versions: (id: string) => request<VersionInfo[]>(`/projects/${id}/versions`),
   createVersion: (id: string, language: string) => request<Project>(`/projects/${id}/versions`, json("POST", { language })),
