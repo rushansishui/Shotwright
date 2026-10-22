@@ -77,7 +77,12 @@ export const api = {
   }) => request<Project>("/projects", json("POST", body)),
   updateProject: (
     id: string,
-    body: Partial<Pick<Project, "title" | "language" | "canvas" | "voice" | "subtitle" | "bgm">>,
+    body: Partial<
+      Pick<
+        Project,
+        "title" | "language" | "canvas" | "voice" | "subtitle" | "bgm"
+      >
+    >,
   ) =>
     request<Project>(`/projects/${id}`, json("PATCH", body)),
   deleteProject: (id: string) => request<void>(`/projects/${id}`, json("DELETE")),

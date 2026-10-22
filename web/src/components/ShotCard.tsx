@@ -101,6 +101,9 @@ export function ShotCard(props: {
   const busyLabel = props.busySeconds ? `${busyVerb} ${props.busySeconds}s` : busyVerb;
 
   const seconds = estimateSeconds({ ...shot, text }, (shot.voice ?? project.voice).rate);
+  // 生成服务的时长上限；超过时提示用户，避免生成被服务端截断。
+  const maxDuration = generator?.max_duration ?? null;
+  const exceedsMax = !!maxDuration && seconds > maxDuration;
   const isLast = index === project.shots.length - 1;
   const commitTerms = () => {
     const next = terms
@@ -123,7 +126,13 @@ export function ShotCard(props: {
             </div>
           )}
         </div>
-        <span className="muted small">{t("shot.duration", { n: seconds })}</span>
+        <span
+          className={`muted small ${exceedsMax ? "warn-text" : ""}`}
+          title={exceedsMax ? t("shot.overMaxDuration", { max: maxDuration }) : undefined}
+        >
+          {t("shot.duration", { n: seconds })}
+          {exceedsMax ? ` · ${t("shot.overMaxDurationShort", { max: maxDuration })}` : ""}
+        </span>
       </div>
 
       <div className="shot-main">

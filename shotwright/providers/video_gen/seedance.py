@@ -159,6 +159,9 @@ registry.register(
         paid=True,
         docs_url="https://www.volcengine.com/docs/82379/1520757",
         shared_key_from=(("llm", "doubao"),),
+        max_duration=30.0,
+        has_audio=False,
+        max_ref_images=1,
     ),
     SeedanceVideo,
 )

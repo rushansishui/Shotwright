@@ -145,6 +145,12 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                         {"key": f.key, "label": f.label, "required": f.required, "secret": f.secret}
                         for f in spec.fields
                     ],
+                    "capabilities": sorted(spec.capabilities),
+                    "max_duration": spec.max_duration,
+                    "has_audio": spec.has_audio,
+                    "video_to_video": spec.video_to_video,
+                    "max_ref_images": spec.max_ref_images,
+                    "word_timestamps": spec.word_timestamps,
                 }
             )
         return result

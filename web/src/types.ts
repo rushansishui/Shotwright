@@ -91,6 +91,12 @@ export interface ProviderInfo {
   default: boolean;
   docs_url: string;
   fields: { key: string; label: string; required: boolean; secret: boolean }[];
+  capabilities: string[];
+  max_duration: number | null;
+  has_audio: boolean;
+  video_to_video: boolean;
+  max_ref_images: number;
+  word_timestamps: boolean;
 }
 
 export type Providers = Record<string, ProviderInfo[]>;

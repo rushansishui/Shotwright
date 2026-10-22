@@ -64,6 +64,16 @@ class ProviderSpec:
     """自己的 api_key 为空时，依次借用这些 (类别, id) 的 api_key（例如方舟的同一把 Key）。"""
     voices: tuple[tuple[str, str], ...] = ()
     """配音服务的可选声音 (id, 说明)。为空表示用语言目录里的 Edge 声音。"""
+    max_duration: float | None = None
+    """视频生成的最长时长（秒）；None 表示不限或不适用。"""
+    has_audio: bool = False
+    """生成的视频是否含有声轨（用于判断是否需要混音）。"""
+    video_to_video: bool = False
+    """是否支持视频转视频（改画面）。"""
+    max_ref_images: int = 0
+    """支持的参考图数量上限；0 表示不支持参考图。"""
+    word_timestamps: bool = False
+    """配音服务是否提供逐词时间戳（用于精确字幕对齐）。"""
 
     def missing_fields(self, settings: dict[str, str]) -> list[str]:
         return [f.key for f in self.fields if f.required and not settings.get(f.key)]
