@@ -72,9 +72,9 @@ class FakeVideoGen:
     def __init__(self, settings):
         pass
 
-    def generate(self, prompt, *, aspect, duration, output, first_frame=None, on_task=None):
+    def generate(self, prompt, *, aspect, duration, output, first_frame=None, reference_video=None, on_task=None):
         FakeVideoGen.calls.append(
-            {"prompt": prompt, "duration": duration, "first_frame": first_frame}
+            {"prompt": prompt, "duration": duration, "first_frame": first_frame, "reference_video": reference_video}
         )
         if on_task is not None:
             on_task("fake-task")

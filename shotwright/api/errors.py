@@ -48,6 +48,8 @@ EN: dict[str, str] = {
     # 素材与生成
     "这个镜头没有检索词，请先填写英文检索词": "This shot has no search terms. Please add a few English terms.",
     "这个镜头没有画面提示词": "This shot has no visual prompt",
+    "当前的 AI 视频服务不支持改画面": "The current AI video service cannot edit an existing video",
+    "改画面需要先选中一段视频": "Select a video for this shot before editing it",
     "缺少画面提示词": "Missing visual prompt",
     "这个镜头的画面来源不需要检索或生成": "This shot's visual source does not need searching or generation",
     "没有找到合适的素材，试试换几个检索词": "No suitable footage found. Try different search terms.",

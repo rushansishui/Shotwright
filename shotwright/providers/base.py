@@ -141,11 +141,13 @@ class VideoGenProvider(Protocol):
         duration: float,
         output: Path,
         first_frame: Path | None = None,
+        reference_video: Path | None = None,
         on_task: Callable[[str], None] | None = None,
     ) -> Path:
         """生成视频并保存到 ``output``（可改扩展名），返回实际路径。
 
-        ``first_frame`` 为本地图片时走图生视频。
+        ``first_frame`` 为本地图片时走图生视频；``reference_video`` 为本地视频时
+        走视频转视频（改画面：换手、换背景、重新打光），结果是一段新视频。
         ``on_task`` 在拿到远端任务 id 后立即回调，调用方据此把 id 写进项目，
         进程重启后还能继续轮询。提交收费任务后若无法确认结果，必须抛
         :class:`UnconfirmedTaskError`，不得自动重新提交。

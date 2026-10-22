@@ -301,8 +301,13 @@ def generate_ai_candidate(
     shot: Shot,
     *,
     confirm_charge: bool = False,
+    edit_selected: bool = False,
 ) -> list[str]:
     """AI 视频。已选中的画面是图片时，把它作为首帧（图生视频）。
+
+    ``edit_selected`` 为真时是「改画面」：把当前选中的视频作为参考视频交给支持
+    视频转视频的模型，按提示词改写。只有用户明确点了「改画面」才会这样做，普通的
+    「生成」永远是文生 / 图生视频，避免悄悄换成另一种计费方式。
 
     拿到远端任务 id 后立刻写进项目，进程重启后还能继续轮询，避免重复扣费。
     """
@@ -311,16 +316,21 @@ def generate_ai_candidate(
     provider_id = _provider_id(settings, "video_gen", shot)
     # 先实例化（只检查配置，不发请求），未配置时报"缺少配置"而不是"需要确认"。
     provider: VideoGenProvider = registry.create("video_gen", provider_id, settings)  # type: ignore[assignment]
+    reference_video: Path | None = None
+    if edit_selected:
+        reference_video = _edit_source(store, project, shot, provider_id)
     require_charge_confirmation(settings, "video_gen", provider_id, confirm_charge)
-    first_frame = _first_frame(store, project, shot)
+    first_frame = None if reference_video is not None else _first_frame(store, project, shot)
     frame_source = shot.visual.first_frame or ""
-    if first_frame is None:
+    if first_frame is None and reference_video is None:
         # 没有显式首帧时，优先用产品/人物参考图，保证商品外观不走样。
         first_frame, frame_source = _reference_first_frame(store, project)
     prompt = _reference_prompt(project) + shot.visual.prompt
     meta = {"prompt": prompt[:500]}
     if first_frame is not None:
         meta["first_frame"] = frame_source
+    if reference_video is not None:
+        meta["edited_from"] = shot.visual.selected or ""
 
     def remember_task(task_id: str) -> None:
         """任务 id 一拿到就落盘。这里直接用 store 的锁与最新项目，避免覆盖并发编辑。"""
@@ -343,6 +353,7 @@ def generate_ai_candidate(
             duration=estimated_shot_seconds(project, shot),
             output=Path(temp) / "gen",
             first_frame=first_frame,
+            reference_video=reference_video,
             on_task=remember_task,
         )
         asset = _register_media(
@@ -351,6 +362,17 @@ def generate_ai_candidate(
     shot.visual.pending = None
     _attach(shot, [asset.id], select=True)
     return [asset.id]
+
+
+def _edit_source(store: ProjectStore, project: Project, shot: Shot, provider_id: str | None) -> Path:
+    """「改画面」的参考视频：当前选中的视频素材，且生成服务必须支持视频转视频。"""
+    spec = next((s for s in registry.specs("video_gen") if s.id == provider_id), None)
+    if spec is None or not spec.video_to_video:
+        raise ProviderError("当前的 AI 视频服务不支持改画面")
+    asset = project.assets.get(shot.visual.selected or "")
+    if asset is None or asset.kind != "video":
+        raise ProviderError("改画面需要先选中一段视频")
+    return store.asset_path(project, asset.id)
 
 
 def generate_image_candidate(
@@ -389,17 +411,23 @@ def refresh_candidates(
     shot: Shot,
     *,
     confirm_charge: bool = False,
+    edit_selected: bool = False,
 ) -> list[str]:
     index = next((i for i, s in enumerate(project.shots) if s.id == shot.id), -1) + 1
     log.info(
         "项目 %s 镜头 %d：开始%s（%s）",
         project.id,
         index,
-        _ACTIONS.get(shot.visual.mode, "处理"),
+        "改画面" if edit_selected else _ACTIONS.get(shot.visual.mode, "处理"),
         shot.visual.mode,
     )
     try:
-        added = _refresh(store, settings, project, shot, confirm_charge=confirm_charge)
+        if edit_selected:
+            added = generate_ai_candidate(
+                store, settings, project, shot, confirm_charge=confirm_charge, edit_selected=True
+            )
+        else:
+            added = _refresh(store, settings, project, shot, confirm_charge=confirm_charge)
     except ProviderError as exc:
         log.warning(
             "项目 %s 镜头 %d：%s失败：%s", project.id, index, _ACTIONS.get(shot.visual.mode, "处理"), exc

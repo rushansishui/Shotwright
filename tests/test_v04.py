@@ -18,7 +18,7 @@ from shotwright.core.store import ProjectStore
 from shotwright.media.ffmpeg import probe
 from shotwright.pipeline.render import Renderer
 from shotwright.providers import registry
-from shotwright.providers.base import ProviderSpec
+from shotwright.providers.base import ProviderError, ProviderSpec
 from shotwright.services import visuals
 
 # ---- 测试用的服务 -----------------------------------------------------------
@@ -86,6 +86,60 @@ def test_transition_falls_back_to_cut_for_short_shots(store, settings):
     result = Renderer(store, settings).render(project.id)
     assert result.timings[1].start == result.timings[0].duration
     assert any("硬切" in w for w in result.warnings)
+
+
+# ---- 改画面（视频转视频） ----------------------------------------------------
+
+
+def _ai_shot_with_video(store, settings, provider):
+    project = _project(store, shots=[Shot(text="一句话。", visual=ShotVisual(mode="ai", prompt="sea", provider=provider))])
+    shot = project.shots[0]
+    visuals.generate_ai_candidate(store, settings, project, shot, confirm_charge=True)
+    store.save(project)
+    return project, shot
+
+
+def test_plain_generate_never_sends_reference_video(store, settings):
+    project, shot = _ai_shot_with_video(store, settings, "fakeedit")
+    visuals.generate_ai_candidate(store, settings, project, shot, confirm_charge=True)
+    assert FakeVideoGen.calls[-1]["reference_video"] is None
+
+
+def test_edit_selected_sends_reference_video(store, settings):
+    project, shot = _ai_shot_with_video(store, settings, "fakeedit")
+    selected = shot.visual.selected
+    visuals.generate_ai_candidate(store, settings, project, shot, confirm_charge=True, edit_selected=True)
+    call = FakeVideoGen.calls[-1]
+    assert call["first_frame"] is None
+    assert call["reference_video"] == store.asset_path(project, selected)
+
+
+def test_edit_selected_requires_capable_provider(store, settings):
+    project, shot = _ai_shot_with_video(store, settings, "fakevid")
+    before = len(FakeVideoGen.calls)
+    try:
+        visuals.generate_ai_candidate(store, settings, project, shot, confirm_charge=True, edit_selected=True)
+    except ProviderError as exc:
+        assert "不支持改画面" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("应当拒绝")
+    assert len(FakeVideoGen.calls) == before
+
+
+def test_edit_endpoint_switches_stock_shot_to_ai(settings, store, tmp_path):
+    clip = make_clip(tmp_path / "clip.mp4")
+    project = _project(store, shots=[Shot(text="一句话。", visual=ShotVisual(mode="upload", prompt="sea", provider="fakeedit"))])
+    asset = visuals.add_upload(store, project, clip, filename="clip.mp4")
+    project.shots[0].visual.selected = asset.id
+    project.shots[0].visual.candidates = [asset.id]
+    store.save(project)
+    with _client(settings, store) as client:
+        url = f"/api/v2/projects/{project.id}/shots/{project.shots[0].id}/candidates"
+        assert client.post(url, json={"edit_selected": True}).status_code == 402
+        r = client.post(url, json={"edit_selected": True, "confirm_charge": True})
+    assert r.status_code == 200, r.text
+    visual = r.json()["shots"][0]["visual"]
+    assert visual["mode"] == "ai" and visual["selected"] != asset.id and asset.id in visual["candidates"]
 
 
 # ---- Host / Origin 校验 -----------------------------------------------------

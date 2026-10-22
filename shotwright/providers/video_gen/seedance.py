@@ -24,6 +24,8 @@ from shotwright.providers.paid_task import sniff_image_type
 LABEL = "Seedance"
 ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 MAX_FIRST_FRAME = 30 * 1024 * 1024
+MAX_REFERENCE_VIDEO = 60 * 1024 * 1024
+"""参考视频上限；超过时提示用户先用原片导入切短，而不是静默失败。"""
 _RATIOS = {"9:16": "9:16", "16:9": "16:9", "1:1": "1:1"}
 RESOLUTIONS = ("480p", "720p", "1080p")
 
@@ -47,6 +49,16 @@ def image_data_url(path: Path) -> str:
     if not mime.startswith("image/"):
         raise ProviderError("首帧必须是 PNG、JPEG、WebP 等常见图片格式")
     return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+
+def video_data_url(path: Path) -> str:
+    """把本地视频编码成 data URL，作为视频转视频的参考素材。"""
+    size = path.stat().st_size
+    if size > MAX_REFERENCE_VIDEO:
+        raise ProviderError("参考视频超过 60MB，请先用原片导入切短一些")
+    suffix = path.suffix.lower()
+    mime = {".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm"}.get(suffix, "video/mp4")
+    return f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode('ascii')}"
 
 
 class SeedanceVideo:
@@ -84,7 +96,15 @@ class SeedanceVideo:
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
-    def build_payload(self, prompt: str, *, aspect: str, duration: float, first_frame: Path | None) -> dict:
+    def build_payload(
+        self,
+        prompt: str,
+        *,
+        aspect: str,
+        duration: float,
+        first_frame: Path | None,
+        reference_video: Path | None = None,
+    ) -> dict:
         content: list[dict] = [{"type": "text", "text": prompt.strip()}]
         if first_frame is not None:
             content.append(
@@ -94,11 +114,21 @@ class SeedanceVideo:
                     "role": "first_frame",
                 }
             )
+        if reference_video is not None:
+            # 视频转视频：把原片作为参考视频，模型在它的基础上改手、改背景、重新打光。
+            content.append(
+                {
+                    "type": "video_url",
+                    "video_url": {"url": video_data_url(reference_video)},
+                    "role": "reference_video",
+                }
+            )
+        adaptive = first_frame is not None or reference_video is not None
         return {
             "model": self.model,
             "content": content,
-            # 图生视频时按首帧比例生成，渲染时再按画布裁切。
-            "ratio": "adaptive" if first_frame is not None else _RATIOS.get(aspect, "9:16"),
+            # 图生视频 / 视频转视频时按参考素材比例生成，渲染时再按画布裁切。
+            "ratio": "adaptive" if adaptive else _RATIOS.get(aspect, "9:16"),
             "duration": clamp_duration(duration, self.min_duration, self.max_duration),
             "resolution": self.resolution,
             "watermark": self.watermark,
@@ -113,11 +143,18 @@ class SeedanceVideo:
         duration: float,
         output: Path,
         first_frame: Path | None = None,
+        reference_video: Path | None = None,
         on_task: Callable[[str], None] | None = None,
     ) -> Path:
         if not prompt.strip():
             raise ProviderError("缺少画面提示词")
-        payload = self.build_payload(prompt, aspect=aspect, duration=duration, first_frame=first_frame)
+        payload = self.build_payload(
+            prompt,
+            aspect=aspect,
+            duration=duration,
+            first_frame=first_frame,
+            reference_video=reference_video,
+        )
         tasks_url = f"{self.base_url}/contents/generations/tasks"
         with self._client() as client:
             task_id = paid_task.submit(
@@ -169,12 +206,13 @@ registry.register(
             ConfigField("watermark", "加水印", default="false"),
             ConfigField("generate_audio", "生成音效", default="false"),
         ),
-        capabilities=frozenset({"text_to_video", "first_frame"}),
+        capabilities=frozenset({"text_to_video", "first_frame", "video_to_video"}),
         paid=True,
         docs_url="https://www.volcengine.com/docs/82379/1520757",
         shared_key_from=(("llm", "doubao"),),
         max_duration=30.0,
         has_audio=False,
+        video_to_video=True,
         max_ref_images=1,
     ),
     SeedanceVideo,

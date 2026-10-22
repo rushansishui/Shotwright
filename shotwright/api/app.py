@@ -27,6 +27,7 @@ from shotwright.api.schemas import (
     AddShot,
     BgmDownload,
     BgmSearch,
+    CandidatesRequest,
     ChargeConsent,
     CreateProject,
     CreateVersion,
@@ -523,7 +524,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         return result
 
     @api.post("/projects/{project_id}/shots/{shot_id}/candidates")
-    def refresh_candidates(project_id: str, shot_id: str, body: ChargeConsent | None = None):
+    def refresh_candidates(project_id: str, shot_id: str, body: CandidatesRequest | None = None):
         """检索（stock）或生成（ai / image）新的候选素材。可能耗时较长。
 
         收费的生成必须带 ``confirm_charge: true``，否则返回 402。
@@ -536,25 +537,31 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         if shot.visual.locked:
             raise HTTPException(409, "镜头已锁定，请先解锁")
         confirmed = bool(body and body.confirm_charge)
+        edit = bool(body and body.edit_selected)
         key = (project_id, shot_id)
         with in_progress_lock:
             if key in in_progress:
                 # 同一个镜头不允许重复提交，避免连点造成重复扣费。
                 raise HTTPException(409, "这个镜头正在生成，请等它完成")
-            in_progress[key] = {"mode": shot.visual.mode, "since": time.time()}
-        generated = shot.visual.mode in ("ai", "image")
+            in_progress[key] = {"mode": "ai" if edit else shot.visual.mode, "since": time.time()}
+        generated = edit or shot.visual.mode in ("ai", "image")
 
         def change(latest: Project) -> None:
             for asset_id, asset in project.assets.items():
                 latest.assets.setdefault(asset_id, asset)
             target = latest.shot(shot_id)
             target.visual.candidates = shot.visual.candidates
+            if edit:
+                # 改画面的结果是 AI 视频，切到 AI 视频来源，新画面才会出现在候选里。
+                target.visual.mode = "ai"
             if generated or target.visual.selected is None or target.visual.selected not in latest.assets:
                 # 刚生成的画面花了钱，直接选中它。
                 target.visual.selected = shot.visual.selected
 
         try:
-            visuals.refresh_candidates(store, settings, project, shot, confirm_charge=confirmed)
+            visuals.refresh_candidates(
+                store, settings, project, shot, confirm_charge=confirmed, edit_selected=edit
+            )
             return _mutate(project_id, change)
         finally:
             # 保存之后再移除，页面看到"完成"时就能读到新素材。

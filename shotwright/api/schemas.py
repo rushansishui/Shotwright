@@ -107,6 +107,11 @@ class ChargeConsent(_Body):
     """用户已确认这次操作可以调用收费服务（AI 视频、AI 图片）。"""
 
 
+class CandidatesRequest(ChargeConsent):
+    edit_selected: bool = False
+    """改画面：把当前选中的视频交给支持视频转视频的 AI 服务按提示词改写。"""
+
+
 class CreateVersion(_Body):
     language: str = Field(..., max_length=40)
     """要生成的语言版本，例如 en-US。"""

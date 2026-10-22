@@ -95,8 +95,11 @@ export const api = {
   ) => request<Project>(`/projects/${id}/shots/${shotId}`, json("PATCH", body)),
   deleteShot: (id: string, shotId: string) => request<Project>(`/projects/${id}/shots/${shotId}`, json("DELETE")),
   /** 收费的 AI 生成必须传 confirmCharge=true（用户已确认），否则后端返回 402。 */
-  candidates: (id: string, shotId: string, confirmCharge = false) =>
-    request<Project>(`/projects/${id}/shots/${shotId}/candidates`, json("POST", { confirm_charge: confirmCharge })),
+  candidates: (id: string, shotId: string, confirmCharge = false, editSelected = false) =>
+    request<Project>(
+      `/projects/${id}/shots/${shotId}/candidates`,
+      json("POST", { confirm_charge: confirmCharge, edit_selected: editSelected }),
+    ),
   /** 服务器上正在检索或生成的镜头（页面刷新后用来恢复"生成中"状态）。 */
   inProgress: (id: string) => request<Record<string, { mode: string; seconds: number }>>(`/projects/${id}/in-progress`),
   /** 检索背景音乐候选（只返回元数据+试听地址，不下载）；query 留空时由服务端用大模型提炼。 */

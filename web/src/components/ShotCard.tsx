@@ -39,7 +39,7 @@ export function ShotCard(props: {
   sourceModes: Record<string, VisualMode>;
   onFocus: () => void;
   onUpdate: (body: { text?: string; visual?: VisualPatch }) => void;
-  onCandidates: (confirmCharge?: boolean, prompt?: string) => void;
+  onCandidates: (confirmCharge?: boolean, prompt?: string, editSelected?: boolean) => void;
   onUpload: (file: File) => void;
   onMove: (delta: number) => void;
   onInsert: () => void;
@@ -99,6 +99,25 @@ export function ShotCard(props: {
   const generating = visual.mode === "ai" || visual.mode === "image";
   const busyVerb = t(generating ? "shot.busy.generating" : visual.mode === "stock" ? "shot.busy.searching" : "shot.busy.working");
   const busyLabel = props.busySeconds ? `${busyVerb} ${props.busySeconds}s` : busyVerb;
+
+  /**
+   * 改画面：当前已选中的素材是视频、且生成服务支持视频转视频时才能用。
+   * 结果作为新的候选素材，原素材保留。
+   */
+  const selectedAsset = visual.selected ? project.assets[visual.selected] : undefined;
+  const canModify =
+    !!props.aiVideo &&
+    props.aiVideo.video_to_video &&
+    selectedAsset?.kind === "video" &&
+    !visual.locked &&
+    !props.busy;
+  const modify = () => {
+    if (!prompt.trim()) return;
+    const name = props.aiVideo ? providerName(props.aiVideo, lang) : "";
+    if (window.confirm(t("shot.confirm.modify", { n: index + 1, name }))) {
+      props.onCandidates(true, prompt !== visual.prompt ? prompt : undefined, true);
+    }
+  };
 
   const seconds = estimateSeconds({ ...shot, text }, (shot.voice ?? project.voice).rate);
   // 生成服务的时长上限；超过时提示用户，避免生成被服务端截断。
@@ -227,6 +246,28 @@ export function ShotCard(props: {
               ) : (
                 t("shot.generate")
               )}
+            </button>
+          </div>
+        )}
+        {canModify && (
+          <div className="inline-field">
+            <label htmlFor={`modify-${shot.id}`}>{t("shot.modify")}</label>
+            <input
+              id={`modify-${shot.id}`}
+              className="input"
+              value={prompt}
+              placeholder={t("shot.modifyPlaceholder")}
+              onChange={(e) => setPrompt(e.target.value)}
+              onBlur={() => prompt !== visual.prompt && props.onUpdate({ visual: { prompt } })}
+            />
+            <button
+              type="button"
+              className="btn"
+              disabled={!prompt.trim()}
+              title={t("shot.modifyHint")}
+              onClick={modify}
+            >
+              {t("shot.modifyRun")}
             </button>
           </div>
         )}
