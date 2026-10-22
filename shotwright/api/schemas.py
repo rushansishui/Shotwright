@@ -122,6 +122,14 @@ class BgmSearch(_Body):
     """检索词；留空时由大模型从视频诉求和镜头提示词提炼。"""
 
 
+class ImportFootage(_Body):
+    threshold: float = Field(0.35, ge=0.05, le=1.0)
+    """画面变化阈值：越小切得越碎。"""
+    max_shots: int = Field(30, ge=1, le=60)
+    replace_shots: bool = False
+    """为真时替换现有镜头，否则追加到末尾。"""
+
+
 class BgmDownload(_Body):
     provider: str
     """候选所属的 Provider id，例如 "archive"。"""

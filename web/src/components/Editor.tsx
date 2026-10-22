@@ -1,3 +1,4 @@
+import { useRef, useState } from "react";
 import { api } from "../api";
 import type { Aspect, SubtitleStyle, VisualMode, VisualPatch } from "../types";
 import { Section, Segmented, Slider } from "./Controls";
@@ -31,6 +32,8 @@ export function Editor({ projectId }: { projectId: string }) {
     updateVoice,
   } = useEditor(projectId);
   const { t, lang } = useI18n();
+  const footageInput = useRef<HTMLInputElement>(null);
+  const [footageBusy, setFootageBusy] = useState(false);
 
   if (!project) {
     return <main className="page">{error ? <p className="hint error">{error}</p> : <p className="muted">{t("common.loading")}</p>}</main>;
@@ -68,6 +71,23 @@ export function Editor({ projectId }: { projectId: string }) {
       const asset = await api.upload(id, file);
       return api.updateShot(id, shotId, { visual: { mode: "upload", selected: asset.id } });
     }, shotId);
+  }
+
+  async function importFootage(file: File) {
+    setFootageBusy(true);
+    setError("");
+    try {
+      const replace = project!.shots.length > 0;
+      const result = await api.importFootage(id, file, replace);
+      // 切镜在后端完成，重新拉一次项目拿到新镜头；定位到第一个新镜头。
+      load();
+      setActiveIndex(0);
+      if (result.segments === 0) setError(t("footage.empty"));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setFootageBusy(false);
+    }
   }
 
   return (
@@ -109,9 +129,25 @@ export function Editor({ projectId }: { projectId: string }) {
           step={1}
           title={t("editor.shots")}
           extra={
-            <button type="button" className="btn" onClick={() => run(() => api.addShot(id))}>
-              {t("editor.addShot")}
-            </button>
+            <div className="row">
+              <input
+                ref={footageInput}
+                type="file"
+                accept="video/*"
+                hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) importFootage(file);
+                  e.target.value = "";
+                }}
+              />
+              <button type="button" className="btn" disabled={footageBusy} onClick={() => footageInput.current?.click()}>
+                {footageBusy ? t("footage.importing") : t("footage.import")}
+              </button>
+              <button type="button" className="btn" onClick={() => run(() => api.addShot(id))}>
+                {t("editor.addShot")}
+              </button>
+            </div>
           }
         >
           {project.shots.length === 0 && <p className="muted">{t("editor.noShots")}</p>}

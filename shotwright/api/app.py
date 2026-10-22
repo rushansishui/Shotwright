@@ -44,7 +44,7 @@ from shotwright.media import ffmpeg
 from shotwright.providers import registry
 from shotwright.providers.base import ChargeConfirmationRequired, ProviderError
 from shotwright.providers.tts.edge import VOICES
-from shotwright.services import localize, music, storyboard, visuals
+from shotwright.services import footage, localize, music, storyboard, visuals
 
 log = logging.getLogger("shotwright.api")
 
@@ -599,6 +599,34 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         path = store.asset_path(project, asset_id)
         media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         return FileResponse(path, media_type=media_type)
+
+    @api.post("/projects/{project_id}/footage", status_code=201)
+    def import_footage(project_id: str, file: UploadFile = File(...), replace_shots: bool = False):
+        """导入一段原片，按画面变化自动切成镜头。"""
+        _id(project_id)
+        if not store.exists(project_id):
+            raise ProjectNotFound(project_id)
+        filename = Path(file.filename or "footage").name
+        with tempfile.TemporaryDirectory(prefix="shotwright-footage-") as temp:
+            path = Path(temp) / ("footage" + Path(filename).suffix.lower()[:8])
+            size = 0
+            with path.open("wb") as handle:
+                while chunk := file.file.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > MAX_UPLOAD:
+                        raise HTTPException(413, "文件超过 500MB")
+                    handle.write(chunk)
+            with store.lock(project_id):
+                project = store.load(project_id)
+                result = footage.import_footage(
+                    store, settings, project, path, filename=filename, replace_shots=replace_shots
+                )
+                store.save(project)
+        return {
+            "source_asset": result.source_asset,
+            "shots": result.shot_ids,
+            "segments": result.segments,
+        }
 
     # ---- 背景音乐 -----------------------------------------------------------
 

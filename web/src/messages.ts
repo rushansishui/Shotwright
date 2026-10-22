@@ -184,6 +184,10 @@ export const zh = {
   "references.role.logo": "Logo",
   "references.role.style": "风格",
 
+  "footage.import": "导入原片",
+  "footage.importing": "切镜中",
+  "footage.empty": "没有检测到可用的镜头，试试换一段原片",
+
   "overlay.title": "文字与转场",
   "overlay.hint": "叠加卖点、价格、购买引导等文字，和字幕分开；也可以给镜头之间加转场。",
   "overlay.add": "添加文字",
@@ -384,6 +388,10 @@ export const en: Record<MessageKey, string> = {
   "references.role.person": "Person",
   "references.role.logo": "Logo",
   "references.role.style": "Style",
+
+  "footage.import": "Import footage",
+  "footage.importing": "Splitting",
+  "footage.empty": "No usable shots detected; try another clip",
 
   "overlay.title": "Text & transitions",
   "overlay.hint": "Add selling points, prices or calls to action on top of the video — separate from subtitles. Transitions go between shots.",

@@ -113,6 +113,16 @@ export const api = {
     form.append("file", file);
     return request<{ id: string; kind: string }>(`/projects/${id}/assets`, { method: "POST", body: form });
   },
+  /** 导入原片并按画面变化自动切成镜头。 */
+  importFootage: (id: string, file: File, replaceShots = false) => {
+    const form = new FormData();
+    form.append("file", file);
+    const query = replaceShots ? "?replace_shots=true" : "";
+    return request<{ source_asset: string; shots: string[]; segments: number }>(
+      `/projects/${id}/footage${query}`,
+      { method: "POST", body: form },
+    );
+  },
   render: (id: string, confirmCharge = false) =>
     request<Job>(`/projects/${id}/renders`, json("POST", { confirm_charge: confirmCharge })),
   job: (jobId: string) => request<Job>(`/renders/${jobId}`),

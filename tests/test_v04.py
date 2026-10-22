@@ -1,5 +1,6 @@
 """v0.4 新功能的回归测试：费用估算、转场时间轴、改画面、Host 校验、原片导入、任务恢复、元数据。"""
 
+import subprocess
 
 from conftest import FakeVideoGen, make_clip
 from fastapi.testclient import TestClient
@@ -162,6 +163,33 @@ def test_rejects_unknown_host_and_cross_site_origin(settings):
             headers={"origin": "http://localhost:5173"},
         )
         assert r.status_code == 201, r.text
+
+
+# ---- 原片导入 ---------------------------------------------------------------
+
+
+def test_footage_import_splits_into_shots(settings, store, tmp_path):
+    first = make_clip(tmp_path / "a.mp4", seconds=2.0, pattern="testsrc2")
+    second = make_clip(tmp_path / "b.mp4", seconds=2.0, pattern="smptebars")
+    joined = tmp_path / "joined.mp4"
+    listing = tmp_path / "list.txt"
+    listing.write_text(f"file '{first.as_posix()}'\nfile '{second.as_posix()}'\n", encoding="utf-8")
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(listing), "-c", "copy", str(joined)],
+        check=True,
+    )
+    project = _project(store)
+    with _client(settings, store) as client:
+        with joined.open("rb") as handle:
+            r = client.post(
+                f"/api/v2/projects/{project.id}/footage?replace_shots=true",
+                files={"file": ("joined.mp4", handle, "video/mp4")},
+            )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert len(body["shots"]) >= 2
+    saved = store.load(project.id)
+    assert [s.id for s in saved.shots] == body["shots"]
 
 
 # ---- 重启后恢复收费任务 -----------------------------------------------------
