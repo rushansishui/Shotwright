@@ -95,6 +95,9 @@ api_key = ""
 [providers.music.archive]
 # collection = ""             # 合集标识符；留空搜索全部公开音频。注意 opensource_audio 等社区合集的授权也不统一
 # timeout = "30"
+# allow_unknown_license = "true"
+#   为 "false" 时只返回明确可商用的授权（CC0 / 公共领域 / CC BY / CC BY-SA）。
+#   Archive 上很多条目没有标注授权，默认保留并在界面上标"未标注授权"，发布前请自行确认。
 
 # ---- AI 画面（收费）----------------------------------------------------------
 # Seedance / Seedream 与豆包大模型同属火山方舟：api_key 留空时自动使用

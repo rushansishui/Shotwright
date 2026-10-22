@@ -78,6 +78,7 @@ def _register_audio(
         duration=info.duration,
         meta=meta,
         move=True,
+        folder="music",
     )
 
 

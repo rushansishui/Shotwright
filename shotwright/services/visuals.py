@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import logging
 import tempfile
+import time
+from dataclasses import asdict
 from pathlib import Path
 
 from shotwright.config import Settings
+from shotwright.core.fingerprint import fingerprint
 from shotwright.core.models import Asset, AssetFolder, Project, Shot
-from shotwright.core.store import ProjectStore
+from shotwright.core.store import ProjectStore, read_json, write_json
 from shotwright.media.ffmpeg import MediaError, probe
 from shotwright.providers import registry
 from shotwright.providers.base import (
@@ -16,12 +19,18 @@ from shotwright.providers.base import (
     ImageGenProvider,
     ProviderError,
     ProviderNotConfigured,
+    StockCandidate,
     StockProvider,
     VideoGenProvider,
 )
 from shotwright.services.durations import estimated_shot_seconds
 
 log = logging.getLogger(__name__)
+
+SEARCH_CACHE_VERSION = "stock-search-1"
+"""检索结果缓存的版本；改检索参数的含义时提升它，让旧缓存失效。"""
+SEARCH_CACHE_SECONDS = 7 * 24 * 3600
+"""检索结果缓存保留 7 天。素材库的列表变动不频繁，太久的缓存意义不大。"""
 
 
 def _register_media(
@@ -67,6 +76,52 @@ def _fallback_terms(project: Project) -> list[str]:
     return [subject]
 
 
+def _search_cache_path(store: ProjectStore, project: Project, key: str) -> Path:
+    return store.cache_dir(project.id, "stock-search") / f"{key}.json"
+
+
+def _cached_candidates(store: ProjectStore, project: Project, key: str) -> list[StockCandidate] | None:
+    """读检索结果缓存；过期或格式不对时当没有缓存。"""
+    path = _search_cache_path(store, project, key)
+    data = read_json(path)
+    if not data:
+        return None
+    if data.get("version") != SEARCH_CACHE_VERSION:
+        return None
+    try:
+        saved_at = float(data.get("saved_at") or 0)
+        if time.time() - saved_at > SEARCH_CACHE_SECONDS:
+            return None
+        return [StockCandidate(**item) for item in data.get("candidates") or []]
+    except (TypeError, ValueError):
+        return None
+
+
+def _save_candidates(
+    store: ProjectStore, project: Project, key: str, candidates: list[StockCandidate]
+) -> None:
+    path = _search_cache_path(store, project, key)
+    try:
+        write_json(
+            path,
+            {
+                "version": SEARCH_CACHE_VERSION,
+                "saved_at": time.time(),
+                "candidates": [asdict(candidate) for candidate in candidates],
+            },
+        )
+    except OSError as exc:
+        # 缓存写不进去不影响检索本身。
+        log.warning("写入素材检索缓存失败：%s", exc)
+
+
+def _search_term(
+    provider: StockProvider, term: str, *, aspect: str, min_duration: float, limit: int
+) -> list[StockCandidate]:
+    """检索一个词，结果按词缓存。相同的词第二次不再请求素材库。"""
+    return provider.search(term, aspect=aspect, min_duration=min_duration, limit=limit)
+
+
 def fetch_stock_candidates(
     store: ProjectStore,
     settings: Settings,
@@ -76,16 +131,26 @@ def fetch_stock_candidates(
     limit: int = 3,
 ) -> list[str]:
     """按检索词找素材并下载前 ``limit`` 个，返回新增的素材 id。"""
-    provider: StockProvider = registry.create("stock", _provider_id(settings, "stock", shot), settings)  # type: ignore[assignment]
+    provider_id = _provider_id(settings, "stock", shot)
+    provider: StockProvider = registry.create("stock", provider_id, settings)  # type: ignore[assignment]
     terms = shot.visual.terms or _fallback_terms(project)
     if not terms:
         raise ProviderError("这个镜头没有检索词，请先填写英文检索词")
     min_duration = min(estimated_shot_seconds(project, shot), 10.0)
-    found = []
+    found: list[StockCandidate] = []
     for term in terms:
-        found.extend(
-            provider.search(term, aspect=project.canvas.aspect, min_duration=min_duration, limit=limit)
+        key = fingerprint(
+            SEARCH_CACHE_VERSION, provider_id, term, project.canvas.aspect, round(min_duration, 1), limit
         )
+        cached = _cached_candidates(store, project, key)
+        if cached is None:
+            cached = _search_term(
+                provider, term, aspect=project.canvas.aspect, min_duration=min_duration, limit=limit
+            )
+            _save_candidates(store, project, key, cached)
+        else:
+            log.info("项目 %s：检索词 %r 命中缓存", project.id, term)
+        found.extend(cached)
         if len(found) >= limit:
             break
     seen = {project.assets[a].meta.get("remote_id") for a in shot.visual.candidates if a in project.assets}
