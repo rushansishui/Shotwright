@@ -106,9 +106,10 @@ def search_bgm(
 
     target_duration = project.target_seconds or 60.0
     min_duration = min(MIN_DURATION, target_duration)
-    max_duration = max(MAX_DURATION, target_duration) if target_duration > MAX_DURATION else MAX_DURATION
+    max_duration = max(MAX_DURATION, target_duration)
 
     added: list[str] = []
+    seen: set[str] = {asset_id for asset_id in project.bgm.candidates if asset_id in project.assets}
     used_query = queries[0]
     with tempfile.TemporaryDirectory(prefix="shotwright-bgm-") as temp:
         for index, term in enumerate(queries):
@@ -118,13 +119,19 @@ def search_bgm(
             for position, candidate in enumerate(found):
                 if len(added) >= limit:
                     break
+                # 同一首曲子可能被多个检索词命中，按远端 id 跳过已经收录的。
+                if candidate.remote_id in seen:
+                    continue
                 path = provider.download(candidate, Path(temp) / f"bgm{index}-{position}")
                 asset = _register_audio(
                     store, project, path, source=candidate.provider, meta=_meta(candidate, term)
                 )
-                added.append(asset.id)
-                if term == queries[0] or not used_query:
-                    used_query = term
+                seen.add(candidate.remote_id)
+                if asset.id not in added:
+                    added.append(asset.id)
+                    if len(added) == 1:
+                        # 记下真正搜到第一首的检索词，界面上回填它。
+                        used_query = term
 
     if not added:
         raise ProviderError("没有找到合适的背景音乐，试试换个检索词")
