@@ -52,6 +52,12 @@ ShotStatus = Literal["draft", "ready", "rendering", "done", "failed"]
 ReferenceRole = Literal["product", "person", "logo", "style"]
 """参考素材的角色：产品外观、人物形象、品牌 Logo、整体风格。"""
 
+OverlayPosition = Literal["top", "middle", "bottom"]
+"""叠加文字的位置：画面顶部、居中、底部。"""
+
+TransitionKind = Literal["none", "fade", "slide", "wipe"]
+"""镜头之间的转场：无、淡入淡出、滑动、擦除。"""
+
 _RESOLUTIONS: dict[str, tuple[int, int]] = {
     "9:16": (1080, 1920),
     "16:9": (1920, 1080),
@@ -263,6 +269,51 @@ class ReferenceAsset(_Model):
         return value[:100]
 
 
+class TransitionSettings(_Model):
+    """镜头之间的转场。"""
+
+    kind: TransitionKind = "none"
+    duration: float = Field(0.4, ge=0.1, le=2.0)
+    """转场时长（秒）；相邻两个镜头在交界处重叠这么长，整片相应变短。"""
+
+
+class Overlay(_Model):
+    """画面上叠加的文字或图形（卖点、价格、Logo、购买引导），与字幕分开。"""
+
+    id: str = Field(default_factory=new_id)
+    text: str = ""
+    """文字内容；为空时用 image 素材做图形叠加。"""
+    image: str | None = None
+    """叠加的图片素材 id（通常是 Logo）。"""
+    start: float = Field(0.0, ge=0.0)
+    """出现时间（整片时间轴，秒）。"""
+    duration: float | None = Field(None, gt=0, le=1800)
+    """持续时长；为空表示一直显示到片尾。"""
+    position: OverlayPosition = "top"
+    size: int = Field(52, ge=12, le=200)
+    color: str = "#FFFFFF"
+    outline_color: str = "#000000"
+    margin: int = Field(120, ge=0, le=1000)
+    enabled: bool = True
+
+    @field_validator("id")
+    @classmethod
+    def _check_id(cls, value: str) -> str:
+        return validate_id(value)
+
+    @field_validator("image")
+    @classmethod
+    def _check_image(cls, value: str | None) -> str | None:
+        return None if value is None else validate_id(value)
+
+    @field_validator("color", "outline_color")
+    @classmethod
+    def _check_color(cls, value: str) -> str:
+        if not _HEX_COLOR.fullmatch(value):
+            raise ValueError("颜色必须是 #RRGGBB 格式")
+        return value.upper()
+
+
 class Project(_Model):
     schema_version: int = SCHEMA_VERSION
     id: str = Field(default_factory=new_id)
@@ -278,6 +329,9 @@ class Project(_Model):
     canvas: Canvas = Field(default_factory=Canvas)
     voice: VoiceSettings = Field(default_factory=VoiceSettings)
     subtitle: SubtitleStyle = Field(default_factory=SubtitleStyle)
+    overlays: list[Overlay] = Field(default_factory=list)
+    """叠加在画面上的文字与图形（卖点、价格、Logo），与字幕分开。"""
+    transition: TransitionSettings = Field(default_factory=TransitionSettings)
     bgm: BgmSettings = Field(default_factory=BgmSettings)
     references: list[ReferenceAsset] = Field(default_factory=list)
     """项目级参考素材库：产品图、人物设定、Logo、风格图。镜头生成时作为参考。"""

@@ -64,6 +64,7 @@ test.describe("Shotwright 主流程", () => {
   test("参考素材、文字与转场、语言版本区块都在", async ({ page }) => {
     await createProject(page, `区块${RUN_ID}，${TWO_SHOTS}`);
     await expect(page.getByRole("heading", { name: /参考素材|Reference assets/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /文字与转场|Text & transitions/ })).toBeVisible();
     await expect(page.getByRole("heading", { name: /语言版本|Language versions/ })).toBeVisible();
   });
 });

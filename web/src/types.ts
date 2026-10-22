@@ -71,6 +71,28 @@ export interface ReferenceAsset {
   enabled: boolean;
 }
 
+export type OverlayPosition = "top" | "middle" | "bottom";
+export type TransitionKind = "none" | "fade" | "slide" | "wipe";
+
+export interface Overlay {
+  id: string;
+  text: string;
+  image: string | null;
+  start: number;
+  duration: number | null;
+  position: OverlayPosition;
+  size: number;
+  color: string;
+  outline_color: string;
+  margin: number;
+  enabled: boolean;
+}
+
+export interface TransitionSettings {
+  kind: TransitionKind;
+  duration: number;
+}
+
 export interface Project {
   id: string;
   title: string;
@@ -82,6 +104,8 @@ export interface Project {
   canvas: { aspect: Aspect; fps: number };
   voice: VoiceSettings;
   subtitle: SubtitleStyle;
+  overlays: Overlay[];
+  transition: TransitionSettings;
   bgm: { asset_id: string | null; candidates?: string[]; query?: string; volume: number };
   references: ReferenceAsset[];
   shots: Shot[];

@@ -9,8 +9,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from shotwright.core.models import (
     BgmSettings,
     Canvas,
+    Overlay,
     ReferenceAsset,
     SubtitleStyle,
+    TransitionSettings,
     VisualMode,
     VoiceSettings,
     check_subject,
@@ -54,6 +56,9 @@ class UpdateProject(_Body):
     canvas: Canvas | None = None
     voice: VoiceSettings | None = None
     subtitle: SubtitleStyle | None = None
+    overlays: list[Overlay] | None = None
+    """叠加文字与图形；整体替换。"""
+    transition: TransitionSettings | None = None
     bgm: BgmSettings | None = None
     references: list[ReferenceAsset] | None = None
     """项目级参考素材库；整体替换。"""

@@ -370,6 +370,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 "canvas",
                 "voice",
                 "subtitle",
+                "overlays",
+                "transition",
                 "bgm",
                 "references",
             ):

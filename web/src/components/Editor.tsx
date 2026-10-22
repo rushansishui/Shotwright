@@ -8,6 +8,7 @@ import { ShotCard } from "./ShotCard";
 import { useEditor } from "./editor/useEditor";
 import { BgmSection } from "./editor/BgmSection";
 import { ReferencesSection } from "./editor/ReferencesSection";
+import { OverlaySection } from "./editor/OverlaySection";
 
 export function Editor({ projectId }: { projectId: string }) {
   const {
@@ -291,6 +292,8 @@ export function Editor({ projectId }: { projectId: string }) {
             </div>
           )}
         </Section>
+
+        <OverlaySection project={project} run={run} />
 
         <Versions project={project} languages={languages} />
       </div>
