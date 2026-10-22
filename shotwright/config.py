@@ -44,6 +44,8 @@ class Settings:
     cors_origins: list[str] = field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
     )
+    allowed_hosts: list[str] = field(default_factory=list)
+    """额外放行的 Host（例如局域网部署时的 192.168.x.x）。本机地址始终放行。"""
 
     def provider_settings(self, kind: str, provider_id: str) -> dict[str, str]:
         values = dict(self.providers.get(kind, {}).get(provider_id, {}))
@@ -87,6 +89,8 @@ def load_settings(path: str | Path | None = None) -> Settings:
     settings.auto_fetch_visuals = bool(app.get("auto_fetch_visuals", True))
     if isinstance(app.get("cors_origins"), list):
         settings.cors_origins = [str(item) for item in app["cors_origins"]]
+    if isinstance(app.get("allowed_hosts"), list):
+        settings.allowed_hosts = [str(item) for item in app["allowed_hosts"]]
 
     defaults = data.get("defaults", {})
     for kind in PROVIDER_KINDS:

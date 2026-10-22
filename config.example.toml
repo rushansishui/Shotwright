@@ -11,6 +11,9 @@ storage_dir = "storage/projects"
 # proxy = ""
 # 渲染时为没有画面的镜头自动检索一次素材（AI 镜头需在渲染时勾选"收费生成"才会调用 AI）
 auto_fetch_visuals = true
+# 服务只接受发给本机地址（localhost / 127.0.0.1）的请求，防止被其他网页借道访问。
+# 在局域网或 Docker 里给别的电脑用时，把服务器的 IP 或域名加到这里，例如 ["192.168.1.20"]
+# allowed_hosts = []
 
 # 各类别默认使用的 Provider
 [defaults]

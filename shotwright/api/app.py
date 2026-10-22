@@ -53,6 +53,50 @@ BGM_KEY = "__bgm__"
 """in_progress 里用这个伪镜头 id 表示「背景音乐检索中」。"""
 
 
+def _host_allowed(host_header: str, settings: Settings) -> bool:
+    """校验 Host 头，阻止 DNS rebinding。
+
+    只接受本机地址；``allowed_hosts`` 配置里可以额外放行（例如局域网部署时填的 IP）。
+    没有 Host 头的请求（命令行工具、测试客户端）直接放行。
+    """
+    if not host_header:
+        return True
+    value = host_header.strip()
+    if value.startswith("["):
+        # [::1]:8000 或 [::1]
+        hostname = value[1 : value.index("]")] if "]" in value else value.strip("[]")
+    elif value.count(":") > 1:
+        # 裸 IPv6（RFC 上 Host 头应当加方括号，这里宽容处理）
+        hostname = value
+    else:
+        hostname = value.rsplit(":", 1)[0]
+    allowed = {"localhost", "127.0.0.1", "::1"}
+    allowed.update(item.lower() for item in settings.allowed_hosts)
+    return hostname.lower() in allowed
+
+
+def _origin_allowed(request: Request, settings: Settings) -> bool:
+    """校验 Origin 头，挡住来自其他网页的跨站写请求。
+
+    只读请求（GET / HEAD / OPTIONS）不检查：同源页面加载资源时不一定带 Origin。
+    没有 Origin 头时放行（命令行、原生客户端、同源导航都不会带）。
+    """
+    origin = request.headers.get("origin", "")
+    if not origin:
+        return True
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return True
+    from urllib.parse import urlsplit
+
+    host = (urlsplit(origin).hostname or "").lower()
+    if not host:
+        # "null"（沙箱 iframe、file://）这类来源一律拒绝写操作。
+        return False
+    allowed = {"localhost", "127.0.0.1", "::1"}
+    allowed.update(item.lower() for item in settings.allowed_hosts)
+    return host in allowed
+
+
 def create_app(settings: Settings | None = None, *, job_manager: JobManager | None = None) -> FastAPI:
     settings = settings or load_settings()
     log_path = setup_logging(settings)
@@ -75,6 +119,25 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # 本地服务只监听本机，但要防 DNS rebinding：浏览器访问恶意域名时，域名会
+    # 解析到 127.0.0.1，随后以该域名作为 Host 发请求。校验 Host / Origin 阻止这种访问。
+    @app.middleware("http")
+    async def _check_host(request: Request, call_next):
+        if not _host_allowed(request.headers.get("host", ""), settings):
+            log.warning("拒绝来自 Host=%s 的请求", request.headers.get("host", ""))
+            return JSONResponse(
+                status_code=403, content={"detail": errors.translate("不允许的访问来源", request)}
+            )
+        # Origin 只在跨域写请求里出现；校验它可以挡住来自恶意网页的 CSRF。
+        if not _origin_allowed(request, settings):
+            log.warning(
+                "拒绝来自 Origin=%s 的 %s 请求", request.headers.get("origin", ""), request.method
+            )
+            return JSONResponse(
+                status_code=403, content={"detail": errors.translate("不允许的访问来源", request)}
+            )
+        return await call_next(request)
 
     @app.exception_handler(ProjectNotFound)
     async def _not_found(request: Request, exc: ProjectNotFound):
@@ -251,7 +314,15 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 if body.language not in languages.LANGUAGES:
                     raise ValueError("不支持的语言")
                 localize.apply_language(project, body.language)
-            for name in ("title", "subject", "target_seconds", "canvas", "voice", "subtitle", "bgm"):
+            for name in (
+                "title",
+                "subject",
+                "target_seconds",
+                "canvas",
+                "voice",
+                "subtitle",
+                "bgm",
+            ):
                 value = getattr(body, name)
                 if value is not None:
                     setattr(project, name, value)

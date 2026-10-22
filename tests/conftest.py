@@ -95,6 +95,8 @@ registry.register(ProviderSpec(kind="image_gen", id="fakeimg", name="FakeImg", p
 @pytest.fixture
 def settings(tmp_path) -> Settings:
     s = Settings(storage_dir=tmp_path / "projects", auto_fetch_visuals=False)
+    # TestClient 发出的 Host 是 testserver；真实服务只放行本机地址和配置里的地址。
+    s.allowed_hosts = ["testserver"]
     s.defaults.update(
         {"tts": "silent", "stock": "fake", "llm": "", "video_gen": "fakevid", "image_gen": "fakeimg"}
     )
