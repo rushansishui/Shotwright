@@ -48,6 +48,8 @@ log = logging.getLogger("shotwright.api")
 
 MAX_UPLOAD = 500 * 1024 * 1024
 WEB_DIST = ROOT_DIR / "web" / "dist"
+BGM_KEY = "__bgm__"
+"""in_progress 里用这个伪镜头 id 表示「背景音乐检索中」。"""
 
 
 def create_app(settings: Settings | None = None, *, job_manager: JobManager | None = None) -> FastAPI:
@@ -446,15 +448,29 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         """检索背景音乐并登记为候选。``query`` 留空时由大模型提炼检索词。"""
         _id(project_id)
         project = store.load(project_id)
-        added, query = music.search_bgm(store, settings, project, query=(body.query if body else ""))
+        # 一次检索要几十秒，连点会各自下载一遍。用和镜头生成相同的锁挡住。
+        key = (project_id, BGM_KEY)
+        with in_progress_lock:
+            if key in in_progress:
+                raise HTTPException(409, "背景音乐正在检索，请等它完成")
+            in_progress[key] = {"mode": "music", "since": time.time()}
+        try:
+            added, query = music.search_bgm(store, settings, project, query=(body.query if body else ""))
 
-        def change(latest: Project) -> None:
-            for asset_id, asset in project.assets.items():
-                latest.assets.setdefault(asset_id, asset)
-            latest.bgm.candidates = [*latest.bgm.candidates, *added][-music.MAX_CANDIDATES :]
-            latest.bgm.query = query
+            def change(latest: Project) -> None:
+                for asset_id, asset in project.assets.items():
+                    latest.assets.setdefault(asset_id, asset)
+                merged = [*latest.bgm.candidates]
+                for asset_id in added:
+                    if asset_id not in merged:
+                        merged.append(asset_id)
+                latest.bgm.candidates = merged[-music.MAX_CANDIDATES :]
+                latest.bgm.query = query
 
-        return _mutate(project_id, change)
+            return _mutate(project_id, change)
+        finally:
+            with in_progress_lock:
+                in_progress.pop(key, None)
 
     # ---- 渲染 ---------------------------------------------------------------
 

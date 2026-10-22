@@ -115,13 +115,6 @@ def _save_candidates(
         log.warning("写入素材检索缓存失败：%s", exc)
 
 
-def _search_term(
-    provider: StockProvider, term: str, *, aspect: str, min_duration: float, limit: int
-) -> list[StockCandidate]:
-    """检索一个词，结果按词缓存。相同的词第二次不再请求素材库。"""
-    return provider.search(term, aspect=aspect, min_duration=min_duration, limit=limit)
-
-
 def fetch_stock_candidates(
     store: ProjectStore,
     settings: Settings,
@@ -144,8 +137,8 @@ def fetch_stock_candidates(
         )
         cached = _cached_candidates(store, project, key)
         if cached is None:
-            cached = _search_term(
-                provider, term, aspect=project.canvas.aspect, min_duration=min_duration, limit=limit
+            cached = provider.search(
+                term, aspect=project.canvas.aspect, min_duration=min_duration, limit=limit
             )
             _save_candidates(store, project, key, cached)
         else:
