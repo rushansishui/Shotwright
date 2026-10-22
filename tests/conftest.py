@@ -72,8 +72,12 @@ class FakeVideoGen:
     def __init__(self, settings):
         pass
 
-    def generate(self, prompt, *, aspect, duration, output, first_frame=None):
-        FakeVideoGen.calls.append({"prompt": prompt, "duration": duration, "first_frame": first_frame})
+    def generate(self, prompt, *, aspect, duration, output, first_frame=None, on_task=None):
+        FakeVideoGen.calls.append(
+            {"prompt": prompt, "duration": duration, "first_frame": first_frame}
+        )
+        if on_task is not None:
+            on_task("fake-task")
         return make_clip(output.with_suffix(".mp4"), pattern="rgbtestsrc")
 
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import math
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -112,6 +113,7 @@ class SeedanceVideo:
         duration: float,
         output: Path,
         first_frame: Path | None = None,
+        on_task: Callable[[str], None] | None = None,
     ) -> Path:
         if not prompt.strip():
             raise ProviderError("缺少画面提示词")
@@ -121,18 +123,30 @@ class SeedanceVideo:
             task_id = paid_task.submit(
                 client, tasks_url, payload, headers=self._headers, label=LABEL, secret=self.api_key
             )
-            body = paid_task.poll(
-                client,
-                f"{tasks_url}/{task_id}",
-                task_id=task_id,
-                headers=self._headers,
-                secret=self.api_key,
-                settings=self.poll,
-            )
-            video_url = str(((body.get("content") or {}).get("video_url")) or "")
-            return paid_task.download(
-                client, video_url, output.with_suffix(".mp4"), label=LABEL, task_id=task_id
-            )
+            if on_task is not None:
+                on_task(task_id)
+            return self._finish(client, task_id, output)
+
+    def resume(self, task_id: str, *, output: Path) -> Path:
+        """继续轮询一个已提交的任务（进程重启后恢复用）。"""
+        tasks_url = f"{self.base_url}/contents/generations/tasks"
+        with self._client() as client:
+            return self._finish(client, task_id, output, tasks_url=tasks_url)
+
+    def _finish(self, client: httpx.Client, task_id: str, output: Path, *, tasks_url: str | None = None) -> Path:
+        base = tasks_url or f"{self.base_url}/contents/generations/tasks"
+        body = paid_task.poll(
+            client,
+            f"{base}/{task_id}",
+            task_id=task_id,
+            headers=self._headers,
+            secret=self.api_key,
+            settings=self.poll,
+        )
+        video_url = str(((body.get("content") or {}).get("video_url")) or "")
+        return paid_task.download(
+            client, video_url, output.with_suffix(".mp4"), label=LABEL, task_id=task_id
+        )
 
 
 registry.register(

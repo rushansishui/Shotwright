@@ -19,6 +19,13 @@ export interface SubtitleStyle {
   margin: number;
 }
 
+export interface PendingTask {
+  provider: string;
+  task_id: string;
+  kind: "video_gen" | "image_gen";
+  since: number;
+}
+
 export interface ShotVisual {
   mode: VisualMode;
   terms: string[];
@@ -30,6 +37,8 @@ export interface ShotVisual {
   color: string;
   fit: "cover" | "contain";
   locked: boolean;
+  /** 已提交、尚未取回结果的收费任务；服务重启后会继续轮询。 */
+  pending?: PendingTask | null;
 }
 
 export interface Shot {

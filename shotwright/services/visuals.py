@@ -10,7 +10,7 @@ from pathlib import Path
 
 from shotwright.config import Settings
 from shotwright.core.fingerprint import fingerprint
-from shotwright.core.models import Asset, AssetFolder, Project, Shot
+from shotwright.core.models import Asset, AssetFolder, PendingTask, Project, Shot
 from shotwright.core.store import ProjectStore, read_json, write_json
 from shotwright.media.ffmpeg import MediaError, probe
 from shotwright.providers import registry
@@ -260,7 +260,10 @@ def generate_ai_candidate(
     *,
     confirm_charge: bool = False,
 ) -> list[str]:
-    """AI 视频。已选中的画面是图片时，把它作为首帧（图生视频）。"""
+    """AI 视频。已选中的画面是图片时，把它作为首帧（图生视频）。
+
+    拿到远端任务 id 后立刻写进项目，进程重启后还能继续轮询，避免重复扣费。
+    """
     if not shot.visual.prompt.strip():
         raise ProviderError("这个镜头没有画面提示词")
     provider_id = _provider_id(settings, "video_gen", shot)
@@ -271,6 +274,21 @@ def generate_ai_candidate(
     meta = {"prompt": shot.visual.prompt[:500]}
     if first_frame is not None:
         meta["first_frame"] = shot.visual.first_frame or ""
+
+    def remember_task(task_id: str) -> None:
+        """任务 id 一拿到就落盘。这里直接用 store 的锁与最新项目，避免覆盖并发编辑。"""
+        with store.lock(project.id):
+            latest = store.load(project.id)
+            try:
+                target = latest.shot(shot.id)
+            except KeyError:
+                return
+            target.visual.pending = PendingTask(
+                provider=provider_id or "video_gen", task_id=task_id, kind="video_gen"
+            )
+            store.save(latest)
+            project.revision = latest.revision
+
     with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
         path = provider.generate(
             shot.visual.prompt,
@@ -278,10 +296,12 @@ def generate_ai_candidate(
             duration=estimated_shot_seconds(project, shot),
             output=Path(temp) / "gen",
             first_frame=first_frame,
+            on_task=remember_task,
         )
         asset = _register_media(
             store, project, path, source=provider_id or "video_gen", folder="ai-video", meta=meta
         )
+    shot.visual.pending = None
     _attach(shot, [asset.id], select=True)
     return [asset.id]
 
@@ -359,6 +379,33 @@ def _refresh(
     if shot.visual.mode == "image":
         return generate_image_candidate(store, settings, project, shot, confirm_charge=confirm_charge)
     raise ProviderError("这个镜头的画面来源不需要检索或生成")
+
+
+def resume_pending(store: ProjectStore, settings: Settings, project: Project, shot: Shot) -> list[str]:
+    """继续轮询一个已提交但没取回结果的 AI 视频任务（重启后恢复用）。
+
+    成功时把结果登记为素材并清掉 pending；失败时也清掉，让用户可以重新提交。
+    """
+    pending = shot.visual.pending
+    if pending is None:
+        return []
+    if pending.kind != "video_gen":
+        shot.visual.pending = None
+        return []
+    provider_id = pending.provider
+    provider: VideoGenProvider = registry.create("video_gen", provider_id, settings)  # type: ignore[assignment]
+    if not hasattr(provider, "resume"):
+        shot.visual.pending = None
+        return []
+    meta = {"prompt": shot.visual.prompt[:500], "resumed_from": pending.task_id}
+    with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
+        path = provider.resume(pending.task_id, output=Path(temp) / "gen")
+        asset = _register_media(
+            store, project, path, source=provider_id, folder="ai-video", meta=meta
+        )
+    shot.visual.pending = None
+    _attach(shot, [asset.id], select=True)
+    return [asset.id]
 
 
 def _attach(shot: Shot, asset_ids: list[str], *, select: bool = False) -> None:

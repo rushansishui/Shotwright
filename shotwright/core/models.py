@@ -125,6 +125,28 @@ class BgmSettings(_Model):
         return [validate_id(item) for item in value]
 
 
+class PendingTask(_Model):
+    """已提交但尚未取回结果的收费任务。
+
+    进程重启后据此继续轮询，避免重复提交、重复扣费。
+    """
+
+    provider: str
+    """提交任务的服务 id，例如 seedance。"""
+    task_id: str
+    """远端任务 id。"""
+    kind: Literal["video_gen", "image_gen"] = "video_gen"
+    since: float = Field(default_factory=time.time)
+    """提交时间（Unix 秒），用于判断任务是否已经过久。"""
+
+    @field_validator("provider", "task_id")
+    @classmethod
+    def _check_plain(cls, value: str) -> str:
+        if not value or len(value) > 400:
+            raise ValueError("任务标识长度不合法")
+        return value
+
+
 class ShotVisual(_Model):
     mode: VisualMode = "stock"
     terms: list[str] = Field(default_factory=list)
@@ -143,6 +165,8 @@ class ShotVisual(_Model):
     fit: Literal["cover", "contain"] = "cover"
     locked: bool = False
     """锁定后，自动补素材和\"全部重新生成\"都不会改动这个镜头的画面。"""
+    pending: PendingTask | None = None
+    """已提交、尚未取回结果的收费任务；重启后据此继续轮询。"""
 
     @field_validator("candidates")
     @classmethod

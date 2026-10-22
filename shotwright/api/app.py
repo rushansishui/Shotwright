@@ -108,8 +108,57 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # 启动后把上次没取回结果的收费任务捞回来，避免用户以为白花了钱。
+        threading.Thread(target=_resume_all, name="shotwright-resume", daemon=True).start()
         yield
         jobs.shutdown()
+
+    def _resume_all() -> None:
+        """扫描所有项目里带 pending 的镜头，逐个继续轮询。
+
+        恢复成功的素材要一并写回项目，否则登记到内存里的结果会随进程丢失。
+        失败时只清掉 pending，让用户可以重新提交。
+        """
+        for project in store.list():
+            pending_shots = [s for s in project.shots if s.visual.pending is not None]
+            if not pending_shots:
+                continue
+            for shot in pending_shots:
+                task_id = shot.visual.pending.task_id if shot.visual.pending else ""
+                recovered: list[str] = []
+                try:
+                    recovered = visuals.resume_pending(store, settings, project, shot)
+                except ProviderError as exc:
+                    log.warning(
+                        "项目 %s 镜头 %s 的收费任务 %s 恢复失败：%s",
+                        project.id,
+                        shot.id,
+                        task_id,
+                        exc,
+                    )
+                except Exception as exc:  # noqa: BLE001 - 后台线程不能因单个镜头崩掉
+                    log.exception("恢复收费任务时出错：%s", exc)
+                try:
+                    with store.lock(project.id):
+                        latest = store.load(project.id)
+                        try:
+                            target = latest.shot(shot.id)
+                        except KeyError:
+                            continue
+                        for asset_id in recovered:
+                            if asset_id in project.assets:
+                                latest.assets.setdefault(asset_id, project.assets[asset_id])
+                        if recovered:
+                            merged = [*target.visual.candidates]
+                            for asset_id in recovered:
+                                if asset_id not in merged:
+                                    merged.append(asset_id)
+                            target.visual.candidates = merged[-visuals.MAX_CANDIDATES :]
+                            target.visual.selected = recovered[0]
+                        target.visual.pending = None
+                        store.save(latest)
+                except OSError as exc:
+                    log.warning("保存恢复结果失败：%s", exc)
 
     app = FastAPI(title="Shotwright", version=__version__, lifespan=lifespan)
     app.state.settings, app.state.store, app.state.jobs = settings, store, jobs
@@ -441,12 +490,28 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
     def shots_in_progress(project_id: str):
         _id(project_id)
         now = time.time()
+        result: dict[str, dict] = {}
+        # 进程重启后正在恢复的收费任务：项目里带 pending 的镜头同样算"生成中"。
+        try:
+            project = store.load(project_id)
+        except ProjectNotFound:
+            project = None
+        if project is not None:
+            for shot in project.shots:
+                pending = shot.visual.pending
+                if pending is not None:
+                    result[shot.id] = {
+                        "mode": "resume",
+                        "seconds": round(max(0.0, now - pending.since), 1),
+                    }
         with in_progress_lock:
-            return {
-                shot_id: {"mode": info["mode"], "seconds": round(now - info["since"], 1)}
-                for (pid, shot_id), info in in_progress.items()
-                if pid == project_id
-            }
+            for (pid, shot_id), info in in_progress.items():
+                if pid == project_id:
+                    result[shot_id] = {
+                        "mode": info["mode"],
+                        "seconds": round(now - info["since"], 1),
+                    }
+        return result
 
     @api.post("/projects/{project_id}/shots/{shot_id}/candidates")
     def refresh_candidates(project_id: str, shot_id: str, body: ChargeConsent | None = None):
