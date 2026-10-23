@@ -588,3 +588,23 @@ def test_chain_frames_uses_previous_last_frame(store, settings):
     assert _VaryingVideo.calls[-1]["first_frame"] is not None
     frame_id = project.assets[second].meta["first_frame"]
     assert project.assets[frame_id].kind == "image" and project.assets[frame_id].meta["last_frame_of"] == first
+
+
+def test_long_shot_is_extended_from_last_frame(store, settings):
+    from shotwright.media.ffmpeg import probe
+    from shotwright.services import visuals
+
+    _varying(settings, max_duration=2)
+    text = "这是一段比较长的旁白，需要好几秒才能读完，所以画面要比模型一次能生成的时长更长一些才行。"
+    shot = Shot(text=text, visual=ShotVisual(mode="ai", prompt="a cat walks"))
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=[shot]))
+    [asset_id] = visuals.refresh_candidates(store, settings, project, project.shots[0], confirm_charge=True)
+    calls = _VaryingVideo.calls
+    assert 2 <= len(calls) <= visuals.MAX_EXTEND_PARTS
+    assert calls[0]["first_frame"] is None and all(call["first_frame"] is not None for call in calls[1:])
+    assert calls[1]["prompt"].startswith("接着上一段画面继续")
+    assert all(call["duration"] <= 2 for call in calls)
+    asset = project.assets[asset_id]
+    assert asset.meta["segments"] == str(len(calls))
+    assert probe(store.asset_path(project, asset_id)).duration > 3.5
+    assert project.shots[0].visual.take(asset_id).kind == "extend"

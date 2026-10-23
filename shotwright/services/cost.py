@@ -132,13 +132,16 @@ def estimate_render_cost(project: Project, settings: Settings, quality: str = "f
     return estimate
 
 
-def _shot_duration(project: Project, shot: Shot, settings: Settings, provider_id: str) -> float:
+def _shot_duration(
+    project: Project, shot: Shot, settings: Settings, provider_id: str, seconds: float | None = None
+) -> float:
     """估算 AI 视频的计费秒数。
 
     Seedance 按整秒、且在配置的上下限内生成（见 ``seedance.clamp_duration``），
     计费也按实际生成的时长算，所以这里同样向上取整并套用上下限。
     """
-    seconds = estimated_shot_seconds(project, shot)
+    if seconds is None:
+        seconds = estimated_shot_seconds(project, shot)
     config = settings.provider_settings("video_gen", provider_id)
     try:
         minimum = int(config.get("min_duration") or 4)
@@ -162,12 +165,22 @@ def resolution_factor(settings: Settings, provider_id: str, resolution: str = ""
 
 
 def generation_cost(
-    settings: Settings, project: Project, shot: Shot, kind: str, provider_id: str, *, resolution: str = ""
+    settings: Settings,
+    project: Project,
+    shot: Shot,
+    kind: str,
+    provider_id: str,
+    *,
+    resolution: str = "",
+    seconds: float | None = None,
 ) -> float:
-    """一次收费生成的参考费用（元），生成成功后累加到项目的 ``cost_credits``。"""
+    """一次收费生成的参考费用（元），生成成功后累加到项目的 ``cost_credits``。
+
+    ``seconds`` 是这一次实际请求的时长（续生成分段时每段单独计）；为空时按镜头时长估算。
+    """
     if kind == "video_gen":
         price = _VIDEO_GEN_PRICE.get(provider_id, 0.0) * resolution_factor(settings, provider_id, resolution)
-        return round(price * _shot_duration(project, shot, settings, provider_id), 4) if price else 0.0
+        return round(price * _shot_duration(project, shot, settings, provider_id, seconds), 4) if price else 0.0
     if kind == "image_gen":
         return _IMAGE_GEN_PRICE.get(provider_id, 0.0)
     return 0.0

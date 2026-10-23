@@ -14,7 +14,7 @@ from shotwright.core.fingerprint import fingerprint
 from shotwright.core.ids import new_id
 from shotwright.core.models import Asset, AssetFolder, PendingTask, Project, Shot, Take, TakeKind
 from shotwright.core.store import ProjectStore, read_json, write_json
-from shotwright.media.ffmpeg import MediaError, extract_frame, probe
+from shotwright.media.ffmpeg import MediaError, concat_videos, extract_frame, probe
 from shotwright.providers import registry
 from shotwright.providers.base import (
     ChargeConfirmationRequired,
@@ -460,25 +460,94 @@ def generate_ai_candidate(
             store.save(latest)
             project.revision = latest.revision
 
+    wanted = estimated_shot_seconds(project, shot)
+    longest = _max_duration(provider, provider_id)
+    extend = reference_video is None and longest is not None and wanted > longest + 0.5
+    kind: TakeKind = "edit" if reference_video is not None else "extend" if extend else "video"
     with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
-        path = provider.generate(
-            prompt,
-            aspect=project.canvas.aspect,
-            duration=estimated_shot_seconds(project, shot),
-            output=Path(temp) / "gen",
-            first_frame=first_frame,
-            reference_video=reference_video,
-            on_task=remember_task,
-        )
+        work = Path(temp)
+        if not extend:
+            path = provider.generate(
+                prompt,
+                aspect=project.canvas.aspect,
+                duration=wanted,
+                output=work / "gen",
+                first_frame=first_frame,
+                reference_video=reference_video,
+                on_task=remember_task,
+            )
+            spent = [wanted]
+        else:
+            # 末帧续生成：配音比模型最长时长还长时，分段生成，每段从上一段的最后一帧接着生成，
+            # 最后拼成一段。替代慢放、定格和循环；每段单独计费。
+            path, spent = _generate_extended(
+                provider, prompt, project, work, wanted, longest or wanted, first_frame, remember_task
+            )
+            meta["segments"] = str(len(spent))
         asset = _register_media(
             store, project, path, source=provider_id or "video_gen", folder="ai-video", meta=meta
         )
     shot.visual.pending = None
-    record_spend(store, settings, project, shot, "video_gen", provider_id or "", resolution=resolution)
-    _attach(
-        shot, [asset.id], select=True, take="edit" if reference_video is not None else "video", batch=batch
-    )
+    for seconds in spent:
+        record_spend(
+            store, settings, project, shot, "video_gen", provider_id or "", resolution=resolution, seconds=seconds
+        )
+    _attach(shot, [asset.id], select=True, take=kind, batch=batch)
     return [asset.id]
+
+
+MAX_EXTEND_PARTS = 4
+"""末帧续生成最多分几段，避免配音特别长时花太多钱；剩下的时长仍按补足方式处理。"""
+
+
+def _max_duration(provider: object, provider_id: str | None) -> float | None:
+    """生成服务一段最长能生成多少秒：优先用 Provider 实例的配置，其次用声明的上限。"""
+    configured = getattr(provider, "max_duration", None)
+    if isinstance(configured, int | float) and configured > 0:
+        return float(configured)
+    spec = _spec("video_gen", provider_id)
+    return spec.max_duration if spec is not None else None
+
+
+def _generate_extended(
+    provider: VideoGenProvider,
+    prompt: str,
+    project: Project,
+    work: Path,
+    wanted: float,
+    longest: float,
+    first_frame: Path | None,
+    remember_task,
+) -> tuple[Path, list[float]]:
+    lang = prompting.prompt_language(project)
+    segments: list[Path] = []
+    spent: list[float] = []
+    remaining = wanted
+    frame = first_frame
+    while remaining > 0.5 and len(segments) < MAX_EXTEND_PARTS:
+        part = len(segments)
+        length = min(remaining, longest)
+        text = prompt if part == 0 else f"{prompting.CONTINUE[lang]}\n{prompt}"
+        path = provider.generate(
+            text,
+            aspect=project.canvas.aspect,
+            duration=length,
+            output=work / f"part{part}",
+            first_frame=frame,
+            on_task=remember_task,
+        )
+        segments.append(path)
+        spent.append(length)
+        try:
+            actual = probe(path).duration or length
+        except MediaError:
+            actual = length
+        remaining -= actual
+        if remaining > 0.5 and len(segments) < MAX_EXTEND_PARTS:
+            frame = extract_frame(path, work / f"part{part}-last.jpg", width=0)
+    if len(segments) == 1:
+        return segments[0], spent
+    return concat_videos(segments, work / "extended.mp4", fps=project.canvas.fps), spent
 
 
 def _edit_source(store: ProjectStore, project: Project, shot: Shot, provider_id: str | None) -> Path:
@@ -642,11 +711,14 @@ def record_spend(
     provider_id: str,
     *,
     resolution: str = "",
+    seconds: float | None = None,
 ) -> None:
     """收费生成成功后，把参考费用累加到项目（直接写盘，调用方之后的合并不会覆盖它）。"""
     from shotwright.services import cost
 
-    amount = cost.generation_cost(settings, project, shot, kind, provider_id, resolution=resolution)
+    amount = cost.generation_cost(
+        settings, project, shot, kind, provider_id, resolution=resolution, seconds=seconds
+    )
     if amount <= 0:
         return
     with store.lock(project.id):

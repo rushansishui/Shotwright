@@ -51,6 +51,11 @@ CAMERA_PHRASES: dict[str, dict[str, str]] = {
     },
 }
 
+CONTINUE: dict[str, str] = {
+    "zh": "接着上一段画面继续，动作自然延续，不要重新开始或切换场景。",
+    "en": "Continue seamlessly from the previous clip; the action carries on without restarting or cutting away.",
+}
+
 _PHRASES: dict[str, dict[str, str]] = {
     "zh": {
         "style": "视觉风格：{}",

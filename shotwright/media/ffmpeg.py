@@ -355,3 +355,40 @@ def extract_frame(source: Path, output: Path, *, at: float | None = None, width:
     if not output.exists():
         raise MediaError("没有取到画面")
     return output
+
+
+def concat_videos(paths: list[Path], output: Path, *, fps: int = 30) -> Path:
+    """把几段视频首尾相接成一段（统一成第一段的尺寸和帧率，只保留画面）。"""
+    if not paths:
+        raise MediaError("没有可拼接的视频")
+    first = probe(paths[0])
+    width, height = first.width or 1080, first.height or 1920
+    args: list[str] = []
+    chains = []
+    for index, path in enumerate(paths):
+        args += ["-protocol_whitelist", LOCAL_PROTOCOLS, "-i", str(path)]
+        chains.append(
+            f"[{index}:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},format=yuv420p[v{index}]"
+        )
+    joined = "".join(f"[v{index}]" for index in range(len(paths)))
+    graph = ";".join([*chains, f"{joined}concat=n={len(paths)}:v=1:a=0[out]"])
+    run_ffmpeg(
+        [
+            *args,
+            "-filter_complex",
+            graph,
+            "-map",
+            "[out]",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "18",
+            "-movflags",
+            "+faststart",
+            str(output),
+        ]
+    )
+    return output
