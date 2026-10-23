@@ -27,6 +27,7 @@ from shotwright.api import errors
 from shotwright.api.jobs import JobManager
 from shotwright.api.schemas import (
     AddShot,
+    AmbienceSearch,
     BgmDownload,
     BgmSearch,
     CandidatesRequest,
@@ -409,6 +410,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 "overlays",
                 "transition",
                 "bgm",
+                "sfx",
                 "references",
                 "ai_badge",
             ):
@@ -419,6 +421,10 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 project.loudness = body.loudness
             if "budget" in body.model_fields_set:
                 project.budget = body.budget
+            if project.sfx.ambience and (
+                project.sfx.ambience not in project.assets or project.assets[project.sfx.ambience].kind != "audio"
+            ):
+                raise ValueError("环境声必须是项目里的音频素材")
             if project.bgm.asset_id and project.bgm.asset_id not in project.assets:
                 raise ValueError("背景音乐素材不存在")
             for item in project.look.subjects:
@@ -824,6 +830,21 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             latest.bgm.asset_id = asset.id
             if asset.id not in (latest.bgm.candidates or []):
                 latest.bgm.candidates = [*(latest.bgm.candidates or []), asset.id]
+
+        return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/sfx/ambience")
+    def search_ambience(project_id: str, body: AmbienceSearch | None = None):
+        """自动配环境声：用音乐库按场景检索一段环境声，下载后设为本项目的环境声。"""
+        project = store.load(_id(project_id))
+        query = (body.query if body else "").strip() or music.ambience_query(project)
+        added, used = music.search_bgm(store, settings, project, query=query, limit=1)
+
+        def change(latest: Project) -> None:
+            for asset_id in added:
+                latest.assets.setdefault(asset_id, project.assets[asset_id])
+            latest.sfx.ambience = added[0]
+            latest.sfx.ambience_query = used
 
         return _mutate(project_id, change)
 

@@ -153,6 +153,15 @@ export interface TransitionSettings {
   duration: number;
 }
 
+/** 音效层：转场音效和环境声。 */
+export interface SfxSettings {
+  transitions: boolean;
+  transition_volume: number;
+  ambience: string | null;
+  ambience_volume: number;
+  ambience_query: string;
+}
+
 /** 视频类型：商品广告、品牌宣传、知识科普、口播、原片改造。 */
 export type VideoType = "product_ad" | "brand" | "explainer" | "talking" | "footage";
 
@@ -186,6 +195,7 @@ export interface Project {
     /** 镜头切换点就近对齐音乐拍点。 */
     beat_sync?: boolean;
   };
+  sfx?: SfxSettings;
   /** 导出响度（LUFS）；null 表示不处理。 */
   loudness?: number | null;
   references: ReferenceAsset[];

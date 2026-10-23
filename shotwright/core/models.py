@@ -180,6 +180,24 @@ class BgmSettings(_Model):
         return [validate_id(item) for item in value]
 
 
+class SfxSettings(_Model):
+    """音效层：转场音效和环境声。"""
+
+    transitions: bool = False
+    """在每个镜头切换点放一声轻的转场音效。"""
+    transition_volume: float = Field(0.35, ge=0.0, le=1.0)
+    ambience: str | None = None
+    """环境声素材（音频）；循环铺满整片。"""
+    ambience_volume: float = Field(0.12, ge=0.0, le=1.0)
+    ambience_query: str = ""
+    """上次自动检索环境声用的词。"""
+
+    @field_validator("ambience")
+    @classmethod
+    def _check_ambience(cls, value: str | None) -> str | None:
+        return None if value is None else validate_id(value)
+
+
 class PendingTask(_Model):
     """已提交但尚未取回结果的收费任务。
 
@@ -538,6 +556,8 @@ class Project(_Model):
     ai_badge: bool = False
     """在画面上显示「AI 生成」角标（元数据标识始终写入，不受此开关影响）。"""
     bgm: BgmSettings = Field(default_factory=BgmSettings)
+    sfx: SfxSettings = Field(default_factory=SfxSettings)
+    """音效层：转场音效和环境声。"""
     loudness: float | None = Field(-14.0, ge=-30.0, le=-5.0)
     """导出时把整片响度统一到这个值（LUFS），短视频平台常用 -14；为空时不处理。"""
     references: list[ReferenceAsset] = Field(default_factory=list)

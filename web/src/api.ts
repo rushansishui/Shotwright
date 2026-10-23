@@ -92,7 +92,7 @@ export const api = {
     body: Partial<
       Pick<
         Project,
-        "title" | "video_type" | "look" | "chain_frames" | "budget" | "language" | "canvas" | "voice" | "subtitle" | "bgm" | "loudness" | "references" | "overlays" | "transition" | "ai_badge"
+        "title" | "video_type" | "look" | "chain_frames" | "budget" | "sfx" | "language" | "canvas" | "voice" | "subtitle" | "bgm" | "loudness" | "references" | "overlays" | "transition" | "ai_badge"
       >
     >,
   ) =>
@@ -150,6 +150,8 @@ export const api = {
   },
   render: (id: string, confirmCharge = false, quality: "draft" | "final" = "final") =>
     request<Job>(`/projects/${id}/renders`, json("POST", { confirm_charge: confirmCharge, quality })),
+  searchAmbience: (id: string, query = "") =>
+    request<Project>(`/projects/${id}/sfx/ambience`, json("POST", { query })),
   checkup: (id: string, quality: "draft" | "final" = "final") =>
     request<{ issues: CheckIssue[] }>(`/projects/${id}/checkup?quality=${quality}`),
   costEstimate: (id: string, quality: "draft" | "final" = "final") =>

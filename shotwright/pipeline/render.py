@@ -192,7 +192,8 @@ class Renderer:
 
         self._report(0.85, "合成字幕与背景音乐")
         cues = self._cues(project, timings)
-        final = self._final(project, assembly_fp, assembly, cues)
+        cuts = [timing.start for timing in timings[1:]]
+        final = self._final(project, assembly_fp, assembly, cues, cuts)
 
         output_dir = self.store.render_dir(project.id, render_id)
         video_path = output_dir / "video.mp4"
@@ -502,7 +503,27 @@ class Renderer:
             cancel=self._cancel,
         )
 
-    def _final(self, project: Project, assembly_fp: str, assembly: Path, cues: list[subs.Cue]) -> Path:
+    def _whoosh(self, project: Project) -> Path:
+        """转场音效：用滤过的粉红噪声合成一声短促的「嗖」，按版本缓存。"""
+        path = self.store.cache_dir(project.id, "sfx") / f"{WHOOSH_VERSION}.wav"
+        if not path.exists():
+            run_ffmpeg(
+                [
+                    "-f", "lavfi",
+                    "-i", "anoisesrc=d=0.6:c=pink:r=48000:a=0.5",
+                    "-af", "highpass=f=400,lowpass=f=6500,afade=t=in:st=0:d=0.3:curve=exp,"
+                    "afade=t=out:st=0.3:d=0.3,volume=0.9",
+                    "-ac", "2",
+                    str(path),
+                ],
+                cancel=self._cancel,
+            )
+        return path
+
+    def _final(
+        self, project: Project, assembly_fp: str, assembly: Path, cues: list[subs.Cue], cuts: list[float] | None = None
+    ) -> Path:
+        cuts = cuts or []
         style = project.subtitle
         overlays = [o for o in project.overlays if o.enabled and (o.text.strip() or o.image)]
         # 文字叠加走 ASS；图片叠加（Logo）ASS 渲染不了，用 ffmpeg overlay 滤镜。
@@ -519,9 +540,15 @@ class Renderer:
             if o.image in project.assets and project.assets[o.image].kind == "image"
         ]
         grade = grade_filter(project.look.grade)
+        ambience = project.assets.get(project.sfx.ambience or "")
+        if ambience is not None and ambience.kind != "audio":
+            ambience = None
+        whoosh = project.sfx.transitions and bool(cuts)
         if (
             not cues
             and bgm_asset is None
+            and ambience is None
+            and not whoosh
             and not text_overlays
             and not image_overlays
             and not project.ai_badge
@@ -548,6 +575,9 @@ class Renderer:
             project.loudness,
             AUDIO_MIX,
             (grade, GRADE_VERSION) if grade else None,
+            (project.sfx.model_dump(), ambience.sha256 if ambience else None, cuts if whoosh else None, WHOOSH_VERSION)
+            if ambience or whoosh
+            else None,
         )
         output = self.store.cache_dir(project.id, "final") / f"{fp}.mp4"
         info = probe(assembly)
@@ -630,7 +660,27 @@ class Renderer:
                         "-protocol_whitelist", LOCAL_PROTOCOLS,
                         "-i", str(self.store.asset_path(project, bgm_asset.id)),
                     ]
-                audio_graph = audio_filter(project, bgm_index, duration)
+                ambience_index = whoosh_index = None
+                next_index = 1 + len(image_overlays) + (1 if bgm_asset is not None else 0)
+                if ambience is not None:
+                    ambience_index = next_index
+                    next_index += 1
+                    args += [
+                        "-stream_loop", "-1",
+                        "-protocol_whitelist", LOCAL_PROTOCOLS,
+                        "-i", str(self.store.asset_path(project, ambience.id)),
+                    ]
+                if whoosh:
+                    whoosh_index = next_index
+                    args += ["-protocol_whitelist", LOCAL_PROTOCOLS, "-i", str(self._whoosh(project))]
+                audio_graph = audio_filter(
+                    project,
+                    bgm_index,
+                    duration,
+                    ambience_index=ambience_index,
+                    whoosh_index=whoosh_index,
+                    cuts=cuts if whoosh else (),
+                )
                 if audio_graph:
                     filters.append(audio_graph)
                     audio_map = "[a]"
@@ -665,17 +715,28 @@ class Renderer:
         return output
 
 
-def audio_filter(project: Project, bgm_index: int | None, duration: float) -> str:
-    """背景音乐的滤镜图：闪避与淡入淡出，输出标签为 ``[a]``；没有背景音乐时返回空字符串。
+def audio_filter(
+    project: Project,
+    bgm_index: int | None,
+    duration: float,
+    *,
+    ambience_index: int | None = None,
+    whoosh_index: int | None = None,
+    cuts: list[float] | tuple[float, ...] = (),
+) -> str:
+    """配音之外的声音层：背景音乐（闪避、淡入淡出）、环境声、转场音效。输出标签为 ``[a]``。
 
-    闪避：配音（含原声）作为侧链压缩背景音乐，说话时音乐自动压低，停顿时恢复。
-    响度统一在混音之后单独做（见 :meth:`Renderer._normalize`）。
+    * 闪避：配音（含原声）作为侧链压缩背景音乐，说话时音乐自动压低，停顿时恢复；
+    * 环境声：循环铺满整片，音量很低，开头结尾淡入淡出；
+    * 转场音效：在每个切点前后放一声轻的「嗖」。
+
+    什么都没有时返回空字符串，音频直接复制。响度统一在混音之后单独做（见 :meth:`Renderer._normalize`）。
     """
     parts: list[str] = []
-    current = "[0:a]"
+    main = "[0:a]"
+    layers: list[str] = []
     if bgm_index is not None:
         bgm = project.bgm
-        main = "[0:a]"
         if bgm.duck:
             parts.append("[0:a]asplit=2[main][side]")
             main = "[main]"
@@ -691,8 +752,38 @@ def audio_filter(project: Project, bgm_index: int | None, duration: float) -> st
             parts.append("[bgm][side]sidechaincompress=threshold=0.02:ratio=8:attack=30:release=600[b]")
         else:
             parts.append(chain + "[b]")
-        parts.append(f"{main}[b]amix=inputs=2:duration=first:normalize=0[mix]")
-        current = "[mix]"
-    if current != "[0:a]":
-        parts.append(f"{current}anull[a]")
+        layers.append("[b]")
+    if ambience_index is not None:
+        fade = min(1.5, duration / 3)
+        parts.append(
+            f"[{ambience_index}:a]aresample=48000,aformat=channel_layouts=stereo,"
+            f"volume={project.sfx.ambience_volume:.3f},afade=t=in:st=0:d={fade:.2f},"
+            f"afade=t=out:st={max(duration - fade, 0.0):.3f}:d={fade:.2f}[amb]"
+        )
+        layers.append("[amb]")
+    points = [cut for cut in cuts if 0.3 < cut < duration - 0.2]
+    if whoosh_index is not None and points:
+        source = f"[{whoosh_index}:a]aresample=48000,aformat=channel_layouts=stereo,volume={project.sfx.transition_volume:.3f}"
+        if len(points) == 1:
+            parts.append(f"{source},adelay={_delay_ms(points[0])}:all=1[wh]")
+        else:
+            labels = "".join(f"[w{i}]" for i in range(len(points)))
+            parts.append(f"{source},asplit={len(points)}{labels}")
+            parts += [f"[w{i}]adelay={_delay_ms(cut)}:all=1[wd{i}]" for i, cut in enumerate(points)]
+            delayed = "".join(f"[wd{i}]" for i in range(len(points)))
+            parts.append(f"{delayed}amix=inputs={len(points)}:normalize=0[wh]")
+        layers.append("[wh]")
+    if not layers:
+        return ""
+    parts.append(f"{main}{''.join(layers)}amix=inputs={len(layers) + 1}:duration=first:normalize=0[a]")
     return ";".join(parts)
+
+
+WHOOSH_VERSION = "whoosh-1"
+"""转场音效的版本；改动合成参数时同步修改，让缓存失效。"""
+WHOOSH_LEAD = 0.25
+"""转场音效比切点提前多少秒开始（音效的峰值正好落在切点附近）。"""
+
+
+def _delay_ms(cut: float) -> int:
+    return max(0, int(round((cut - WHOOSH_LEAD) * 1000)))

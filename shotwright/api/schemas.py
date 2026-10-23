@@ -15,6 +15,7 @@ from shotwright.core.models import (
     Look,
     Overlay,
     ReferenceAsset,
+    SfxSettings,
     ShotRole,
     SubtitleStyle,
     TransitionSettings,
@@ -77,6 +78,8 @@ class UpdateProject(_Body):
     ai_badge: bool | None = None
     """画面上是否显示「AI 生成」角标。"""
     bgm: BgmSettings | None = None
+    sfx: SfxSettings | None = None
+    """音效层：转场音效和环境声。"""
     loudness: float | None = Field(None, ge=-30.0, le=-5.0)
     """导出响度（LUFS）；显式传 null 表示不做响度处理，不传则不改。"""
     references: list[ReferenceAsset] | None = None
@@ -154,6 +157,11 @@ class CandidatesRequest(ChargeConsent):
     """AI 视频镜头先出几张关键帧图片（0 表示直接生成视频）。"""
     quality: Literal["draft", "final"] = "final"
     """草稿档用较低分辨率生成 AI 视频。"""
+
+
+class AmbienceSearch(_Body):
+    query: str = Field("", max_length=200)
+    """英文检索词，例如 rain ambience；为空时按第一个镜头的检索词自动生成。"""
 
 
 class RewriteShot(_Body):

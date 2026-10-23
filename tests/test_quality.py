@@ -65,7 +65,7 @@ def test_audio_filter_ducks_and_fades_bgm():
     project.loudness = None
     graph = audio_filter(project, 1, 10.0)
     assert "sidechaincompress" not in graph and "afade=t=in" not in graph
-    assert graph.endswith("anull[a]")
+    assert graph.endswith("normalize=0[a]") and "sidechaincompress" not in graph
 
 
 def test_audio_filter_without_bgm_is_empty():
@@ -935,3 +935,66 @@ def test_render_snaps_cuts_to_music_beats(store, settings, tmp_path):
     result = Renderer(store, settings).render(project.id)
     cut = result.timings[1].start
     assert abs(cut - round(cut * 2) / 2) < 0.06
+
+
+def test_audio_filter_places_whoosh_at_cuts_and_ambience():
+    project = Project()
+    project.sfx.transitions = True
+    graph = audio_filter(project, None, 10.0, ambience_index=1, whoosh_index=2, cuts=[3.0, 6.5, 9.95])
+    assert "adelay=2750:all=1" in graph and "adelay=6250:all=1" in graph and "9700" not in graph
+    assert "[amb]" in graph and graph.endswith("amix=inputs=3:duration=first:normalize=0[a]")
+
+
+def test_render_with_transition_sfx_and_ambience(store, settings, tmp_path, client):
+    from shotwright.pipeline.render import Renderer
+
+    shots = [
+        Shot(text="第一句话。", visual=ShotVisual(mode="color")),
+        Shot(text="第二句话。", visual=ShotVisual(mode="color")),
+    ]
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=shots, loudness=None))
+    ambience = store.add_asset(
+        project, _sine(tmp_path / "amb.m4a", volume=0.3), kind="audio", source="upload"
+    )
+    store.save(project)
+    response = client.patch(
+        f"/api/v2/projects/{project.id}", json={"sfx": {"transitions": True, "ambience": ambience.id}}
+    )
+    assert response.status_code == 200, response.text
+    bad = client.patch(f"/api/v2/projects/{project.id}", json={"sfx": {"ambience": "missing"}})
+    assert bad.status_code == 422
+    result = Renderer(store, settings).render(project.id)
+    loudness = measure_loudness(store.render_dir(project.id, result.render_id) / result.video)
+    assert loudness is not None  # 静音配音之外有了环境声和转场音效
+
+
+def test_ambience_search_sets_project_ambience(client, settings, tmp_path):
+    from shotwright.providers import registry
+    from shotwright.providers.base import MusicCandidate, ProviderSpec
+
+    class FakeMusic:
+        queries: list[str] = []
+
+        def __init__(self, _settings):
+            pass
+
+        def search(self, query, *, min_duration, max_duration, limit):
+            FakeMusic.queries.append(query)
+            return [MusicCandidate("fakemusic", "amb-1", "x://amb", "Rain", 30.0, author="someone")]
+
+        def download(self, candidate, output):
+            return _sine(output.with_suffix(".m4a"), seconds=3.0, volume=0.2)
+
+    registry.register(ProviderSpec(kind="music", id="fakemusic", name="FM", offline=True), FakeMusic)
+    settings.defaults["music"] = "fakemusic"
+    created = _create(client)
+    client.patch(
+        f"/api/v2/projects/{created['id']}/shots/{created['shots'][0]['id']}",
+        json={"visual": {"terms": ["city night traffic"]}},
+    )
+    result = client.post(f"/api/v2/projects/{created['id']}/sfx/ambience", json={}).json()
+    assert FakeMusic.queries[-1] == "city night ambience"
+    assert (
+        result["sfx"]["ambience"] in result["assets"]
+        and result["sfx"]["ambience_query"] == "city night ambience"
+    )

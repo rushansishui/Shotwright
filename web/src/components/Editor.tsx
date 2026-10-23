@@ -8,6 +8,7 @@ import { Versions } from "./Versions";
 import { ShotCard } from "./ShotCard";
 import { useEditor } from "./editor/useEditor";
 import { BgmSection } from "./editor/BgmSection";
+import { SfxSection } from "./editor/SfxSection";
 import { LookSection } from "./editor/LookSection";
 import { projectNeedsExpansion } from "../prompts";
 import { ReferencesSection } from "./editor/ReferencesSection";
@@ -302,6 +303,8 @@ export function Editor({ projectId }: { projectId: string }) {
             draft={draft}
             setDraft={setDraft}
           />
+          <div className="divider" />
+          <SfxSection project={project} run={run} setError={setError} />
         </Section>
 
         <Section
