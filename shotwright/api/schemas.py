@@ -142,6 +142,12 @@ class ChargeConsent(_Body):
 class CandidatesRequest(ChargeConsent):
     edit_selected: bool = False
     """改画面：把当前选中的视频交给支持视频转视频的 AI 服务按提示词改写。"""
+    count: int = Field(1, ge=1, le=3)
+    """AI 视频一次生成几条，同一批供挑选；费用按条数成倍增加。"""
+    keyframes: int = Field(0, ge=0, le=3)
+    """AI 视频镜头先出几张关键帧图片（0 表示直接生成视频）。"""
+    quality: Literal["draft", "final"] = "final"
+    """草稿档用较低分辨率生成 AI 视频。"""
 
 
 class CreateVersion(_Body):

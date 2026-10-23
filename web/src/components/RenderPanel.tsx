@@ -105,8 +105,8 @@ export function RenderPanel(props: {
   // 有待生成的 AI 镜头时，自动拉取费用预估。
   useEffect(() => {
     if (!pendingAi || running) { setCostEstimate(null); return; }
-    api.costEstimate(project.id).then(setCostEstimate).catch(() => setCostEstimate(null));
-  }, [project.id, project.revision, pendingAi, running]);
+    api.costEstimate(project.id, quality).then(setCostEstimate).catch(() => setCostEstimate(null));
+  }, [project.id, project.revision, pendingAi, running, quality]);
 
   async function start() {
     setError("");

@@ -262,7 +262,7 @@ class Renderer:
             try:
                 try:
                     visuals.refresh_candidates(
-                        self.store, self.settings, project, shot, confirm_charge=self.allow_paid
+                        self.store, self.settings, project, shot, confirm_charge=self.allow_paid, quality=self.quality
                     )
                 except ProviderError as exc:
                     if visual.mode == "stock" or not visual.terms:

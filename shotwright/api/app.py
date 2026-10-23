@@ -13,6 +13,7 @@ import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -594,15 +595,21 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             raise HTTPException(404, "镜头不存在")
         if shot.visual.locked:
             raise HTTPException(409, "镜头已锁定，请先解锁")
-        confirmed = bool(body and body.confirm_charge)
-        edit = bool(body and body.edit_selected)
+        body = body or CandidatesRequest()
+        confirmed = body.confirm_charge
+        edit = body.edit_selected
+        keyframes = body.keyframes if shot.visual.mode == "ai" and not edit else 0
         key = (project_id, shot_id)
         with in_progress_lock:
             if key in in_progress:
                 # 同一个镜头不允许重复提交，避免连点造成重复扣费。
                 raise HTTPException(409, "这个镜头正在生成，请等它完成")
-            in_progress[key] = {"mode": "ai" if edit else shot.visual.mode, "since": time.time()}
-        generated = edit or shot.visual.mode in ("ai", "image")
+            in_progress[key] = {
+                "mode": "image" if keyframes else "ai" if edit else shot.visual.mode,
+                "since": time.time(),
+            }
+        # 关键帧只是候选图片，不改变当前选中的画面。
+        generated = (edit or shot.visual.mode in ("ai", "image")) and not keyframes
 
         def change(latest: Project) -> None:
             for asset_id, asset in project.assets.items():
@@ -619,7 +626,15 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
         try:
             visuals.refresh_candidates(
-                store, settings, project, shot, confirm_charge=confirmed, edit_selected=edit
+                store,
+                settings,
+                project,
+                shot,
+                confirm_charge=confirmed,
+                edit_selected=edit,
+                count=body.count,
+                keyframes=keyframes,
+                quality=body.quality,
             )
             return _mutate(project_id, change)
         finally:
@@ -758,10 +773,10 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
     # ---- 费用预估 ------------------------------------------------------------
 
     @api.get("/projects/{project_id}/cost-estimate")
-    def get_cost_estimate(project_id: str):
-        """估算渲染本项目的费用（元），不实际触发任何 AI 调用。"""
+    def get_cost_estimate(project_id: str, quality: Literal["draft", "final"] = "final"):
+        """估算渲染本项目的费用（元），不实际触发任何 AI 调用。草稿档按草稿分辨率估算。"""
         project = store.load(_id(project_id))
-        return cost_service.estimate_render_cost(project, settings).to_dict()
+        return cost_service.estimate_render_cost(project, settings, quality).to_dict()
 
     # ---- 渲染 ---------------------------------------------------------------
 

@@ -7,6 +7,7 @@ import tempfile
 import time
 from dataclasses import asdict
 from pathlib import Path
+from typing import Literal
 
 from shotwright.config import Settings
 from shotwright.core.fingerprint import fingerprint
@@ -28,6 +29,8 @@ from shotwright.services import prompting
 from shotwright.services.durations import estimated_shot_seconds
 
 log = logging.getLogger(__name__)
+
+Quality = Literal["draft", "final"]
 
 SEARCH_CACHE_VERSION = "stock-search-1"
 """检索结果缓存的版本；改检索参数的含义时提升它，让旧缓存失效。"""
@@ -241,6 +244,48 @@ def require_charge_confirmation(
 
 
 MAX_CANDIDATES = 30
+MAX_TAKES_PER_BATCH = 3
+"""一次点击最多生成几条 AI 视频 / 几张关键帧，避免误操作花太多钱。"""
+DRAFT_RESOLUTION = "720p"
+"""草稿档 AI 视频的默认分辨率；可在 Provider 配置里用 draft_resolution 修改。"""
+
+
+def apply_quality(settings: Settings, provider: object, provider_id: str | None, quality: Quality) -> str:
+    """按草稿 / 成片档设置生成分辨率，返回实际使用的分辨率（Provider 不支持时返回空字符串）。
+
+    成片档用配置里的分辨率；草稿档用 ``draft_resolution``（默认 720p），比成片档低时才降。
+    """
+    current = getattr(provider, "resolution", None)
+    if not isinstance(current, str):
+        return ""
+    if quality != "draft":
+        return current
+    config = settings.provider_settings("video_gen", provider_id or "")
+    draft = (config.get("draft_resolution") or DRAFT_RESOLUTION).strip().lower()
+    order = ("480p", "720p", "1080p")
+    if draft in order and current in order and order.index(draft) < order.index(current):
+        provider.resolution = draft  # type: ignore[attr-defined]
+        return draft
+    return current
+
+
+def generate_keyframes(
+    store: ProjectStore,
+    settings: Settings,
+    project: Project,
+    shot: Shot,
+    count: int,
+    *,
+    confirm_charge: bool = False,
+) -> list[str]:
+    """给 AI 视频镜头先出几张关键帧图片（同一批）。选中一张作首帧后再生成视频，更可控也更省钱。"""
+    batch = new_id()
+    added: list[str] = []
+    for _ in range(max(1, min(count, MAX_TAKES_PER_BATCH))):
+        added += generate_image_candidate(
+            store, settings, project, shot, confirm_charge=confirm_charge, keyframe=True, batch=batch
+        )
+    return added
 MAX_FALLBACK_TERM_BYTES = 80
 """视频诉求短于这个长度才拿它当兜底检索词（见 :func:`_fallback_terms`）。"""
 _MODE_KINDS = (("stock", "stock"), ("ai", "video_gen"), ("image", "image_gen"))
@@ -342,6 +387,8 @@ def generate_ai_candidate(
     *,
     confirm_charge: bool = False,
     edit_selected: bool = False,
+    quality: Quality = "final",
+    batch: str = "",
 ) -> list[str]:
     """AI 视频。已选中的画面是图片时，把它作为首帧（图生视频）。
 
@@ -356,6 +403,7 @@ def generate_ai_candidate(
     provider_id = _provider_id(settings, "video_gen", shot)
     # 先实例化（只检查配置，不发请求），未配置时报"缺少配置"而不是"需要确认"。
     provider: VideoGenProvider = registry.create("video_gen", provider_id, settings)  # type: ignore[assignment]
+    resolution = apply_quality(settings, provider, provider_id, quality)
     reference_video: Path | None = None
     if edit_selected:
         reference_video = _edit_source(store, project, shot, provider_id)
@@ -367,6 +415,8 @@ def generate_ai_candidate(
         first_frame, frame_source = _reference_first_frame(store, project)
     prompt = build_prompt(settings, project, shot, "video_gen", provider_id)
     meta = {"prompt": prompt[:1500]}
+    if resolution:
+        meta["resolution"] = resolution
     if first_frame is not None:
         meta["first_frame"] = frame_source
     if reference_video is not None:
@@ -400,8 +450,10 @@ def generate_ai_candidate(
             store, project, path, source=provider_id or "video_gen", folder="ai-video", meta=meta
         )
     shot.visual.pending = None
-    record_spend(store, settings, project, shot, "video_gen", provider_id or "")
-    _attach(shot, [asset.id], select=True, take="edit" if reference_video is not None else "video")
+    record_spend(store, settings, project, shot, "video_gen", provider_id or "", resolution=resolution)
+    _attach(
+        shot, [asset.id], select=True, take="edit" if reference_video is not None else "video", batch=batch
+    )
     return [asset.id]
 
 
@@ -423,8 +475,13 @@ def generate_image_candidate(
     shot: Shot,
     *,
     confirm_charge: bool = False,
+    keyframe: bool = False,
+    batch: str = "",
 ) -> list[str]:
-    """AI 图片：渲染时配合慢推镜头；也可以再作为 AI 视频的首帧。"""
+    """AI 图片：渲染时配合慢推镜头；也可以再作为 AI 视频的首帧。
+
+    ``keyframe`` 为真时是给 AI 视频镜头出关键帧：结果放进候选供选作首帧，不改变当前选中的画面。
+    """
     if not (shot.visual.image_prompt.strip() or shot.visual.prompt.strip()):
         raise ProviderError("这个镜头没有画面提示词")
     provider_id = _provider_id(settings, "image_gen", shot)
@@ -442,7 +499,7 @@ def generate_image_candidate(
             meta={"prompt": prompt[:1500]},
         )
     record_spend(store, settings, project, shot, "image_gen", provider_id or "")
-    _attach(shot, [asset.id], select=True, take="image")
+    _attach(shot, [asset.id], select=not keyframe, take="keyframe" if keyframe else "image", batch=batch)
     return [asset.id]
 
 
@@ -454,7 +511,16 @@ def refresh_candidates(
     *,
     confirm_charge: bool = False,
     edit_selected: bool = False,
+    count: int = 1,
+    keyframes: int = 0,
+    quality: Quality = "final",
 ) -> list[str]:
+    """检索或生成候选素材。
+
+    * ``count``：AI 视频一次生成几条（同一批，1–3）；
+    * ``keyframes``：AI 视频镜头先出几张关键帧图片（2–3），选中一张作首帧后再生成视频；
+    * ``quality``：草稿档用较低分辨率生成 AI 视频，更快更省钱。
+    """
     index = next((i for i, s in enumerate(project.shots) if s.id == shot.id), -1) + 1
     log.info(
         "项目 %s 镜头 %d：开始%s（%s）",
@@ -466,10 +532,14 @@ def refresh_candidates(
     try:
         if edit_selected:
             added = generate_ai_candidate(
-                store, settings, project, shot, confirm_charge=confirm_charge, edit_selected=True
+                store, settings, project, shot, confirm_charge=confirm_charge, edit_selected=True, quality=quality
             )
+        elif keyframes and shot.visual.mode == "ai":
+            added = generate_keyframes(store, settings, project, shot, keyframes, confirm_charge=confirm_charge)
         else:
-            added = _refresh(store, settings, project, shot, confirm_charge=confirm_charge)
+            added = _refresh(
+                store, settings, project, shot, confirm_charge=confirm_charge, count=count, quality=quality
+            )
     except ProviderError as exc:
         log.warning(
             "项目 %s 镜头 %d：%s失败：%s", project.id, index, _ACTIONS.get(shot.visual.mode, "处理"), exc
@@ -489,11 +559,19 @@ def _refresh(
     shot: Shot,
     *,
     confirm_charge: bool,
+    count: int = 1,
+    quality: Quality = "final",
 ) -> list[str]:
     if shot.visual.mode == "stock":
         return fetch_stock_candidates(store, settings, project, shot)
     if shot.visual.mode == "ai":
-        return generate_ai_candidate(store, settings, project, shot, confirm_charge=confirm_charge)
+        batch = new_id()
+        added: list[str] = []
+        for _ in range(max(1, min(count, MAX_TAKES_PER_BATCH))):
+            added += generate_ai_candidate(
+                store, settings, project, shot, confirm_charge=confirm_charge, quality=quality, batch=batch
+            )
+        return added
     if shot.visual.mode == "image":
         return generate_image_candidate(store, settings, project, shot, confirm_charge=confirm_charge)
     raise ProviderError("这个镜头的画面来源不需要检索或生成")
@@ -528,12 +606,19 @@ def resume_pending(store: ProjectStore, settings: Settings, project: Project, sh
 
 
 def record_spend(
-    store: ProjectStore, settings: Settings, project: Project, shot: Shot, kind: str, provider_id: str
+    store: ProjectStore,
+    settings: Settings,
+    project: Project,
+    shot: Shot,
+    kind: str,
+    provider_id: str,
+    *,
+    resolution: str = "",
 ) -> None:
     """收费生成成功后，把参考费用累加到项目（直接写盘，调用方之后的合并不会覆盖它）。"""
     from shotwright.services import cost
 
-    amount = cost.generation_cost(settings, project, shot, kind, provider_id)
+    amount = cost.generation_cost(settings, project, shot, kind, provider_id, resolution=resolution)
     if amount <= 0:
         return
     with store.lock(project.id):
@@ -562,12 +647,16 @@ def _attach(
     takes = [item for item in shot.visual.takes if item.asset_id in shot.visual.candidates]
     if take is not None:
         known = {item.asset_id for item in takes}
+        prompt = shot.visual.image_prompt or shot.visual.prompt if take in ("image", "keyframe") else shot.visual.prompt
         takes += [
-            Take(asset_id=asset_id, kind=take, batch=batch or new_id(), prompt=shot.visual.prompt)
+            Take(asset_id=asset_id, kind=take, batch=batch or new_id(), prompt=prompt)
             for asset_id in asset_ids
             if asset_id not in known and asset_id in shot.visual.candidates
         ]
     shot.visual.takes = takes
+    if take == "keyframe":
+        # 关键帧只是首帧的备选，不改变当前选中的画面。
+        return
     if asset_ids and (
         select or shot.visual.selected is None or shot.visual.selected not in shot.visual.candidates
     ):

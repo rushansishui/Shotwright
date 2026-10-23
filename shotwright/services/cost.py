@@ -26,6 +26,8 @@ from shotwright.services.durations import estimated_shot_seconds
 _VIDEO_GEN_PRICE: dict[str, float] = {
     "seedance": 0.14,   # 方舟 Seedance 2.5，参考：¥0.14/秒
 }
+# 视频分辨率相对 1080p 的价格系数（参考方舟各档价格的大致比例）
+_RESOLUTION_FACTOR: dict[str, float] = {"480p": 0.25, "720p": 0.5, "1080p": 1.0}
 # 图片生成：元 / 张
 _IMAGE_GEN_PRICE: dict[str, float] = {
     "seedream": 0.06,   # 方舟 Seedream，参考：¥0.06/张
@@ -81,7 +83,7 @@ class CostEstimate:
         }
 
 
-def estimate_render_cost(project: Project, settings: Settings) -> CostEstimate:
+def estimate_render_cost(project: Project, settings: Settings, quality: str = "final") -> CostEstimate:
     """估算渲染整个项目的费用。
 
     - 已有素材（selected != None）的镜头不重新生成，不计视频费。
@@ -100,7 +102,8 @@ def estimate_render_cost(project: Project, settings: Settings) -> CostEstimate:
                 "video_gen" if visual.mode == "ai" else "image_gen"
             )
             if visual.mode == "ai":
-                price = _VIDEO_GEN_PRICE.get(provider_id, 0.0)
+                resolution = _draft_resolution(settings, provider_id) if quality == "draft" else ""
+                price = _VIDEO_GEN_PRICE.get(provider_id, 0.0) * resolution_factor(settings, provider_id, resolution)
                 if price:
                     duration = _shot_duration(project, shot, settings, provider_id)
                     visual_cost = price * duration
@@ -145,10 +148,25 @@ def _shot_duration(project: Project, shot: Shot, settings: Settings, provider_id
     return float(clamp_duration(seconds, minimum, max(minimum, maximum)))
 
 
-def generation_cost(settings: Settings, project: Project, shot: Shot, kind: str, provider_id: str) -> float:
+def _draft_resolution(settings: Settings, provider_id: str) -> str:
+    config = settings.provider_settings("video_gen", provider_id)
+    final = str(config.get("resolution") or "1080p").strip().lower()
+    draft = str(config.get("draft_resolution") or "720p").strip().lower()
+    return draft if _RESOLUTION_FACTOR.get(draft, 1.0) < _RESOLUTION_FACTOR.get(final, 1.0) else final
+
+
+def resolution_factor(settings: Settings, provider_id: str, resolution: str = "") -> float:
+    """按分辨率折算价格；没传分辨率时用配置里的分辨率（默认 1080p）。"""
+    chosen = resolution or settings.provider_settings("video_gen", provider_id).get("resolution") or "1080p"
+    return _RESOLUTION_FACTOR.get(str(chosen).strip().lower(), 1.0)
+
+
+def generation_cost(
+    settings: Settings, project: Project, shot: Shot, kind: str, provider_id: str, *, resolution: str = ""
+) -> float:
     """一次收费生成的参考费用（元），生成成功后累加到项目的 ``cost_credits``。"""
     if kind == "video_gen":
-        price = _VIDEO_GEN_PRICE.get(provider_id, 0.0)
+        price = _VIDEO_GEN_PRICE.get(provider_id, 0.0) * resolution_factor(settings, provider_id, resolution)
         return round(price * _shot_duration(project, shot, settings, provider_id), 4) if price else 0.0
     if kind == "image_gen":
         return _IMAGE_GEN_PRICE.get(provider_id, 0.0)

@@ -17,6 +17,13 @@ import type {
 
 import { currentLang, translate } from "./i18n";
 
+/** 生成选项：一次几条、先出几张关键帧、草稿还是成片分辨率。 */
+export interface GenerateOptions {
+  count?: number;
+  keyframes?: number;
+  quality?: "draft" | "final";
+}
+
 const BASE = "/api/v2";
 
 export class ApiError extends Error {}
@@ -101,10 +108,10 @@ export const api = {
   ) => request<Project>(`/projects/${id}/shots/${shotId}`, json("PATCH", body)),
   deleteShot: (id: string, shotId: string) => request<Project>(`/projects/${id}/shots/${shotId}`, json("DELETE")),
   /** 收费的 AI 生成必须传 confirmCharge=true（用户已确认），否则后端返回 402。 */
-  candidates: (id: string, shotId: string, confirmCharge = false, editSelected = false) =>
+  candidates: (id: string, shotId: string, confirmCharge = false, editSelected = false, options: GenerateOptions = {}) =>
     request<Project>(
       `/projects/${id}/shots/${shotId}/candidates`,
-      json("POST", { confirm_charge: confirmCharge, edit_selected: editSelected }),
+      json("POST", { confirm_charge: confirmCharge, edit_selected: editSelected, ...options }),
     ),
   /** 服务器上正在检索或生成的镜头（页面刷新后用来恢复"生成中"状态）。 */
   inProgress: (id: string) => request<Record<string, { mode: string; seconds: number }>>(`/projects/${id}/in-progress`),
@@ -136,7 +143,8 @@ export const api = {
   },
   render: (id: string, confirmCharge = false, quality: "draft" | "final" = "final") =>
     request<Job>(`/projects/${id}/renders`, json("POST", { confirm_charge: confirmCharge, quality })),
-  costEstimate: (id: string) => request<CostEstimate>(`/projects/${id}/cost-estimate`),
+  costEstimate: (id: string, quality: "draft" | "final" = "final") =>
+    request<CostEstimate>(`/projects/${id}/cost-estimate?quality=${quality}`),
   job: (jobId: string) => request<Job>(`/renders/${jobId}`),
   cancel: (jobId: string) => request<{ ok: boolean }>(`/renders/${jobId}/cancel`, json("POST")),
   renders: (id: string) =>

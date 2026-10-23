@@ -1232,3 +1232,8 @@ input[type="color"] {
 .take-badge.warn {
   background: #b45309;
 }
+
+.inline-field .input.compact {
+  flex: none;
+  width: auto;
+}

@@ -385,12 +385,21 @@ class _VaryingVideo:
     calls: list[dict] = []
 
     def __init__(self, settings):
-        pass
+        self.resolution = settings.get("resolution") or "1080p"
 
-    def generate(self, prompt, *, aspect, duration, output, first_frame=None, reference_video=None, on_task=None):
+    def generate(
+        self, prompt, *, aspect, duration, output, first_frame=None, reference_video=None, on_task=None
+    ):
         from conftest import make_clip
 
-        _VaryingVideo.calls.append({"prompt": prompt, "duration": duration, "first_frame": first_frame})
+        _VaryingVideo.calls.append(
+            {
+                "prompt": prompt,
+                "duration": duration,
+                "first_frame": first_frame,
+                "resolution": self.resolution,
+            }
+        )
         pattern = self.patterns[len(_VaryingVideo.calls) % len(self.patterns)]
         return make_clip(output.with_suffix(".mp4"), seconds=min(duration, 3.0), pattern=pattern)
 
@@ -447,3 +456,58 @@ def test_storyboard_reads_still_prompt():
     data["shots"][0]["still"] = "P1 静置在木桌上"
     board = storyboard.write_storyboard(_RecordingLLM(json.dumps(data, ensure_ascii=False)), "x")
     assert board.shots[0].visual.image_prompt == "P1 静置在木桌上"
+
+
+class _VaryingImage:
+    calls: list[str] = []
+
+    def __init__(self, settings):
+        pass
+
+    def generate(self, prompt, *, aspect, output):
+        from conftest import make_image
+
+        _VaryingImage.calls.append(prompt)
+        size = ["320x240", "400x300", "480x360", "560x420"][len(_VaryingImage.calls) % 4]
+        return make_image(output.with_suffix(".png"), size=size)
+
+
+def test_count_keyframes_and_draft_resolution(store, settings):
+    from shotwright.providers import registry
+    from shotwright.providers.base import ProviderSpec
+    from shotwright.services import visuals
+
+    _varying(settings)
+    registry.register(ProviderSpec(kind="image_gen", id="varyimg", name="VI", paid=True), _VaryingImage)
+    settings.defaults["image_gen"] = "varyimg"
+    shot = Shot(text="一句话。", visual=ShotVisual(mode="ai", prompt="P1 被拿起", image_prompt="P1 静置"))
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=[shot]))
+    shot = project.shots[0]
+
+    frames = visuals.refresh_candidates(store, settings, project, shot, confirm_charge=True, keyframes=2)
+    assert len(frames) == 2 and shot.visual.selected is None  # 关键帧不改变选中的画面
+    assert {t.kind for t in shot.visual.takes} == {"keyframe"} and len(
+        {t.batch for t in shot.visual.takes}
+    ) == 1
+    assert all(prompt.startswith("P1 静置") for prompt in _VaryingImage.calls)
+
+    videos = visuals.refresh_candidates(
+        store, settings, project, shot, confirm_charge=True, count=2, quality="draft"
+    )
+    assert len(videos) == 2 and shot.visual.selected == videos[-1]
+    batches = {t.batch for t in shot.visual.takes if t.kind == "video"}
+    assert len(batches) == 1
+    assert [call["resolution"] for call in _VaryingVideo.calls] == ["720p", "720p"]
+    assert project.assets[videos[0]].meta["resolution"] == "720p"
+
+
+def test_draft_resolution_halves_video_cost(settings):
+    from shotwright.services import cost
+
+    settings.providers.setdefault("video_gen", {})["seedance"] = {"api_key": "k", "resolution": "1080p"}
+    project = Project(
+        shots=[Shot(text="一句话说完。", visual=ShotVisual(mode="ai", prompt="x", provider="seedance"))]
+    )
+    final = cost.estimate_render_cost(project, settings).total_visual
+    draft = cost.estimate_render_cost(project, settings, "draft").total_visual
+    assert final > 0 and abs(draft - final / 2) < 1e-6

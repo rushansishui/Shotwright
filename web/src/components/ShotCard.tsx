@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { assetUrl, estimateSeconds } from "../api";
+import { assetUrl, estimateSeconds, type GenerateOptions } from "../api";
 import { providerName, useI18n } from "../i18n";
 import type { MessageKey } from "../messages";
 import type { Asset, CameraMove, Project, ProviderInfo, Shot, Take, VisualMode, VisualPatch } from "../types";
@@ -59,7 +59,7 @@ export function ShotCard(props: {
   onFocus: () => void;
   onUpdate: (body: { text?: string; visual?: VisualPatch }) => void;
   /** ``patch`` 是还没失焦保存的提示词，先存好再生成。 */
-  onCandidates: (confirmCharge?: boolean, patch?: VisualPatch, editSelected?: boolean) => void;
+  onCandidates: (confirmCharge?: boolean, patch?: VisualPatch, editSelected?: boolean, options?: GenerateOptions) => void;
   onUpload: (file: File) => void;
   onMove: (delta: number) => void;
   onInsert: () => void;
@@ -74,6 +74,8 @@ export function ShotCard(props: {
   const [prompt, setPrompt] = useState(visual.prompt);
   const [link, setLink] = useState(visual.link ?? "");
   const [still, setStill] = useState(visual.image_prompt ?? "");
+  const [count, setCount] = useState(1);
+  const [quality, setQuality] = useState<"draft" | "final">("final");
   const fileInput = useRef<HTMLInputElement>(null);
   const { t, lang } = useI18n();
 
@@ -129,8 +131,18 @@ export function ShotCard(props: {
         ? t(firstFrame ? "shot.confirm.videoFirstFrame" : "shot.confirm.video")
         : t("shot.confirm.image");
     const cost = generator.paid ? `\n${t("shot.confirm.cost", { name: providerName(generator, lang) })}` : "";
-    if (window.confirm(t("shot.confirm.question", { n: index + 1, what }) + cost)) {
-      props.onCandidates(true, unsavedPrompt());
+    const times = visual.mode === "ai" && count > 1 ? `\n${t("shot.confirm.count", { n: count })}` : "";
+    if (window.confirm(t("shot.confirm.question", { n: index + 1, what }) + times + cost)) {
+      props.onCandidates(true, unsavedPrompt(), false, visual.mode === "ai" ? { count, quality } : {});
+    }
+  };
+
+  /** 先出关键帧：用 AI 图片服务出几张静态画面，选一张作首帧再生成视频。 */
+  const keyframes = () => {
+    if (!props.aiImage) return;
+    const cost = props.aiImage.paid ? `\n${t("shot.confirm.cost", { name: providerName(props.aiImage, lang) })}` : "";
+    if (window.confirm(t("shot.confirm.keyframes", { n: index + 1, count: 3 }) + cost)) {
+      props.onCandidates(true, unsavedPrompt(), false, { keyframes: 3 });
     }
   };
 
@@ -288,6 +300,43 @@ export function ShotCard(props: {
               ) : (
                 t("shot.generate")
               )}
+            </button>
+          </div>
+        )}
+        {visual.mode === "ai" && (
+          <div className="inline-field gen-options">
+            <span className="label">{t("shot.genOptions")}</span>
+            <select
+              className="input compact"
+              aria-label={t("shot.count")}
+              value={count}
+              disabled={visual.locked}
+              onChange={(e) => setCount(Number(e.target.value))}
+            >
+              {[1, 2, 3].map((n) => (
+                <option key={n} value={n}>
+                  {t("shot.countValue", { n })}
+                </option>
+              ))}
+            </select>
+            <select
+              className="input compact"
+              aria-label={t("shot.genQuality")}
+              value={quality}
+              disabled={visual.locked}
+              onChange={(e) => setQuality(e.target.value as "draft" | "final")}
+            >
+              <option value="final">{t("shot.genQuality.final")}</option>
+              <option value="draft">{t("shot.genQuality.draft")}</option>
+            </select>
+            <button
+              type="button"
+              className="btn small"
+              disabled={props.busy || visual.locked || !props.aiImage || !(promptValue.trim() || still.trim())}
+              title={props.aiImage ? t("shot.keyframesHint") : t("shot.noGenerator")}
+              onClick={keyframes}
+            >
+              {t("shot.keyframes")}
             </button>
           </div>
         )}
