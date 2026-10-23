@@ -1,0 +1,154 @@
+"""用看图模型检查生成的画面：是否切题、主体（产品、人物）是否与参考图一致。
+
+只在配置了看图模型（大模型的 ``vision_model``）时工作；没配置时什么也不做，
+不影响生成。检查结果写进镜头的版本记录（得分和问题），同一批多条候选时自动
+选中得分最高的一条，用户仍然可以改选。检查不会重新提交收费的生成任务。
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+import tempfile
+from pathlib import Path
+
+from shotwright.config import Settings
+from shotwright.core.models import Project, Shot
+from shotwright.core.store import ProjectStore
+from shotwright.media.ffmpeg import MediaError, extract_frame
+from shotwright.providers import registry
+from shotwright.providers.base import ProviderError
+
+log = logging.getLogger("shotwright.inspect")
+
+ISSUE_THRESHOLD = 0.6
+"""一致性或切题得分低于这个值时记为问题，建议重做。"""
+MAX_REFERENCES = 2
+
+PROMPT = """你是视频质检员。第 1 到第 {refs} 张图是参考图（{ref_labels}），之后的 {frames} 张是同一个生成镜头里按时间顺序截取的画面。
+这个镜头应当呈现：{description}
+
+请检查：
+1. relevance：画面是否符合上面的描述（0–1）；
+2. consistency：画面里的产品或人物与参考图是否一致——形状、颜色、材质、Logo 位置、五官和发型（0–1；没有参考图时填 1）；
+3. issue：发现的主要问题，用一句中文写清楚（例如「产品颜色变成了黑色」「手指畸形」「出现了乱码文字」），没有问题写空字符串。
+
+只输出 JSON：{{"relevance": 0.0, "consistency": 0.0, "issue": ""}}"""
+
+
+def vision_llm(settings: Settings):
+    """配置了看图模型时返回大模型实例，否则返回 None。"""
+    try:
+        llm = registry.create("llm", None, settings)
+    except (ProviderError, ValueError, KeyError):
+        return None
+    if not getattr(llm, "vision_model", "") or not hasattr(llm, "see"):
+        return None
+    return llm
+
+
+def reference_images(store: ProjectStore, project: Project, shot: Shot) -> list[tuple[str, Path]]:
+    """镜头用到的主体参考图：全片设定里关联的参考图优先，其次主体库里的产品和人物图。"""
+    from shotwright.services import prompting
+
+    result: list[tuple[str, Path]] = []
+    codes = prompting.used_codes(project, shot.visual.prompt)
+    for subject in project.look.subjects:
+        if subject.reference and (not codes or subject.code in codes):
+            asset = project.assets.get(subject.reference)
+            if asset is not None and asset.kind == "image":
+                result.append((subject.name or subject.code, store.asset_path(project, asset.id)))
+    for ref in project.references:
+        if not ref.enabled or ref.role not in ("product", "person"):
+            continue
+        asset = project.assets.get(ref.asset_id)
+        if asset is not None and asset.kind == "image":
+            path = store.asset_path(project, asset.id)
+            if all(path != existing for _label, existing in result):
+                result.append((ref.label or ref.role, path))
+    return result[:MAX_REFERENCES]
+
+
+def sample_frames(store: ProjectStore, project: Project, asset_id: str, work: Path) -> list[Path]:
+    """视频取 20%、50%、80% 三帧，图片直接缩小。"""
+    asset = project.assets[asset_id]
+    source = store.asset_path(project, asset_id)
+    if asset.kind == "image":
+        return [extract_frame(source, work / f"{asset_id}.jpg", at=0.0)]
+    duration = asset.duration or 1.0
+    return [
+        extract_frame(source, work / f"{asset_id}-{index}.jpg", at=duration * fraction)
+        for index, fraction in enumerate((0.2, 0.5, 0.8))
+    ]
+
+
+def _parse(reply: str) -> tuple[float, float, str]:
+    match = re.search(r"\{.*\}", reply, re.DOTALL)
+    if not match:
+        raise ProviderError("看图模型没有返回 JSON")
+    data = json.loads(match.group(0))
+
+    def score(key: str) -> float:
+        try:
+            return max(0.0, min(1.0, float(data.get(key, 0))))
+        except (TypeError, ValueError):
+            return 0.0
+
+    return score("relevance"), score("consistency"), str(data.get("issue") or "").strip()[:200]
+
+
+def score_asset(
+    llm, store: ProjectStore, project: Project, shot: Shot, asset_id: str
+) -> tuple[float, str]:
+    """检查一个候选素材，返回（综合得分, 问题）。有参考图时一致性占六成，否则只看切题程度。"""
+    refs = reference_images(store, project, shot)
+    with tempfile.TemporaryDirectory(prefix="shotwright-inspect-") as temp:
+        work = Path(temp)
+        frames = sample_frames(store, project, asset_id, work)
+        ref_frames = [extract_frame(path, work / f"ref-{index}.jpg", at=0.0) for index, (_l, path) in enumerate(refs)]
+        description = (shot.visual.prompt or shot.visual.image_prompt or shot.text)[:600]
+        prompt = PROMPT.format(
+            refs=len(ref_frames),
+            ref_labels="、".join(label for label, _path in refs) or "无",
+            frames=len(frames),
+            description=description,
+        )
+        relevance, consistency, issue = _parse(llm.see(prompt, [*ref_frames, *frames]))
+    total = 0.4 * relevance + 0.6 * consistency if refs else relevance
+    if _NO_ISSUE.fullmatch(issue):
+        issue = ""
+    if not issue and min(relevance, consistency) < ISSUE_THRESHOLD:
+        issue = "主体与参考图不一致" if consistency < ISSUE_THRESHOLD else "画面与描述不符"
+    return round(total, 3), issue
+
+
+_NO_ISSUE = re.compile(r"\s*(无|没有|无明显问题|没有问题|未发现问题|none|no issues?)?\s*[。.]?\s*", re.IGNORECASE)
+
+
+def inspect_takes(
+    store: ProjectStore, settings: Settings, project: Project, shot: Shot, asset_ids: list[str]
+) -> bool:
+    """检查刚生成的候选，把得分和问题写进版本记录；多条时选中得分最高的一条。
+
+    没有配置看图模型时返回 False，什么也不做；单条检查失败只记日志。
+    """
+    llm = vision_llm(settings)
+    if llm is None or not asset_ids:
+        return False
+    scored: list[tuple[float, str]] = []
+    for asset_id in asset_ids:
+        take = shot.visual.take(asset_id)
+        if take is None or asset_id not in project.assets:
+            continue
+        try:
+            take.score, take.issue = score_asset(llm, store, project, shot, asset_id)
+        except (ProviderError, MediaError, ValueError) as exc:
+            log.warning("项目 %s 镜头 %s：看图检查失败：%s", project.id, shot.id, exc)
+            continue
+        scored.append((take.score, asset_id))
+        log.info("项目 %s 镜头 %s：候选 %s 得分 %.2f %s", project.id, shot.id, asset_id, take.score, take.issue)
+    best = max(scored, default=None)
+    if best is not None and len(scored) > 1 and shot.visual.selected in asset_ids:
+        shot.visual.selected = best[1]
+    return bool(scored)

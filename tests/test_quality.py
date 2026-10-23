@@ -511,3 +511,60 @@ def test_draft_resolution_halves_video_cost(settings):
     final = cost.estimate_render_cost(project, settings).total_visual
     draft = cost.estimate_render_cost(project, settings, "draft").total_visual
     assert final > 0 and abs(draft - final / 2) < 1e-6
+
+
+class _Seer:
+    """假的看图模型：按调用顺序返回预设的得分。"""
+
+    replies: list[str] = []
+    prompts: list[tuple[str, int]] = []
+
+    def __init__(self, settings):
+        self.vision_model = "fake-vision"
+
+    def complete(self, messages, *, json_mode=False):
+        return "{}"
+
+    def see(self, prompt, images):
+        _Seer.prompts.append((prompt, len(images)))
+        return _Seer.replies.pop(0)
+
+
+def test_inspection_scores_takes_and_selects_best(store, settings, tmp_path):
+    from conftest import make_image
+
+    from shotwright.core.models import ReferenceAsset
+    from shotwright.providers import registry
+    from shotwright.providers.base import ProviderSpec
+    from shotwright.services import visuals
+
+    _varying(settings)
+    registry.register(ProviderSpec(kind="llm", id="seer", name="Seer", offline=True), _Seer)
+    settings.defaults["llm"] = "seer"
+    shot = Shot(text="一句话。", visual=ShotVisual(mode="ai", prompt="P1 放在桌上"))
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=[shot]))
+    ref = store.add_asset(project, make_image(tmp_path / "ref.png"), kind="image", source="upload")
+    project.references = [ReferenceAsset(asset_id=ref.id, role="product", label="正面")]
+    shot = project.shots[0]
+    _Seer.prompts.clear()
+    _Seer.replies[:] = [
+        '{"relevance": 0.9, "consistency": 0.9, "issue": "无"}',
+        '{"relevance": 0.9, "consistency": 0.3, "issue": "产品颜色变成了黑色"}',
+    ]
+    added = visuals.refresh_candidates(store, settings, project, shot, confirm_charge=True, count=2)
+    first, second = (shot.visual.take(asset_id) for asset_id in added)
+    assert first.score == 0.9 and first.issue == ""
+    assert second.score == 0.54 and second.issue == "产品颜色变成了黑色"
+    assert shot.visual.selected == added[0]  # 选中得分高的一条
+    prompt, images = _Seer.prompts[0]
+    assert "参考图（正面）" in prompt and images == 4  # 1 张参考图 + 3 帧
+
+
+def test_inspection_is_skipped_without_vision_model(store, settings):
+    from shotwright.services import visuals
+
+    _varying(settings)
+    shot = Shot(text="一句话。", visual=ShotVisual(mode="ai", prompt="a cat"))
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=[shot]))
+    added = visuals.refresh_candidates(store, settings, project, project.shots[0], confirm_charge=True)
+    assert project.shots[0].visual.take(added[0]).score is None

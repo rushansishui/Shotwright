@@ -7,10 +7,15 @@
 
 from __future__ import annotations
 
+import base64
+from pathlib import Path
+
 import httpx
 
 from shotwright.providers import registry
-from shotwright.providers.base import ConfigField, ProviderError, ProviderSpec
+from shotwright.providers.base import ConfigField, ProviderError, ProviderNotConfigured, ProviderSpec
+
+VISION_HELP = "用于检查生成的画面（产品是否走样、是否切题），需要支持看图的模型；留空时不检查"
 
 
 class OpenAICompatibleLLM:
@@ -22,11 +27,28 @@ class OpenAICompatibleLLM:
             base_url = base_url[: -len("/chat/completions")]
         self.base_url = base_url
         self.model = settings.get("model", "gpt-4o-mini")
+        self.vision_model = (settings.get("vision_model") or "").strip()
+        """看图模型：用于检查生成的画面（主体是否走样、是否切题）。为空时不做看图检查。"""
         self.timeout = float(settings.get("timeout", "120"))
         self.proxy = settings.get("proxy") or None
 
+    def see(self, prompt: str, images: list[Path]) -> str:
+        """把几张图片和一段文字交给看图模型，返回它的回答（要求 JSON 时由调用方解析）。"""
+        if not self.vision_model:
+            raise ProviderNotConfigured("没有配置看图模型（vision_model）")
+        content: list[dict] = [{"type": "text", "text": prompt}]
+        for path in images:
+            data = base64.b64encode(path.read_bytes()).decode("ascii")
+            content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{data}"}})
+        return self._chat(
+            [{"role": "user", "content": content}], json_mode=True, model=self.vision_model, temperature=0.1
+        )
+
     def complete(self, messages: list[dict[str, str]], *, json_mode: bool = False) -> str:
-        payload: dict = {"model": self.model, "messages": messages, "temperature": 0.7}
+        return self._chat(messages, json_mode=json_mode)
+
+    def _chat(self, messages: list, *, json_mode: bool, model: str = "", temperature: float = 0.7) -> str:
+        payload: dict = {"model": model or self.model, "messages": messages, "temperature": temperature}
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
         headers = {"Content-Type": "application/json"}
@@ -102,6 +124,7 @@ for preset in PRESETS:
                 ConfigField("model", "模型", required=True, default=preset["model"]),
                 ConfigField("base_url", "Base URL", default=preset["base_url"]),
                 ConfigField("timeout", "超时（秒）", default=preset["timeout"]),
+                ConfigField("vision_model", "看图模型", help=VISION_HELP),
             ),
             paid=True,
             docs_url=preset["docs_url"],
@@ -119,6 +142,7 @@ registry.register(
             ConfigField("api_key", "API Key", secret=True),
             ConfigField("base_url", "Base URL", default="https://api.openai.com/v1"),
             ConfigField("model", "模型", required=True, default="gpt-4o-mini"),
+            ConfigField("vision_model", "看图模型", help=VISION_HELP),
         ),
         docs_url="https://platform.openai.com/docs/api-reference/chat",
     ),

@@ -325,3 +325,33 @@ def loudnorm_stats(path: Path, *, target: float, true_peak: float, timeout: floa
     if measured <= -70 or measured != measured:  # 静音或 NaN
         return None
     return {key: str(data[key]) for key in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")}
+
+
+def extract_frame(source: Path, output: Path, *, at: float | None = None, width: int = 512) -> Path:
+    """取视频的一帧存成 JPEG（缩到 ``width`` 宽）。``at`` 为空时取最后一帧，图片直接缩放。
+
+    看图检查只需要小图；首尾帧衔接取最后一帧时用原始宽度（``width=0``）。
+    """
+    scale = ["-vf", f"scale={width}:-2"] if width else []
+    if at is None:
+        position = ["-sseof", "-0.25"]
+    else:
+        position = ["-ss", f"{max(0.0, at):.3f}"]
+    run_ffmpeg(
+        [
+            "-protocol_whitelist",
+            LOCAL_PROTOCOLS,
+            *position,
+            "-i",
+            str(source),
+            "-frames:v",
+            "1",
+            *scale,
+            "-q:v",
+            "3",
+            str(output),
+        ]
+    )
+    if not output.exists():
+        raise MediaError("没有取到画面")
+    return output

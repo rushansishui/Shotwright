@@ -237,6 +237,7 @@ export const zh = {
   "shot.delete": "删除镜头",
 
   "take.version": "第 {n} 版",
+  "take.issue": "看图检查：{issue}。建议换一条候选或重新生成。",
   "take.kind.video": "AI 视频",
   "take.kind.image": "AI 图片",
   "take.kind.keyframe": "关键帧",
@@ -531,6 +532,7 @@ export const en: Record<MessageKey, string> = {
   "shot.textPlaceholder": "Voice-over for this shot",
 
   "take.version": "v{n}",
+  "take.issue": "Visual check: {issue}. Try another candidate or regenerate.",
   "take.kind.video": "AI video",
   "take.kind.image": "AI image",
   "take.kind.keyframe": "Keyframe",

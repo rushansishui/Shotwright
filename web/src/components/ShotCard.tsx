@@ -482,6 +482,12 @@ export function ShotCard(props: {
             ))}
           </div>
         )}
+        {(() => {
+          const take = visual.takes?.find((item) => item.asset_id === visual.selected);
+          return take?.issue ? (
+            <p className="hint warn small take-issue">{t("take.issue", { issue: take.issue })}</p>
+          ) : null;
+        })()}
         {elsewhere.length > 0 && (
           <p className="muted small elsewhere">
             {t("shot.elsewhere")}{" "}

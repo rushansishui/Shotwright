@@ -540,6 +540,10 @@ def refresh_candidates(
             added = _refresh(
                 store, settings, project, shot, confirm_charge=confirm_charge, count=count, quality=quality
             )
+        if shot.visual.mode in ("ai", "image") or edit_selected:
+            from shotwright.services import inspect
+
+            inspect.inspect_takes(store, settings, project, shot, added)
     except ProviderError as exc:
         log.warning(
             "项目 %s 镜头 %d：%s失败：%s", project.id, index, _ACTIONS.get(shot.visual.mode, "处理"), exc
