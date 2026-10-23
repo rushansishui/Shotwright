@@ -250,7 +250,7 @@ class Renderer:
         """
         if not self.settings.auto_fetch_visuals:
             return
-        changed: dict[str, tuple[list[str], str | None]] = {}
+        changed: dict[str, tuple[list[str], str | None, list]] = {}
         for index, shot in enumerate(project.shots):
             visual = shot.visual
             if (
@@ -269,7 +269,7 @@ class Renderer:
                         raise
                     visuals.fetch_stock_candidates(self.store, self.settings, project, shot)
                     self.warnings.append(f"镜头 {index + 1} 的 AI 画面没有生成（{exc}），已改用素材检索")
-                changed[shot.id] = (list(visual.candidates), visual.selected)
+                changed[shot.id] = (list(visual.candidates), visual.selected, list(visual.takes))
             except ProviderError as exc:
                 self.warnings.append(f"镜头 {index + 1} 没有拿到素材，已使用纯色画面：{exc}")
         if not changed:
@@ -278,7 +278,7 @@ class Renderer:
             latest = self.store.load(project.id)
             for asset_id, asset in project.assets.items():
                 latest.assets.setdefault(asset_id, asset)
-            for shot_id, (candidates, selected) in changed.items():
+            for shot_id, (candidates, selected, takes) in changed.items():
                 try:
                     target = latest.shot(shot_id)
                 except KeyError:
@@ -286,6 +286,7 @@ class Renderer:
                 if target.visual.selected is None:
                     target.visual.candidates = candidates
                     target.visual.selected = selected
+                    target.visual.takes = takes
             self.store.save(latest)
         project.revision = latest.revision
 

@@ -53,6 +53,18 @@ export interface Look {
   brand?: string | null;
 }
 
+/** 一次生成的版本记录：关键帧、多候选、再来一版共用。 */
+export interface Take {
+  asset_id: string;
+  kind: "video" | "image" | "keyframe" | "edit" | "extend";
+  batch: string;
+  prompt: string;
+  /** 检查得分（0–1）；没检查时为 null。 */
+  score: number | null;
+  issue: string;
+  created_at: number;
+}
+
 export interface ShotVisual {
   mode: VisualMode;
   terms: string[];
@@ -80,6 +92,7 @@ export interface ShotVisual {
   locked: boolean;
   /** 已提交、尚未取回结果的收费任务；服务重启后会继续轮询。 */
   pending?: PendingTask | null;
+  takes?: Take[];
 }
 
 export interface Shot {

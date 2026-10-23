@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { assetUrl, estimateSeconds } from "../api";
 import { providerName, useI18n } from "../i18n";
 import type { MessageKey } from "../messages";
-import type { Asset, CameraMove, Project, ProviderInfo, Shot, VisualMode, VisualPatch } from "../types";
+import type { Asset, CameraMove, Project, ProviderInfo, Shot, Take, VisualMode, VisualPatch } from "../types";
 import { Icon, Segmented } from "./Controls";
 import { ShotEdit } from "./ShotEdit";
 
@@ -23,6 +23,22 @@ export function Thumb(props: { project: Project; assetId: string | null; color: 
     );
   }
   return <div className={props.className} style={{ background: props.color }} />;
+}
+
+/** 候选缩略图上的版本号、检查得分和问题提示。 */
+function TakeBadge({ takes, assetId }: { takes: Take[]; assetId: string }) {
+  const { t } = useI18n();
+  const index = takes.findIndex((item) => item.asset_id === assetId);
+  if (index < 0) return null;
+  const take = takes[index];
+  const score = take.score === null ? "" : ` · ${Math.round(take.score * 100)}`;
+  return (
+    <span className={`take-badge ${take.issue ? "warn" : ""}`} title={take.issue || t(`take.kind.${take.kind}` as MessageKey)}>
+      {t("take.version", { n: index + 1 })}
+      {score}
+      {take.issue ? " !" : ""}
+    </span>
+  );
 }
 
 const MODES: VisualMode[] = ["stock", "ai", "image", "upload", "color"];
@@ -396,6 +412,7 @@ export function ShotCard(props: {
                 title={project.assets[id]?.meta.author ? t("shot.author", { name: project.assets[id].meta.author }) : ""}
               >
                 <Thumb project={project} assetId={id} color={visual.color} className="candidate-media" />
+                <TakeBadge takes={visual.takes ?? []} assetId={id} />
               </button>
             ))}
           </div>

@@ -159,6 +159,14 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                                     merged.append(asset_id)
                             target.visual.candidates = merged[-visuals.MAX_CANDIDATES :]
                             target.visual.selected = recovered[0]
+                            known = {item.asset_id for item in target.visual.takes}
+                            target.visual.takes = [
+                                item for item in target.visual.takes if item.asset_id in target.visual.candidates
+                            ] + [
+                                item
+                                for item in shot.visual.takes
+                                if item.asset_id in recovered and item.asset_id not in known
+                            ]
                         target.visual.pending = None
                         store.save(latest)
                 except OSError as exc:
@@ -601,6 +609,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 latest.assets.setdefault(asset_id, asset)
             target = latest.shot(shot_id)
             target.visual.candidates = shot.visual.candidates
+            target.visual.takes = shot.visual.takes
             if edit:
                 # 改画面的结果是 AI 视频，切到 AI 视频来源，新画面才会出现在候选里。
                 target.visual.mode = "ai"

@@ -1210,3 +1210,25 @@ input[type="color"] {
 .look-row select.input {
   width: auto;
 }
+
+/* ---- 生成版本标记 ---- */
+.candidate {
+  position: relative;
+}
+
+.take-badge {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  pointer-events: none;
+}
+
+.take-badge.warn {
+  background: #b45309;
+}

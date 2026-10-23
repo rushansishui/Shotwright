@@ -376,3 +376,52 @@ def test_api_updates_look_and_shot_camera(client):
     ).json()
     target = next(s for s in shot["shots"] if s["id"] == shot_id) if "shots" in shot else shot
     assert target["visual"]["camera"] == "crane" and target["visual"]["link"] == "接上一镜"
+
+
+class _VaryingVideo:
+    """每次生成不同画面的假 AI 视频服务（素材按内容去重，相同画面会被当成同一个素材）。"""
+
+    patterns = ["testsrc2", "smptebars", "rgbtestsrc", "yuvtestsrc", "pal75bars", "smptehdbars"]
+    calls: list[dict] = []
+
+    def __init__(self, settings):
+        pass
+
+    def generate(self, prompt, *, aspect, duration, output, first_frame=None, reference_video=None, on_task=None):
+        from conftest import make_clip
+
+        _VaryingVideo.calls.append({"prompt": prompt, "duration": duration, "first_frame": first_frame})
+        pattern = self.patterns[len(_VaryingVideo.calls) % len(self.patterns)]
+        return make_clip(output.with_suffix(".mp4"), seconds=min(duration, 3.0), pattern=pattern)
+
+
+def _varying(settings, *, max_duration=None):
+    from shotwright.providers import registry
+    from shotwright.providers.base import ProviderSpec
+
+    registry.register(
+        ProviderSpec(kind="video_gen", id="varying", name="Varying", paid=True, max_duration=max_duration),
+        _VaryingVideo,
+    )
+    settings.defaults["video_gen"] = "varying"
+    _VaryingVideo.calls.clear()
+
+
+def test_generation_records_takes_and_prunes_with_candidates(store, settings):
+    from shotwright.services import visuals
+
+    _varying(settings)
+    shot = Shot(text="一句话。", visual=ShotVisual(mode="ai", prompt="a cat"))
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=[shot]))
+    shot = project.shots[0]
+    first = visuals.refresh_candidates(store, settings, project, shot, confirm_charge=True)[0]
+    second = visuals.refresh_candidates(store, settings, project, shot, confirm_charge=True)[0]
+    assert [t.asset_id for t in shot.visual.takes] == [first, second]
+    assert shot.visual.take(second).kind == "video" and shot.visual.take(second).prompt == "a cat"
+    assert shot.visual.takes[0].batch != shot.visual.takes[1].batch
+
+    # 候选被挤出时版本记录一起清理。
+    visuals._attach(shot, [], select=False)
+    shot.visual.candidates = [second]
+    visuals._attach(shot, [])
+    assert [t.asset_id for t in shot.visual.takes] == [second]

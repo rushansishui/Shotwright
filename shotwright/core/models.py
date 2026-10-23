@@ -274,6 +274,44 @@ class Look(_Model):
         return not (self.subjects or self.scene.strip() or self.style.strip() or self.avoid.strip())
 
 
+TakeKind = Literal["video", "image", "keyframe", "edit", "extend"]
+"""一次生成的结果类别：AI 视频、AI 图片、关键帧、改画面、续生成拼接的长镜头。"""
+
+
+class Take(_Model):
+    """镜头的一个生成版本：关键帧、多候选、「再来一版」、开头变体共用这一套记录。
+
+    素材本身仍在候选列表里；这里补充它是怎么来的、属于哪一批、检查结果如何。
+    """
+
+    asset_id: str
+    kind: TakeKind = "video"
+    batch: str = ""
+    """同一次点击生成的多个结果共用一个批次 id。"""
+    prompt: str = ""
+    """生成时镜头画面描述的前 300 字，便于对比不同版本。"""
+    score: float | None = Field(None, ge=0.0, le=1.0)
+    """检查得分（切题程度和主体一致性，0–1）；没检查时为空。"""
+    issue: str = ""
+    """检查发现的问题，例如「产品颜色与参考图不一致」。"""
+    created_at: float = Field(default_factory=time.time)
+
+    @field_validator("asset_id")
+    @classmethod
+    def _check_asset(cls, value: str) -> str:
+        return validate_id(value)
+
+    @field_validator("prompt")
+    @classmethod
+    def _check_prompt(cls, value: str) -> str:
+        return value[:300]
+
+    @field_validator("issue")
+    @classmethod
+    def _check_issue(cls, value: str) -> str:
+        return value[:200]
+
+
 class ShotVisual(_Model):
     mode: VisualMode = "stock"
     terms: list[str] = Field(default_factory=list)
@@ -310,6 +348,8 @@ class ShotVisual(_Model):
     """锁定后，自动补素材和\"全部重新生成\"都不会改动这个镜头的画面。"""
     pending: PendingTask | None = None
     """已提交、尚未取回结果的收费任务；重启后据此继续轮询。"""
+    takes: list[Take] = Field(default_factory=list)
+    """生成版本记录（按时间先后），与候选素材对应；候选被挤掉时一并清理。"""
 
     @field_validator("candidates")
     @classmethod
@@ -338,6 +378,9 @@ class ShotVisual(_Model):
         if self.trim_end is not None and self.trim_end <= self.trim_start + 0.05:
             raise ValueError("出点必须晚于入点")
         return self
+
+    def take(self, asset_id: str | None) -> Take | None:
+        return next((item for item in self.takes if item.asset_id == asset_id), None)
 
     def effective_edit(self) -> ShotVisual:
         """当前选中素材实际生效的剪辑设置：入出点和取景属于别的素材时恢复默认。"""

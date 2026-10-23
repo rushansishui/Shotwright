@@ -10,7 +10,8 @@ from pathlib import Path
 
 from shotwright.config import Settings
 from shotwright.core.fingerprint import fingerprint
-from shotwright.core.models import Asset, AssetFolder, PendingTask, Project, Shot
+from shotwright.core.ids import new_id
+from shotwright.core.models import Asset, AssetFolder, PendingTask, Project, Shot, Take, TakeKind
 from shotwright.core.store import ProjectStore, read_json, write_json
 from shotwright.media.ffmpeg import MediaError, probe
 from shotwright.providers import registry
@@ -400,7 +401,7 @@ def generate_ai_candidate(
         )
     shot.visual.pending = None
     record_spend(store, settings, project, shot, "video_gen", provider_id or "")
-    _attach(shot, [asset.id], select=True)
+    _attach(shot, [asset.id], select=True, take="edit" if reference_video is not None else "video")
     return [asset.id]
 
 
@@ -441,7 +442,7 @@ def generate_image_candidate(
             meta={"prompt": prompt[:1500]},
         )
     record_spend(store, settings, project, shot, "image_gen", provider_id or "")
-    _attach(shot, [asset.id], select=True)
+    _attach(shot, [asset.id], select=True, take="image")
     return [asset.id]
 
 
@@ -522,7 +523,7 @@ def resume_pending(store: ProjectStore, settings: Settings, project: Project, sh
         )
     shot.visual.pending = None
     record_spend(store, settings, project, shot, "video_gen", provider_id)
-    _attach(shot, [asset.id], select=True)
+    _attach(shot, [asset.id], select=True, take="video")
     return [asset.id]
 
 
@@ -544,12 +545,29 @@ def record_spend(
     log.info("项目 %s：本次生成参考费用 %.2f 元，累计 %.2f 元", project.id, amount, project.cost_credits)
 
 
-def _attach(shot: Shot, asset_ids: list[str], *, select: bool = False) -> None:
+def _attach(
+    shot: Shot,
+    asset_ids: list[str],
+    *,
+    select: bool = False,
+    take: TakeKind | None = None,
+    batch: str = "",
+) -> None:
+    """把素材加进候选。``take`` 不为空时同时记一条生成版本（同一批共用 ``batch``）。"""
     candidates = list(shot.visual.candidates)
     for asset_id in asset_ids:
         if asset_id not in candidates:
             candidates.append(asset_id)
     shot.visual.candidates = candidates[-MAX_CANDIDATES:]
+    takes = [item for item in shot.visual.takes if item.asset_id in shot.visual.candidates]
+    if take is not None:
+        known = {item.asset_id for item in takes}
+        takes += [
+            Take(asset_id=asset_id, kind=take, batch=batch or new_id(), prompt=shot.visual.prompt)
+            for asset_id in asset_ids
+            if asset_id not in known and asset_id in shot.visual.candidates
+        ]
+    shot.visual.takes = takes
     if asset_ids and (
         select or shot.visual.selected is None or shot.visual.selected not in shot.visual.candidates
     ):
