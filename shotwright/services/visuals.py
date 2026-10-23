@@ -14,7 +14,7 @@ from shotwright.core.fingerprint import fingerprint
 from shotwright.core.ids import new_id
 from shotwright.core.models import Asset, AssetFolder, PendingTask, Project, Shot, Take, TakeKind
 from shotwright.core.store import ProjectStore, read_json, write_json
-from shotwright.media.ffmpeg import MediaError, probe
+from shotwright.media.ffmpeg import MediaError, extract_frame, probe
 from shotwright.providers import registry
 from shotwright.providers.base import (
     ChargeConfirmationRequired,
@@ -372,6 +372,27 @@ def build_prompt(settings: Settings, project: Project, shot: Shot, kind: str, pr
     return prompting.for_provider(settings, project, text, languages)
 
 
+def _chained_first_frame(store: ProjectStore, project: Project, shot: Shot) -> tuple[Path | None, str]:
+    """上一个镜头选中的是 AI 视频时，取它的最后一帧登记成图片素材，作为这个镜头的首帧。"""
+    index = next((i for i, item in enumerate(project.shots) if item.id == shot.id), 0)
+    if index == 0:
+        return None, ""
+    previous = project.shots[index - 1]
+    asset = project.assets.get(previous.visual.selected or "")
+    if asset is None or asset.kind != "video" or asset_folder(asset) != "ai-video":
+        return None, ""
+    try:
+        with tempfile.TemporaryDirectory(prefix="shotwright-chain-") as temp:
+            frame = extract_frame(store.asset_path(project, asset.id), Path(temp) / "last.jpg", width=0)
+            image = _register_media(
+                store, project, frame, source="ffmpeg", folder="ai-image", meta={"last_frame_of": asset.id}
+            )
+    except (MediaError, ProviderError) as exc:
+        log.warning("项目 %s：取上一镜头的最后一帧失败，改用其他首帧：%s", project.id, exc)
+        return None, ""
+    return store.asset_path(project, image.id), image.id
+
+
 def _reference_first_frame(store: ProjectStore, project: Project) -> tuple[Path | None, str]:
     """没有显式首帧时，用第一张产品/人物参考图作为首帧，保证商品外观不走样。"""
     for _ref, asset in reference_assets(project, roles=("product", "person")):
@@ -410,6 +431,9 @@ def generate_ai_candidate(
     require_charge_confirmation(settings, "video_gen", provider_id, confirm_charge)
     first_frame = None if reference_video is not None else _first_frame(store, project, shot)
     frame_source = shot.visual.first_frame or ""
+    if first_frame is None and reference_video is None and project.chain_frames:
+        # 首尾帧衔接：上一个 AI 镜头的最后一帧作为首帧，两个镜头在交界处画面连续。
+        first_frame, frame_source = _chained_first_frame(store, project, shot)
     if first_frame is None and reference_video is None:
         # 没有显式首帧时，优先用产品/人物参考图，保证商品外观不走样。
         first_frame, frame_source = _reference_first_frame(store, project)

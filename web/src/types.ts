@@ -158,6 +158,8 @@ export interface Project {
   subject: string;
   video_type?: VideoType | null;
   look?: Look;
+  /** 首尾帧衔接：上一个 AI 镜头的最后一帧作为下一个镜头的首帧。 */
+  chain_frames?: boolean;
   language: string;
   target_seconds: number | null;
   /** 目标总时长（秒）；成片以实际配音为准。 */

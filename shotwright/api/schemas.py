@@ -61,6 +61,8 @@ class UpdateProject(_Body):
     video_type: VideoType | None = None
     look: Look | None = None
     """全片设定；整体替换。"""
+    chain_frames: bool | None = None
+    """首尾帧衔接开关。"""
     target_seconds: float | None = Field(None, gt=0, le=1800)
     """目标总时长（秒）。"""
     canvas: Canvas | None = None

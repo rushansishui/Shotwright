@@ -568,3 +568,23 @@ def test_inspection_is_skipped_without_vision_model(store, settings):
     project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=[shot]))
     added = visuals.refresh_candidates(store, settings, project, project.shots[0], confirm_charge=True)
     assert project.shots[0].visual.take(added[0]).score is None
+
+
+def test_chain_frames_uses_previous_last_frame(store, settings):
+    from shotwright.services import visuals
+
+    _varying(settings)
+    shots = [
+        Shot(text="第一句。", visual=ShotVisual(mode="ai", prompt="a cat walks")),
+        Shot(text="第二句。", visual=ShotVisual(mode="ai", prompt="the cat sits")),
+    ]
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=shots))
+    first = visuals.refresh_candidates(store, settings, project, project.shots[0], confirm_charge=True)[0]
+    visuals.refresh_candidates(store, settings, project, project.shots[1], confirm_charge=True)
+    assert _VaryingVideo.calls[-1]["first_frame"] is None  # 默认关闭
+
+    project.chain_frames = True
+    [second] = visuals.refresh_candidates(store, settings, project, project.shots[1], confirm_charge=True)
+    assert _VaryingVideo.calls[-1]["first_frame"] is not None
+    frame_id = project.assets[second].meta["first_frame"]
+    assert project.assets[frame_id].kind == "image" and project.assets[frame_id].meta["last_frame_of"] == first

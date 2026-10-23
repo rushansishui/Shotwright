@@ -512,6 +512,8 @@ class Project(_Model):
     """视频类型；为空表示没选（旧项目或只按文案拆镜头）。"""
     look: Look = Field(default_factory=Look)
     """全片设定：主体代号与外观、场景、视觉风格、禁止项。"""
+    chain_frames: bool = False
+    """首尾帧衔接：生成 AI 视频时，用上一个 AI 镜头的最后一帧作为首帧（没有手动指定首帧时）。"""
     language: str = "zh-CN"
     """视频内容的语言（BCP-47，例如 zh-CN、en-US），决定文案语言、默认配音和字幕字体。"""
     target_seconds: float | None = Field(None, gt=0, le=1800)

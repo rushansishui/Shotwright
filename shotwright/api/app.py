@@ -387,6 +387,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 "subject",
                 "video_type",
                 "look",
+                "chain_frames",
                 "target_seconds",
                 "canvas",
                 "voice",

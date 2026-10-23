@@ -112,6 +112,15 @@ export function LookSection({ project, run }: LookSectionProps) {
         {invalid && <span className="hint error small">{t("look.badCode")}</span>}
         {dirty && !invalid && <span className="muted small">{t("look.unsaved")}</span>}
       </div>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={!!project.chain_frames}
+          onChange={(e) => run(() => api.updateProject(project.id, { chain_frames: e.target.checked }))}
+        />
+        {t("look.chainFrames")}
+      </label>
+      <p className="muted small">{t("look.chainFramesHint")}</p>
       {(["scene", "style", "avoid"] as const).map((key) => (
         <label className="look-field" key={key}>
           <span className="label">{t(`look.${key}` as MessageKey)}</span>
