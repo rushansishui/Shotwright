@@ -759,3 +759,29 @@ def test_checkup_lists_render_risks(store, settings, tmp_path, client):
     data = client.get(f"/api/v2/projects/{project.id}/checkup").json()
     first = next(item for item in data["issues"] if item["code"] == "short_footage")
     assert first["shot"] == 1 and first["params"]["footage"] == 1.0
+
+
+def test_structure_roles_and_suggested_sources():
+    import json
+
+    from shotwright.services import storyboard
+
+    data = json.loads(_board_reply())
+    data["shots"][0]["role"] = "hook"
+    data["shots"][1]["role"] = "scene"
+    llm = _RecordingLLM(json.dumps(data, ensure_ascii=False))
+    board = storyboard.write_storyboard(llm, "x", video_type="product_ad")
+    assert "痛点或效果对比" in llm.messages[0][0]["content"]
+    assert [s.role for s in board.shots] == ["hook", "scene"]
+    storyboard.suggest_sources(board.shots, {"ai"})
+    assert [s.visual.mode for s in board.shots] == ["ai", "stock"]
+    storyboard.suggest_sources(board.shots, set())
+    assert board.shots[0].visual.mode == "ai"  # 已经设过的不会被改回去
+
+
+def test_available_sources_follow_configuration(settings):
+    from shotwright.services import visuals
+
+    assert visuals.available_sources(settings) == {"ai", "image"}  # 测试里的假服务都不需要配置
+    settings.defaults["video_gen"] = "seedance"
+    assert "ai" not in visuals.available_sources(settings)

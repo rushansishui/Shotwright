@@ -10,6 +10,7 @@ import type {
   Providers,
   RenderResult,
   Shot,
+  ShotRole,
   VersionInfo,
   VideoType,
   VisualPatch,
@@ -105,7 +106,7 @@ export const api = {
   updateShot: (
     id: string,
     shotId: string,
-    body: { text?: string; duration?: number; clear_duration?: boolean; visual?: VisualPatch },
+    body: { text?: string; duration?: number; clear_duration?: boolean; role?: ShotRole; visual?: VisualPatch },
   ) => request<Project>(`/projects/${id}/shots/${shotId}`, json("PATCH", body)),
   deleteShot: (id: string, shotId: string) => request<Project>(`/projects/${id}/shots/${shotId}`, json("DELETE")),
   /** 收费的 AI 生成必须传 confirmCharge=true（用户已确认），否则后端返回 402。 */

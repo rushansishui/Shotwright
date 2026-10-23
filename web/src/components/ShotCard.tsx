@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { assetUrl, estimateSeconds, type GenerateOptions } from "../api";
 import { providerName, useI18n } from "../i18n";
 import type { MessageKey } from "../messages";
-import type { Asset, CameraMove, Project, ProviderInfo, Shot, Take, VisualMode, VisualPatch } from "../types";
+import type { Asset, CameraMove, Project, ProviderInfo, Shot, ShotRole, Take, VisualMode, VisualPatch } from "../types";
 import { Icon, Segmented } from "./Controls";
 import { ShotEdit } from "./ShotEdit";
 
@@ -42,6 +42,7 @@ function TakeBadge({ takes, assetId }: { takes: Take[]; assetId: string }) {
 }
 
 const MODES: VisualMode[] = ["stock", "ai", "image", "upload", "color"];
+const ROLES: ShotRole[] = ["hook", "product", "demo", "scene", "people", "explain", "talking", "cta"];
 const CAMERAS: CameraMove[] = ["auto", "static", "push_in", "pull_out", "pan", "truck", "orbit", "crane", "handheld"];
 
 export function ShotCard(props: {
@@ -57,7 +58,7 @@ export function ShotCard(props: {
   /** 服务 id → 画面来源，用来按当前来源筛选候选素材。 */
   sourceModes: Record<string, VisualMode>;
   onFocus: () => void;
-  onUpdate: (body: { text?: string; visual?: VisualPatch }) => void;
+  onUpdate: (body: { text?: string; role?: ShotRole; visual?: VisualPatch }) => void;
   /** ``patch`` 是还没失焦保存的提示词，先存好再生成。 */
   onCandidates: (confirmCharge?: boolean, patch?: VisualPatch, editSelected?: boolean, options?: GenerateOptions) => void;
   /** 配置了大模型时可以让 AI 改写这个镜头的画面。 */
@@ -208,6 +209,22 @@ export function ShotCard(props: {
           {t("shot.duration", { n: seconds })}
           {exceedsMax ? ` · ${t("shot.overMaxDurationShort", { max: maxDuration })}` : ""}
         </span>
+        <select
+          className="role-select"
+          aria-label={t("shot.role")}
+          title={t("shot.roleHint")}
+          value={shot.role ?? ""}
+          onChange={(e) => e.target.value && props.onUpdate({ role: e.target.value as ShotRole })}
+        >
+          <option value="" disabled>
+            {t("shot.role")}
+          </option>
+          {ROLES.map((role) => (
+            <option key={role} value={role}>
+              {t(`shot.role.${role}` as MessageKey)}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="shot-main">

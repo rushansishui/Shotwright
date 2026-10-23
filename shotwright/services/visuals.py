@@ -276,6 +276,21 @@ def check_budget(
         )
 
 
+def available_sources(settings: Settings) -> set[str]:
+    """已配置好默认生成服务的画面来源（ai、image），用来给新分镜选默认来源。"""
+    result = set()
+    for kind, mode in (("video_gen", "ai"), ("image_gen", "image")):
+        chosen = settings.default_provider(kind)
+        if not chosen:
+            continue
+        try:
+            if registry.is_configured(registry.spec(kind, chosen), settings):
+                result.add(mode)
+        except KeyError:
+            continue
+    return result
+
+
 def apply_quality(settings: Settings, provider: object, provider_id: str | None, quality: Quality) -> str:
     """按草稿 / 成片档设置生成分辨率，返回实际使用的分辨率（Provider 不支持时返回空字符串）。
 

@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { api } from "../api";
-import type { Aspect, SubtitleStyle, VisualMode, VisualPatch } from "../types";
+import type { Aspect, ShotRole, SubtitleStyle, VisualMode, VisualPatch } from "../types";
 import { Section, Segmented, Slider } from "./Controls";
 import { providerName, useI18n } from "../i18n";
 import { RenderPanel } from "./RenderPanel";
@@ -187,7 +187,7 @@ export function Editor({ projectId }: { projectId: string }) {
                 aiImage={aiImage}
                 sourceModes={sourceModes}
                 onFocus={() => setActiveIndex(index)}
-                onUpdate={(body: { text?: string; visual?: VisualPatch }) => run(() => api.updateShot(id, shot.id, body))}
+                onUpdate={(body: { text?: string; role?: ShotRole; visual?: VisualPatch }) => run(() => api.updateShot(id, shot.id, body))}
                 onCandidates={(confirmCharge, patch, editSelected, options) =>
                   run(async () => {
                     // 还没失焦保存的提示词先存好，再生成，避免用旧提示词花钱。

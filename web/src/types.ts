@@ -32,6 +32,8 @@ export type FillMode = "slow_hold" | "hold" | "loop";
 /** 镜头运动：自动、固定、推、拉、摇、移（跟拍）、环绕、升降、手持。 */
 export type CameraMove = "auto" | "static" | "push_in" | "pull_out" | "pan" | "truck" | "orbit" | "crane" | "handheld";
 
+export type ShotRole = "hook" | "product" | "demo" | "scene" | "people" | "explain" | "talking" | "cta";
+
 export type SubjectKind = "product" | "person" | "object" | "place";
 
 export interface LookSubject {
@@ -102,6 +104,8 @@ export interface Shot {
   text: string;
   duration: number | null;
   visual: ShotVisual;
+  /** 镜头类型：开场钩子、产品亮相、使用演示、场景氛围、人物、原理示意、口播、结尾引导。 */
+  role?: ShotRole | null;
   voice: VoiceSettings | null;
   status: string;
   error: string | null;

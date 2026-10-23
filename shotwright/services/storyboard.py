@@ -64,6 +64,7 @@ SYSTEM_PROMPT = """你是短视频编导兼分镜师。根据视频类型和诉�
 - 每个镜头 1–2 句话，朗读 3–8 秒。
 
 三、每个镜头
+- role：镜头类型，取 hook（开场钩子）/ product（产品亮相）/ demo（使用演示）/ scene（场景氛围）/ people（人物）/ explain（原理示意）/ talking（口播）/ cta（结尾引导）之一。{structure}
 - text：这个镜头的文案。
 - terms：2–3 个英文素材检索词（用于图库，具体、可拍到的画面，例如 "city night traffic"）。
 - prompt：用{plang}写这个镜头的画面描述，{prompt_len}。依次写清：主体（用代号指代，例如「P1 放在浅色木桌中央」）、动作（按镜头时长拆成 2–3 个先后发生的动作）、场景细节、构图与景别（特写 / 近景 / 中景 / 全景）、光线。不要写运镜和全片风格（另有字段），不要出现品牌名和画面文字。
@@ -73,7 +74,7 @@ SYSTEM_PROMPT = """你是短视频编导兼分镜师。根据视频类型和诉�
 - 相邻镜头要接得上：同一主体始终用同一个代号，景别有变化，动作有延续。
 
 只输出 JSON，不要任何解释，格式：
-{{"title": "标题", "look": {{"subjects": [{{"code": "P1", "name": "名称", "kind": "product", "appearance": "外观"}}], "scene": "场景", "style": "风格", "avoid": "禁止项"}}, "shots": [{{"text": "文案", "terms": ["..."], "prompt": "画面描述", "still": "静态画面", "camera": "push_in", "link": "衔接"}}]}}"""
+{{"title": "标题", "look": {{"subjects": [{{"code": "P1", "name": "名称", "kind": "product", "appearance": "外观"}}], "scene": "场景", "style": "风格", "avoid": "禁止项"}}, "shots": [{{"role": "hook", "text": "文案", "terms": ["..."], "prompt": "画面描述", "still": "静态画面", "camera": "push_in", "link": "衔接"}}]}}"""
 
 _PROMPT_LANG = {"zh": "中文", "en": "英文"}
 _PROMPT_LEN = {"zh": "约 120–200 字", "en": "60–120 个英文单词"}
@@ -82,6 +83,29 @@ _MIN_PROMPT = {"zh": 90, "en": 45}
 """自检时画面描述的最低长度（中文按字，英文按词），略低于要求，给模型留余地。"""
 _ASPECT_NAMES = {"9:16": "竖屏 9:16", "16:9": "横屏 16:9", "1:1": "方形 1:1"}
 _ROLE_NAMES = {"product": "产品", "person": "人物", "logo": "Logo", "style": "风格"}
+STRUCTURES: dict[str, str] = {
+    "product_ad": "按这个结构安排镜头：hook（痛点或效果对比，前 3 秒）→ product（产品亮相）→ demo（逐个演示卖点，每个卖点 1–2 个镜头）→ people（真实使用场景或用户反馈）→ cta（价格与行动引导）。",
+    "brand": "按这个结构安排镜头：hook（引人入胜的画面或一句理念）→ scene / people（品牌故事，按时间或人物展开）→ product（作品或产品特写）→ cta（理念落点与 Logo）。",
+    "explainer": "按这个结构安排镜头：hook（抛出问题或反常识现象）→ explain（逐条讲原理，每条配示意画面）→ demo（实际例子或对比）→ cta（结论与实用建议）。",
+    "talking": "按这个结构安排镜头：hook（主讲人一句话开场）→ talking（观点或步骤，主讲人出镜为主）→ 讲到具体事物时插入 demo / scene 画面 → cta（总结与互动提问）。",
+    "footage": "按原片内容安排镜头：hook（原片里最吸引人的一刻）→ product / demo（原片主体和动作）→ 原片不够时补 scene 镜头 → cta（结尾引导）。",
+}
+"""各视频类型的叙事结构，写进分镜提示词。"""
+
+ROLE_SOURCES: dict[str, str] = {
+    "hook": "ai",
+    "product": "ai",
+    "demo": "ai",
+    "cta": "ai",
+    "explain": "image",
+    "scene": "stock",
+    "people": "stock",
+    "talking": "stock",
+}
+"""镜头类型对应的默认画面来源：产品相关的镜头用 AI 生成（能参照产品图），氛围和人物用素材库，
+原理示意用 AI 图片。对应的生成服务没配置时一律用素材检索。"""
+
+_ROLES = set(ROLE_SOURCES)
 _CAMERAS = {"static", "push_in", "pull_out", "pan", "truck", "orbit", "crane", "handheld"}
 _NEEDS_SUBJECTS = {"product_ad", "brand", "talking", "footage"}
 
@@ -164,9 +188,11 @@ def _parse(data: dict, subject: str) -> Storyboard:
             continue
         terms = [str(t).strip() for t in item.get("terms") or [] if str(t).strip()][:5]
         camera = str(item.get("camera") or "auto").strip().lower()
+        role = str(item.get("role") or "").strip().lower()
         result.append(
             Shot(
                 text=text[:500],
+                role=role if role in _ROLES else None,  # type: ignore[arg-type]
                 visual=ShotVisual(
                     mode="stock",
                     terms=terms,
@@ -214,6 +240,17 @@ def _parse_look(raw) -> Look:
         style=str(raw.get("style") or ""),
         avoid=str(raw.get("avoid") or ""),
     )
+
+
+def suggest_sources(shots: list[Shot], available: set[str]) -> None:
+    """按镜头类型给每个镜头选默认画面来源。``available`` 是已配置的来源（ai、image）。
+
+    只是默认值：AI 来源仍然要用户确认收费才会生成，没确认时渲染会改用素材检索。
+    """
+    for shot in shots:
+        wanted = ROLE_SOURCES.get(shot.role or "", "stock")
+        if wanted in available:
+            shot.visual.mode = wanted  # type: ignore[assignment]
 
 
 def check_storyboard(
@@ -266,6 +303,7 @@ def write_storyboard(
         plang=_PROMPT_LANG[lang],
         prompt_len=_PROMPT_LEN[lang],
         still_len=_STILL_LEN[lang],
+        structure=STRUCTURES.get(video_type or "", ""),
     )
     messages = [
         {"role": "system", "content": system},

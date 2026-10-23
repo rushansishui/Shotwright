@@ -376,6 +376,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             project.title = project.title or board.title
             project.shots = board.shots
             project.look = board.look
+            if body.video_type:
+                storyboard.suggest_sources(project.shots, visuals.available_sources(settings))
         elif body.mode == "split":
             if not body.script.strip():
                 raise HTTPException(422, "请填写视频文案")
@@ -511,6 +513,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             shot = project.shot(_id(shot_id))
             if body.text is not None:
                 shot.text = body.text
+            if body.role is not None:
+                shot.role = body.role
             if body.clear_duration:
                 shot.duration = None
             elif body.duration is not None:

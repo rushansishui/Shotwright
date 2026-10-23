@@ -57,6 +57,8 @@ VIDEO_TYPE_NAMES: dict[str, str] = {
     "talking": "口播",
     "footage": "原片改造",
 }
+ShotRole = Literal["hook", "product", "demo", "scene", "people", "explain", "talking", "cta"]
+"""镜头类型：开场钩子、产品亮相、使用演示、场景氛围、人物、原理示意、口播、结尾引导。"""
 ShotStatus = Literal["draft", "ready", "rendering", "done", "failed"]
 
 ReferenceRole = Literal["product", "person", "logo", "style"]
@@ -397,6 +399,8 @@ class Shot(_Model):
     duration: float | None = Field(None, gt=0, le=120)
     """None 表示跟随配音时长。"""
     visual: ShotVisual = Field(default_factory=ShotVisual)
+    role: ShotRole | None = None
+    """镜头类型；写分镜时按视频类型的叙事结构给出，用来选默认的画面来源。"""
     voice: VoiceSettings | None = None
     """单独覆盖这个镜头的配音设置；为空时用项目设置。"""
     status: ShotStatus = "draft"

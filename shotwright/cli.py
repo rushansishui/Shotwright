@@ -77,6 +77,8 @@ def cmd_new(args) -> int:
             aspect=args.aspect,
         )
         project.title, project.shots, project.look = board.title, board.shots, board.look
+        if args.type:
+            storyboard.suggest_sources(project.shots, visuals.available_sources(settings))
         for issue in board.issues:
             print(f"分镜自检：{issue}", file=sys.stderr)
     else:

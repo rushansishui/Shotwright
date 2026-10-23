@@ -1270,3 +1270,15 @@ input[type="color"] {
   text-align: left;
   vertical-align: baseline;
 }
+
+.role-select {
+  max-width: 100%;
+  margin-top: 4px;
+  padding: 2px 4px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted);
+}

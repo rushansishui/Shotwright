@@ -15,6 +15,7 @@ from shotwright.core.models import (
     Look,
     Overlay,
     ReferenceAsset,
+    ShotRole,
     SubtitleStyle,
     TransitionSettings,
     VideoType,
@@ -117,6 +118,7 @@ class UpdateShot(_Body):
     duration: float | None = Field(None, gt=0, le=120)
     clear_duration: bool = False
     visual: VisualPatch | None = None
+    role: ShotRole | None = None
     voice: VoiceSettings | None = None
     clear_voice: bool = False
 
