@@ -112,10 +112,15 @@ export const api = {
   /** 下载选中的候选，注册为素材并设为当前背景音乐，返回更新后的项目。 */
   bgmDownload: (id: string, candidate: BgmCandidate) =>
     request<Project>(`/projects/${id}/bgm/download`, json("POST", candidate)),
-  upload: (id: string, file: File) => {
+  /** 上传素材。`asAudio` 用于背景音乐：音乐文件常装在视频容器里，需要按音频登记。 */
+  upload: (id: string, file: File, asAudio = false) => {
     const form = new FormData();
     form.append("file", file);
-    return request<{ id: string; kind: string }>(`/projects/${id}/assets`, { method: "POST", body: form });
+    const query = asAudio ? "?as_audio=true" : "";
+    return request<{ id: string; kind: string }>(`/projects/${id}/assets${query}`, {
+      method: "POST",
+      body: form,
+    });
   },
   /** 导入原片并按画面变化自动切成镜头。 */
   importFootage: (id: string, file: File, replaceShots = false) => {

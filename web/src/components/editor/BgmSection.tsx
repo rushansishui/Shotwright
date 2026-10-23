@@ -27,7 +27,9 @@ export function BgmSection({ project, run, setError, draft, setDraft }: BgmSecti
 
   async function uploadBgm(file: File) {
     try {
-      const asset = await api.upload(id, file);
+      // 按音频登记：音乐文件常装在视频容器里（带封面的 mp4/m4a、MV 片段），
+      // 走普通上传会被当成视频素材，背景音乐这边就选不了。
+      const asset = await api.upload(id, file, true);
       if (asset.kind !== "audio") throw new Error(t("editor.bgmNotAudio"));
       await run(() => api.updateProject(id, { bgm: { ...project.bgm, asset_id: asset.id } }));
     } catch (e) {

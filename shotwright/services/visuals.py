@@ -148,22 +148,67 @@ def fetch_stock_candidates(
             break
     seen = {project.assets[a].meta.get("remote_id") for a in shot.visual.candidates if a in project.assets}
     added: list[str] = []
+    failed = 0
+    last_error = ""
     with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
         for index, candidate in enumerate(found):
             if candidate.remote_id in seen:
                 continue
-            path = provider.download(candidate, Path(temp) / f"c{index}")
-            meta = {**candidate.meta, "remote_id": candidate.remote_id, "preview_url": candidate.preview_url}
-            asset = _register_media(
-                store, project, path, source=candidate.provider, folder="stock", meta=meta
-            )
+            try:
+                path = _download_with_retry(provider, candidate, Path(temp) / f"c{index}")
+                meta = {**candidate.meta, "remote_id": candidate.remote_id, "preview_url": candidate.preview_url}
+                asset = _register_media(
+                    store, project, path, source=candidate.provider, folder="stock", meta=meta
+                )
+            except (ProviderError, MediaError) as exc:
+                # 单个候选下载失败不该拖垮整批：跳过它，继续下一个。
+                failed += 1
+                last_error = str(exc)
+                log.warning("项目 %s：候选 %s 下载失败，跳过：%s", project.id, candidate.remote_id, exc)
+                continue
             added.append(asset.id)
             if len(added) >= limit:
                 break
+    if failed:
+        log.warning(
+            "项目 %s：%d 个候选素材下载失败，已跳过（%s）", project.id, failed, last_error
+        )
     if not added and not shot.visual.candidates:
+        if failed:
+            raise ProviderError(
+                f"素材下载失败（{last_error}）。素材库可能正在限流，请稍等几秒再试"
+            )
         raise ProviderError("没有找到合适的素材，试试换几个检索词")
+    if added and failed:
+        # 有成功也有失败时，在镜头上记一条提示，让用户知道候选不全。
+        shot.error = f"{failed} 个候选下载失败，已跳过"[:200]
     _attach(shot, added)
     return added
+
+
+def _download_with_retry(
+    provider: StockProvider, candidate: StockCandidate, output: Path, *, attempts: int = 2
+) -> Path:
+    """下载单个候选素材。连接被远端掐断时短暂退避后重试一次。
+
+    素材库的 CDN 在短时间内收到大量请求时会直接断开连接（RemoteProtocolError），
+    等几百毫秒往往就恢复了，比让整批失败体验好得多。
+    """
+    last: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            return provider.download(candidate, output)
+        except ProviderError as exc:
+            last = exc
+            message = str(exc)
+            # 只有网络类错误值得重试；HTTP 4xx、文件过大等重试也没用。
+            retryable = any(
+                token in message for token in ("RemoteProtocolError", "ConnectError", "ReadTimeout", "Timeout")
+            )
+            if not retryable or attempt == attempts - 1:
+                raise
+            time.sleep(0.6 * (attempt + 1))
+    raise last or ProviderError("素材下载失败")
 
 
 def _provider_id(settings: Settings, kind: str, shot: Shot) -> str | None:
@@ -517,14 +562,36 @@ def _attach(shot: Shot, asset_ids: list[str], *, select: bool = False) -> None:
         shot.visual.selected = asset_ids[0]
 
 
-def add_upload(store: ProjectStore, project: Project, path: Path, *, filename: str) -> Asset:
-    """登记用户上传的文件（画面或音频）。"""
+def add_upload(
+    store: ProjectStore, project: Project, path: Path, *, filename: str, prefer_audio: bool = False
+) -> Asset:
+    """登记用户上传的文件（画面或音频）。
+
+    ``prefer_audio`` 用于背景音乐：有些音乐文件装在视频容器里（带封面的 mp4/m4a、
+    MV 片段），按画面登记会变成视频素材，背景音乐那边就选不了。这类文件按要求
+    直接当音频登记，渲染时本来也只取它的音轨。
+    """
     try:
         info = probe(path)
     except MediaError as exc:
         raise ProviderError("无法识别上传的文件，请上传常见的视频、图片或音频格式") from exc
     suffix = Path(filename).suffix.lower()
-    if info.has_video and suffix not in {".mp3", ".m4a", ".wav", ".aac", ".flac", ".ogg"}:
+    audio_suffixes = {".mp3", ".m4a", ".wav", ".aac", ".flac", ".ogg"}
+    if prefer_audio:
+        if not info.has_audio:
+            raise ProviderError("这个文件里没有音轨，无法作为背景音乐")
+        return store.add_asset(
+            project,
+            path,
+            kind="audio",
+            source="upload",
+            suffix=suffix or ".mp3",
+            duration=info.duration,
+            meta={"filename": filename[:200]},
+            move=True,
+            folder="upload",
+        )
+    if info.has_video and suffix not in audio_suffixes:
         return _register_media(
             store, project, path, source="upload", folder="upload", meta={"filename": filename[:200]}
         )

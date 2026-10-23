@@ -608,7 +608,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
     # ---- 素材 ---------------------------------------------------------------
 
     @api.post("/projects/{project_id}/assets", status_code=201)
-    def upload_asset(project_id: str, file: UploadFile = File(...)):
+    def upload_asset(project_id: str, file: UploadFile = File(...), as_audio: bool = False):
+        """上传素材。``as_audio=true`` 时按背景音乐处理（音乐文件常装在视频容器里）。"""
         _id(project_id)
         if not store.exists(project_id):
             raise ProjectNotFound(project_id)
@@ -624,7 +625,9 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     handle.write(chunk)
             with store.lock(project_id):
                 project = store.load(project_id)
-                asset = visuals.add_upload(store, project, path, filename=filename)
+                asset = visuals.add_upload(
+                    store, project, path, filename=filename, prefer_audio=as_audio
+                )
                 store.save(project)
         return asset
 
