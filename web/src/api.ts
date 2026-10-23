@@ -165,11 +165,27 @@ export const renderUrl = (projectId: string, renderId: string, name: string) =>
   `${BASE}/projects/${projectId}/renders/${renderId}/${name}`;
 
 /** 与后端 SilentTTS.estimate_seconds 一致的时长估算。 */
+const PAUSE_MARK = /\[(?:停顿|pause)(?:\s+(\d+(?:\.\d+)?))?\]/gi;
+const EMPHASIS_MARK = /\*([^*\n]{1,60})\*/g;
+
+/** 去掉配音标注（[停顿]、*强调*），和后端 services/speech.plain 一致。 */
+export function plainText(text: string): string {
+  return text.replace(PAUSE_MARK, "").replace(EMPHASIS_MARK, "$1").trim();
+}
+
+/** 标注带来的额外静音（秒）。 */
+function markPauses(text: string): number {
+  let total = 0;
+  for (const match of text.matchAll(PAUSE_MARK)) total += Math.min(3, Math.max(0.1, match[1] ? Number(match[1]) : 0.5));
+  total += 0.12 * (text.match(EMPHASIS_MARK)?.length ?? 0);
+  return total;
+}
+
 export function estimateSeconds(shot: Shot, rate: number): number {
   if (shot.duration) return shot.duration;
-  const cjk = (shot.text.match(/[぀-ヿ㐀-䶿一-鿿가-힯]/g) || []).length;
-  const words = (shot.text.replace(/[぀-ヿ㐀-䶿一-鿿가-힯]/g, " ").match(/[A-Za-z0-9']+/g) || [])
-    .length;
-  const seconds = Math.max(1.5, (cjk / 4.5 + words / 2.6) / Math.max(rate, 0.1));
+  const text = plainText(shot.text);
+  const cjk = (text.match(/[぀-ヿ㐀-䶿一-鿿가-힯]/g) || []).length;
+  const words = (text.replace(/[぀-ヿ㐀-䶿一-鿿가-힯]/g, " ").match(/[A-Za-z0-9']+/g) || []).length;
+  const seconds = Math.max(1.5, (cjk / 4.5 + words / 2.6) / Math.max(rate, 0.1)) + markPauses(shot.text);
   return Math.round((seconds + 0.25) * 10) / 10;
 }

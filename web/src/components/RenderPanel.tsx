@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, assetUrl, estimateSeconds, renderUrl } from "../api";
+import { api, assetUrl, estimateSeconds, plainText, renderUrl } from "../api";
 import { useI18n } from "../i18n";
 import { Segmented } from "./Controls";
 import type { MessageKey } from "../messages";
@@ -40,7 +40,7 @@ function Preview({ project, shotIndex }: { project: Project; shotIndex: number }
               paintOrder: "stroke fill",
             }}
           >
-            {shot.text.replace(/[，。,]$/u, "").slice(0, 34)}
+            {plainText(shot.text).replace(/[，。,]$/u, "").slice(0, 34)}
           </span>
         </div>
       )}

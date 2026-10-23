@@ -186,7 +186,7 @@ export const zh = {
   "shot.confirm.modify": "为镜头 {n} 按提示词修改画面？{name} 按次收费，提交后即使失败也可能扣费。",
   "shot.duration": "约 {n} 秒",
   "shot.textLabel": "镜头 {n} 文案",
-  "shot.textPlaceholder": "这个镜头的口播文案",
+  "shot.textPlaceholder": "这个镜头的口播文案。可以写 [停顿] 或 [停顿 1.2] 加停顿，用 *词语* 标出重读",
   "shot.source": "画面来源",
   "shot.notConfigured": "还没有配置{name}服务，见 config.toml",
   "shot.unlock": "解锁画面",
@@ -579,7 +579,7 @@ export const en: Record<MessageKey, string> = {
   "shot.confirm.modify": "Modify shot {n} with this prompt? {name} charges per run and may bill even if it fails.",
   "shot.duration": "~{n}s",
   "shot.textLabel": "Shot {n} script",
-  "shot.textPlaceholder": "Voice-over for this shot",
+  "shot.textPlaceholder": "Voice-over for this shot. Add [pause] or [pause 1.2] for a pause, *word* to stress a word",
 
   "take.version": "v{n}",
   "take.issue": "Visual check: {issue}. Try another candidate or regenerate.",

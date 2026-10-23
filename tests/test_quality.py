@@ -814,10 +814,45 @@ def test_stock_prefers_resolution_and_ranks_by_vision(store, settings):
     settings.defaults.update({"stock": "sized", "llm": "seer"})
     shot = Shot(text="城市夜景。", visual=ShotVisual(mode="stock", terms=["city night"]))
     project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=[shot]))
-    _Seer.replies[:] = ['{"items": [{"index": 1, "relevance": 0.9, "text": true}, {"index": 2, "relevance": 0.7}]}']
+    _Seer.replies[:] = [
+        '{"items": [{"index": 1, "relevance": 0.9, "text": true}, {"index": 2, "relevance": 0.7}]}'
+    ]
     added = visuals.fetch_stock_candidates(store, settings, project, project.shots[0], limit=2)
     remote = [project.assets[a].meta["remote_id"] for a in added]
     # 低分辨率的被排除在前两个之外；带水印的排到最后。
     assert remote == ["b", "a"]
     assert project.assets[added[1]].meta["issue"] == "画面里有水印或文字"
     assert project.shots[0].visual.selected == added[0]
+
+
+def test_speech_marks_parse_and_strip():
+    from shotwright.services import speech
+
+    text = "早上没时间？[停顿]试试这台*便携咖啡机*。[停顿 1.2][pause]三分钟出咖啡。"
+    parts = speech.segments(text)
+    assert [(p.text, p.pause_before, p.emphasis) for p in parts] == [
+        ("早上没时间？", 0.0, False),
+        ("试试这台", 0.5, False),
+        ("便携咖啡机", 0.12, True),
+        ("三分钟出咖啡。", 1.7, False),
+    ]
+    assert speech.plain(text) == "早上没时间？试试这台便携咖啡机。三分钟出咖啡。"
+    assert abs(speech.pause_seconds(text) - 2.32) < 1e-9
+    assert not speech.has_marks("普通文案。") and speech.segments("普通文案。")[0].pause_before == 0
+
+
+def test_marked_text_renders_pauses_and_clean_subtitles(store, settings):
+    from shotwright.pipeline.render import Renderer
+
+    plain_text = "第一句话说完。第二句话接上。"
+    marked = "第一句话说完。[停顿 1]第二句话*接上*。"
+    shots = [
+        Shot(text=plain_text, visual=ShotVisual(mode="color")),
+        Shot(text=marked, visual=ShotVisual(mode="color")),
+    ]
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=shots, loudness=None))
+    result = Renderer(store, settings).render(project.id)
+    plain_voice, marked_voice = (timing.voice_duration for timing in result.timings)
+    assert marked_voice > plain_voice + 0.9
+    srt = (store.render_dir(project.id, result.render_id) / "subtitles.srt").read_text(encoding="utf-8")
+    assert "[停顿" not in srt and "*" not in srt and "接上" in srt

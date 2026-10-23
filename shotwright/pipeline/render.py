@@ -36,7 +36,7 @@ from shotwright.media.ffmpeg import (
     run_ffmpeg,
 )
 from shotwright.providers.base import ProviderError
-from shotwright.services import visuals
+from shotwright.services import speech, visuals
 
 from .metadata import tag_video
 from .render_types import (
@@ -410,7 +410,7 @@ class Renderer:
         path = (fonts_dir / project.subtitle.font).resolve()
         if path.parent != fonts_dir or not path.is_file():
             raise RenderError(f"找不到字幕字体：{project.subtitle.font}")
-        text = "".join(shot.text for shot in project.shots)
+        text = "".join(speech.plain(shot.text) for shot in project.shots)
         chosen, missing = subs.pick_font(path, fonts_dir, text)
         if chosen != path:
             self.warnings.append(f"字幕字体 {path.name} 缺少部分文字，已改用 {chosen.name}")
@@ -434,7 +434,7 @@ class Renderer:
             spoken = min(timing.voice_duration, timing.duration)
             cues.extend(
                 subs.split_cues(
-                    shot.text,
+                    speech.plain(shot.text),
                     timing.start,
                     timing.start + spoken,
                     font_path=font,

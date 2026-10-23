@@ -18,8 +18,46 @@ from shotwright.core.store import ProjectStore, read_json, write_json
 from shotwright.media.ffmpeg import run_ffmpeg
 from shotwright.providers import registry
 from shotwright.providers.base import ProviderError, TTSProvider
+from shotwright.services import speech as marks
 
 from .render_types import AUDIO_ARGS, RenderError, StageRecord
+
+
+def _synthesize_marked(
+    tts: TTSProvider, text: str, voice, work: Path, cancel: threading.Event
+) -> tuple[Path, float, list[tuple[str, float, float]]]:
+    """有停顿或强调标注的文案：分段合成，段前插入静音，再拼成一条音频。
+
+    强调的段落语速稍慢、音量稍高；逐词时间戳按每段的起点平移后合并。
+    """
+    inputs: list[str] = []
+    labels: list[str] = []
+    words: list[tuple[str, float, float]] = []
+    cursor = 0.0
+    for index, segment in enumerate(marks.segments(text)):
+        if segment.pause_before > 0:
+            inputs += [
+                "-f", "lavfi", "-t", f"{segment.pause_before:.3f}",
+                "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+            ]
+            labels.append(f"[{len(labels)}:a]")
+            cursor += segment.pause_before
+        result = tts.synthesize(
+            segment.text,
+            voice=voice.voice,
+            rate=min(2.0, voice.rate * (marks.EMPHASIS_RATE if segment.emphasis else 1.0)),
+            volume=min(2.0, voice.volume * (marks.EMPHASIS_VOLUME if segment.emphasis else 1.0)),
+            output=work / f"part{index}",
+        )
+        inputs += ["-i", str(result.path)]
+        labels.append(f"[{len(labels)}:a]")
+        words += [(word.text, word.start + cursor, word.end + cursor) for word in result.words]
+        cursor += result.duration
+    output = work / "voice.m4a"
+    graph = "".join(f"{label}aresample=48000,aformat=channel_layouts=stereo[s{i}];" for i, label in enumerate(labels))
+    graph += "".join(f"[s{i}]" for i in range(len(labels))) + f"concat=n={len(labels)}:v=0:a=1[out]"
+    run_ffmpeg([*inputs, "-filter_complex", graph, "-map", "[out]", *AUDIO_ARGS, str(output)], cancel=cancel)
+    return output, round(cursor, 3), words
 
 
 def synthesize_shot(
@@ -70,18 +108,21 @@ def synthesize_shot(
         else:
             try:
                 tts: TTSProvider = registry.create("tts", provider_id, settings)  # type: ignore[assignment]
-                speech = tts.synthesize(
-                    text,
-                    voice=voice.voice,
-                    rate=voice.rate,
-                    volume=voice.volume,
-                    output=Path(temp) / "voice",
-                )
+                if marks.has_marks(text):
+                    path, duration, words = _synthesize_marked(tts, text, voice, Path(temp), cancel)
+                else:
+                    result = tts.synthesize(
+                        text,
+                        voice=voice.voice,
+                        rate=voice.rate,
+                        volume=voice.volume,
+                        output=Path(temp) / "voice",
+                    )
+                    path, duration = result.path, result.duration
+                    words = [(word.text, word.start, word.end) for word in result.words]
             except ProviderError as exc:
                 index = project.shots.index(shot) + 1
                 raise RenderError(f"镜头 {index} 配音失败：{exc}") from exc
-            path, duration = speech.path, speech.duration
-            words = [(word.text, word.start, word.end) for word in speech.words]
         filename = f"{fp}{path.suffix}"
         shutil.move(str(path), cache / filename)
     write_json(
