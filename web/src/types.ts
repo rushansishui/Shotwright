@@ -69,6 +69,8 @@ export interface ShotVisual {
   mode: VisualMode;
   terms: string[];
   prompt: string;
+  /** AI 图片和关键帧用的静态画面描述；为空时用 prompt。 */
+  image_prompt?: string;
   camera?: CameraMove;
   /** 衔接说明：开头怎样承接上一个镜头，结尾留给下一个镜头什么。 */
   link?: string;

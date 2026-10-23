@@ -87,6 +87,7 @@ class VisualPatch(_Body):
     mode: VisualMode | None = None
     terms: list[str] | None = Field(None, max_length=10)
     prompt: str | None = Field(None, max_length=2000)
+    image_prompt: str | None = Field(None, max_length=2000)
     camera: CameraMove | None = None
     link: str | None = Field(None, max_length=400)
     provider: str | None = None

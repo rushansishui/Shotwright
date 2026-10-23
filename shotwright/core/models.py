@@ -318,6 +318,8 @@ class ShotVisual(_Model):
     """stock 模式的检索词（建议英文）。"""
     prompt: str = ""
     """ai / image 模式的画面描述（只写这个镜头本身；全片设定、运镜和衔接在生成时自动拼上）。"""
+    image_prompt: str = ""
+    """AI 图片和关键帧用的静态画面描述（一个瞬间，不写动作过程）；为空时用 prompt。"""
     camera: CameraMove = "auto"
     """镜头运动；auto 表示由画面描述决定。"""
     link: str = ""

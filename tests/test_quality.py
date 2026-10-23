@@ -425,3 +425,25 @@ def test_generation_records_takes_and_prunes_with_candidates(store, settings):
     shot.visual.candidates = [second]
     visuals._attach(shot, [])
     assert [t.asset_id for t in shot.visual.takes] == [second]
+
+
+def test_image_prompt_is_used_for_images_and_falls_back():
+    from shotwright.services import prompting
+
+    project = Project()
+    shot = Shot(text="x", visual=ShotVisual(prompt="P1 被拿起后放下", image_prompt="P1 静置在木桌上"))
+    assert prompting.compose(project, shot, target="image").startswith("P1 静置在木桌上")
+    assert prompting.compose(project, shot).startswith("P1 被拿起后放下")
+    shot.visual.image_prompt = ""
+    assert prompting.compose(project, shot, target="image").startswith("P1 被拿起后放下")
+
+
+def test_storyboard_reads_still_prompt():
+    import json
+
+    from shotwright.services import storyboard
+
+    data = json.loads(_board_reply())
+    data["shots"][0]["still"] = "P1 静置在木桌上"
+    board = storyboard.write_storyboard(_RecordingLLM(json.dumps(data, ensure_ascii=False)), "x")
+    assert board.shots[0].visual.image_prompt == "P1 静置在木桌上"

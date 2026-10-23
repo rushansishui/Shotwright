@@ -58,7 +58,8 @@ export function ShotCard(props: {
   sourceModes: Record<string, VisualMode>;
   onFocus: () => void;
   onUpdate: (body: { text?: string; visual?: VisualPatch }) => void;
-  onCandidates: (confirmCharge?: boolean, prompt?: string, editSelected?: boolean) => void;
+  /** ``patch`` 是还没失焦保存的提示词，先存好再生成。 */
+  onCandidates: (confirmCharge?: boolean, patch?: VisualPatch, editSelected?: boolean) => void;
   onUpload: (file: File) => void;
   onMove: (delta: number) => void;
   onInsert: () => void;
@@ -72,6 +73,7 @@ export function ShotCard(props: {
   const [terms, setTerms] = useState(visual.terms.join(", "));
   const [prompt, setPrompt] = useState(visual.prompt);
   const [link, setLink] = useState(visual.link ?? "");
+  const [still, setStill] = useState(visual.image_prompt ?? "");
   const fileInput = useRef<HTMLInputElement>(null);
   const { t, lang } = useI18n();
 
@@ -79,6 +81,19 @@ export function ShotCard(props: {
   useEffect(() => setTerms(visual.terms.join(", ")), [visual.terms]);
   useEffect(() => setPrompt(visual.prompt), [visual.prompt]);
   useEffect(() => setLink(visual.link ?? ""), [visual.link]);
+  useEffect(() => setStill(visual.image_prompt ?? ""), [visual.image_prompt]);
+  /** AI 图片用单独的静态画面描述，为空时沿用视频的画面描述。 */
+  const isImage = visual.mode === "image";
+  const promptValue = isImage ? still : prompt;
+  const setPromptValue = isImage ? setStill : setPrompt;
+  const unsavedPrompt = (): VisualPatch | undefined =>
+    isImage
+      ? still !== (visual.image_prompt ?? "")
+        ? { image_prompt: still }
+        : undefined
+      : prompt !== visual.prompt
+        ? { prompt }
+        : undefined;
 
   const generator = visual.mode === "ai" ? props.aiVideo : visual.mode === "image" ? props.aiImage : null;
   const modeOf = (asset: Asset | undefined): VisualMode | undefined => {
@@ -115,7 +130,7 @@ export function ShotCard(props: {
         : t("shot.confirm.image");
     const cost = generator.paid ? `\n${t("shot.confirm.cost", { name: providerName(generator, lang) })}` : "";
     if (window.confirm(t("shot.confirm.question", { n: index + 1, what }) + cost)) {
-      props.onCandidates(true, prompt !== visual.prompt ? prompt : undefined);
+      props.onCandidates(true, unsavedPrompt());
     }
   };
 
@@ -140,7 +155,7 @@ export function ShotCard(props: {
     if (!prompt.trim()) return;
     const name = props.aiVideo ? providerName(props.aiVideo, lang) : "";
     if (window.confirm(t("shot.confirm.modify", { n: index + 1, name }))) {
-      props.onCandidates(true, prompt !== visual.prompt ? prompt : undefined, true);
+      props.onCandidates(true, prompt !== visual.prompt ? { prompt } : undefined, true);
     }
   };
 
@@ -247,18 +262,19 @@ export function ShotCard(props: {
               id={`prompt-${shot.id}`}
               className="input prompt-area"
               rows={3}
-              value={prompt}
-              placeholder={
-                visual.mode === "ai" ? t("shot.promptVideo") : t("shot.promptImage")
-              }
+              value={promptValue}
+              placeholder={visual.mode === "ai" ? t("shot.promptVideo") : visual.prompt || t("shot.promptImage")}
               disabled={visual.locked}
-              onChange={(e) => setPrompt(e.target.value)}
-              onBlur={() => prompt !== visual.prompt && props.onUpdate({ visual: { prompt } })}
+              onChange={(e) => setPromptValue(e.target.value)}
+              onBlur={() => {
+                const patch = unsavedPrompt();
+                if (patch) props.onUpdate({ visual: patch });
+              }}
             />
             <button
               type="button"
               className="btn"
-              disabled={props.busy || visual.locked || !generator || !prompt.trim()}
+              disabled={props.busy || visual.locked || !generator || !(promptValue.trim() || (isImage && visual.prompt.trim()))}
               title={generator ? `${providerName(generator, lang)}${generator.paid ? t("common.paidSuffix") : ""}` : t("shot.noGenerator")}
               onClick={generate}
             >

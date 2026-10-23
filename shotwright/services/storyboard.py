@@ -67,15 +67,17 @@ SYSTEM_PROMPT = """你是短视频编导兼分镜师。根据视频类型和诉�
 - text：这个镜头的文案。
 - terms：2–3 个英文素材检索词（用于图库，具体、可拍到的画面，例如 "city night traffic"）。
 - prompt：用{plang}写这个镜头的画面描述，{prompt_len}。依次写清：主体（用代号指代，例如「P1 放在浅色木桌中央」）、动作（按镜头时长拆成 2–3 个先后发生的动作）、场景细节、构图与景别（特写 / 近景 / 中景 / 全景）、光线。不要写运镜和全片风格（另有字段），不要出现品牌名和画面文字。
+- still：用{plang}写这个镜头最有代表性的一个瞬间，用于 AI 图片和关键帧：静态画面，不写动作过程，{still_len}，同样用代号指代主体。
 - camera：运镜，取 static / push_in / pull_out / pan / truck / orbit / crane / handheld 之一。
 - link：用{plang}一句话写衔接：开头怎样承接上一个镜头（动作延续、视线延续、景别递进、相同元素或明确转场），结尾留给下一个镜头什么；第一个镜头写开场方式。
 - 相邻镜头要接得上：同一主体始终用同一个代号，景别有变化，动作有延续。
 
 只输出 JSON，不要任何解释，格式：
-{{"title": "标题", "look": {{"subjects": [{{"code": "P1", "name": "名称", "kind": "product", "appearance": "外观"}}], "scene": "场景", "style": "风格", "avoid": "禁止项"}}, "shots": [{{"text": "文案", "terms": ["..."], "prompt": "画面描述", "camera": "push_in", "link": "衔接"}}]}}"""
+{{"title": "标题", "look": {{"subjects": [{{"code": "P1", "name": "名称", "kind": "product", "appearance": "外观"}}], "scene": "场景", "style": "风格", "avoid": "禁止项"}}, "shots": [{{"text": "文案", "terms": ["..."], "prompt": "画面描述", "still": "静态画面", "camera": "push_in", "link": "衔接"}}]}}"""
 
 _PROMPT_LANG = {"zh": "中文", "en": "英文"}
 _PROMPT_LEN = {"zh": "约 120–200 字", "en": "60–120 个英文单词"}
+_STILL_LEN = {"zh": "约 60–100 字", "en": "40–70 个英文单词"}
 _MIN_PROMPT = {"zh": 90, "en": 45}
 """自检时画面描述的最低长度（中文按字，英文按词），略低于要求，给模型留余地。"""
 _ASPECT_NAMES = {"9:16": "竖屏 9:16", "16:9": "横屏 16:9", "1:1": "方形 1:1"}
@@ -169,6 +171,7 @@ def _parse(data: dict, subject: str) -> Storyboard:
                     mode="stock",
                     terms=terms,
                     prompt=str(item.get("prompt") or "").strip()[:1500],
+                    image_prompt=str(item.get("still") or "").strip()[:1000],
                     camera=camera if camera in _CAMERAS else "auto",  # type: ignore[arg-type]
                     link=str(item.get("link") or "").strip()[:400],
                 ),
@@ -262,6 +265,7 @@ def write_storyboard(
         length_rule=_length_rule(shots, duration),
         plang=_PROMPT_LANG[lang],
         prompt_len=_PROMPT_LEN[lang],
+        still_len=_STILL_LEN[lang],
     )
     messages = [
         {"role": "system", "content": system},

@@ -167,10 +167,10 @@ export function Editor({ projectId }: { projectId: string }) {
                 sourceModes={sourceModes}
                 onFocus={() => setActiveIndex(index)}
                 onUpdate={(body: { text?: string; visual?: VisualPatch }) => run(() => api.updateShot(id, shot.id, body))}
-                onCandidates={(confirmCharge, prompt, editSelected) =>
+                onCandidates={(confirmCharge, patch, editSelected) =>
                   run(async () => {
                     // 还没失焦保存的提示词先存好，再生成，避免用旧提示词花钱。
-                    if (prompt !== undefined) await api.updateShot(id, shot.id, { visual: { prompt } });
+                    if (patch !== undefined) await api.updateShot(id, shot.id, { visual: patch });
                     return api.candidates(id, shot.id, confirmCharge, editSelected);
                   }, shot.id)
                 }

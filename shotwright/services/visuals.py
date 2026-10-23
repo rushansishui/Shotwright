@@ -425,7 +425,7 @@ def generate_image_candidate(
     confirm_charge: bool = False,
 ) -> list[str]:
     """AI 图片：渲染时配合慢推镜头；也可以再作为 AI 视频的首帧。"""
-    if not shot.visual.prompt.strip():
+    if not (shot.visual.image_prompt.strip() or shot.visual.prompt.strip()):
         raise ProviderError("这个镜头没有画面提示词")
     provider_id = _provider_id(settings, "image_gen", shot)
     provider: ImageGenProvider = registry.create("image_gen", provider_id, settings)  # type: ignore[assignment]

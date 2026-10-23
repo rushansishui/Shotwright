@@ -130,7 +130,9 @@ def compose(project: Project, shot: Shot, *, target: Target = "video", prompt: s
     lang = prompt_language(project)
     words = _PHRASES[lang]
     look = project.look
-    body = (prompt if prompt is not None else shot.visual.prompt).strip()
+    if prompt is None:
+        prompt = (shot.visual.image_prompt or shot.visual.prompt) if target == "image" else shot.visual.prompt
+    body = prompt.strip()
     lines = [body] if body else []
     if target == "video":
         camera = CAMERA_PHRASES[lang].get(shot.visual.camera)
