@@ -205,6 +205,95 @@ def test_prompt_size_counts_words_and_cjk():
     assert prompt_size("白色咖啡机放在木桌上") == 5
 
 
+_GOOD_PROMPT_ZH = (
+    "P1 放在浅色木桌中央，清晨的阳光从左侧窗户斜照进来。一只手伸进画面按下 P1 正面的银色圆形按键，"
+    "指示灯亮起，几秒后深褐色的浓缩咖啡缓缓流进白色陶瓷杯，杯口升起细细的热气。近景，主体位于画面中下方，"
+    "背景是虚化的书架和绿植，暖色自然光，桌面上有一本摊开的笔记本和一支黑色钢笔，整体干净明亮。"
+)
+
+
+def _board_reply(prompt=_GOOD_PROMPT_ZH, link="开场：从桌面空镜切入"):
+    import json
+
+    return json.dumps(
+        {
+            "title": "一键咖啡",
+            "look": {
+                "subjects": [
+                    {
+                        "code": "P1",
+                        "name": "便携咖啡机",
+                        "kind": "product",
+                        "appearance": "哑光白色圆柱形机身",
+                    },
+                    {"code": "P1", "name": "重复", "kind": "product", "appearance": "x"},
+                    {"code": "1bad", "name": "非法代号"},
+                ],
+                "scene": "城市公寓",
+                "style": "明亮干净",
+                "avoid": "其他品牌",
+            },
+            "shots": [
+                {
+                    "text": "早上没时间？",
+                    "terms": ["coffee"],
+                    "prompt": prompt,
+                    "camera": "push_in",
+                    "link": link,
+                },
+                {"text": "一键出咖啡。", "terms": ["cup"], "prompt": prompt, "camera": "zoom", "link": link},
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+
+def test_write_storyboard_parses_look_camera_and_link():
+    from shotwright.services import storyboard
+
+    llm = _RecordingLLM(_board_reply())
+    board = storyboard.write_storyboard(llm, "卖咖啡机", video_type="product_ad", aspect="9:16", duration=8)
+    assert [s.code for s in board.look.subjects] == ["P1"]
+    assert board.look.subjects[0].appearance == "哑光白色圆柱形机身"
+    assert board.shots[0].visual.camera == "push_in" and board.shots[1].visual.camera == "auto"
+    assert board.shots[0].visual.link.startswith("开场")
+    assert board.issues == [] and len(llm.messages) == 1
+    user = llm.messages[0][-1]["content"]
+    assert "画面比例：竖屏 9:16" in user and "目标时长：约 8 秒" in user and "诉求原文" in user
+    assert "120–200 字" in llm.messages[0][0]["content"]
+
+
+def test_write_storyboard_rewrites_once_when_check_fails():
+    from shotwright.services import storyboard
+
+    class TwoReplies:
+        def __init__(self):
+            self.calls = []
+
+        def complete(self, messages, *, json_mode=False):
+            self.calls.append(messages)
+            return _board_reply(prompt="P2 很短", link="") if len(self.calls) == 1 else _board_reply()
+
+    llm = TwoReplies()
+    board = storyboard.write_storyboard(llm, "卖咖啡机", video_type="product_ad")
+    assert len(llm.calls) == 2
+    feedback = llm.calls[1][-1]["content"]
+    assert "画面描述只有" in feedback and "缺少衔接说明" in feedback and "P2" in feedback
+    assert board.issues == [] and board.shots[0].visual.prompt == _GOOD_PROMPT_ZH
+
+
+def test_check_storyboard_flags_duration_and_missing_subjects():
+    from shotwright.core.models import Look
+    from shotwright.services.storyboard import Storyboard, check_storyboard
+
+    board = Storyboard(
+        title="t", shots=[Shot(text="很短。", visual=ShotVisual(prompt="x", link="y"))], look=Look()
+    )
+    issues = check_storyboard(board, lang="en", duration=60, video_type="product_ad")
+    assert any("目标约 60 秒" in issue for issue in issues)
+    assert any("缺少主体" in issue for issue in issues)
+    assert any("个词" in issue for issue in issues)
+
 
 def test_compose_prompt_adds_look_camera_link_and_no_text():
     from shotwright.core.models import Look, LookSubject

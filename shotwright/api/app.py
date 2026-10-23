@@ -47,7 +47,7 @@ from shotwright.providers import registry
 from shotwright.providers.base import ChargeConfirmationRequired, ProviderError
 from shotwright.providers.tts.edge import VOICES
 from shotwright.services import cost as cost_service
-from shotwright.services import editing, footage, localize, music, storyboard, visuals
+from shotwright.services import editing, footage, localize, music, prompting, storyboard, visuals
 
 log = logging.getLogger("shotwright.api")
 
@@ -342,16 +342,19 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             if not body.subject.strip():
                 raise HTTPException(422, "请填写视频诉求")
             llm = registry.create("llm", None, settings)
-            title, shots = storyboard.generate_storyboard(
+            board = storyboard.write_storyboard(
                 llm,
                 body.subject.strip(),
                 language=lang.prompt_name,
+                prompt_lang=prompting.prompt_language(project),
                 shots=body.shots,
                 duration=body.duration,
                 video_type=body.video_type,
+                aspect=project.canvas.aspect,
             )
-            project.title = project.title or title
-            project.shots = shots
+            project.title = project.title or board.title
+            project.shots = board.shots
+            project.look = board.look
         elif body.mode == "split":
             if not body.script.strip():
                 raise HTTPException(422, "请填写视频文案")

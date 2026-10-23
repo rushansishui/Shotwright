@@ -22,7 +22,7 @@ from shotwright.core.models import Canvas, Project, VoiceSettings
 from shotwright.core.store import ProjectStore
 from shotwright.media.ffmpeg import measure_loudness
 from shotwright.providers import registry
-from shotwright.services import localize, storyboard
+from shotwright.services import localize, prompting, storyboard
 
 BRIEFS_FILE = ROOT_DIR / "resources" / "bench" / "briefs.json"
 
@@ -52,6 +52,8 @@ class CaseResult:
     """有衔接说明的相邻镜头占比。"""
     look: bool = False
     """项目有没有全片设定。"""
+    issues: list[str] = field(default_factory=list)
+    """分镜自检（重写一次后）仍然存在的问题。"""
     rendered: bool = False
     duration: float = 0.0
     loudness: float | None = None
@@ -83,6 +85,7 @@ class BenchReport:
             "prompt_min": min((case.prompt_min for case in ok), default=None),
             "link_coverage": mean([case.link_coverage for case in ok]),
             "look": mean([1.0 if case.look else 0.0 for case in ok]),
+            "issues": mean([float(len(case.issues)) for case in ok]),
             "loudness": mean(loud),
             "loudness_off_target": mean([abs(value + 14.0) for value in loud]),
             "fill_ratio": mean([case.fill_ratio for case in rendered]),
@@ -110,10 +113,9 @@ def project_metrics(project: Project, case: CaseResult) -> None:
     case.prompt_min = min(sizes, default=0)
     pairs = max(len(project.shots) - 1, 0)
     if pairs:
-        linked = sum(1 for shot in project.shots[1:] if (getattr(shot.visual, "link", "") or "").strip())
+        linked = sum(1 for shot in project.shots[1:] if shot.visual.link.strip())
         case.link_coverage = round(linked / pairs, 3)
-    look = getattr(project, "look", None)
-    case.look = bool(look and any(str(value).strip() for value in look.model_dump().values() if value))
+    case.look = not project.look.is_empty()
 
 
 def render_metrics(project: Project, timings: list, case: CaseResult) -> None:
@@ -178,13 +180,17 @@ def run_bench(
                 )
                 project.voice = VoiceSettings(provider=settings.default_provider("tts") or "edge")
                 localize.apply_language(project, language.code)
-                _title, project.shots = storyboard.generate_storyboard(
+                board = storyboard.write_storyboard(
                     llm,
                     brief["subject"],
                     language=language.prompt_name,
+                    prompt_lang=prompting.prompt_language(project),
                     duration=brief.get("target_seconds"),
                     video_type=brief.get("video_type"),
+                    aspect=aspect,
                 )
+                project.shots, project.look = board.shots, board.look
+                case.issues = board.issues
                 project = store.create(project)
                 case.project_id = project.id
                 project_metrics(project, case)
@@ -217,6 +223,7 @@ _LABELS = {
     "prompt_min": "画面描述最短（词）",
     "link_coverage": "衔接说明覆盖率",
     "look": "有全片设定的比例",
+    "issues": "分镜自检剩余问题（个 / 用例）",
     "loudness": "平均响度（LUFS）",
     "loudness_off_target": "响度偏离 -14 的平均值（LU）",
     "fill_ratio": "慢放 / 定格 / 循环占比",

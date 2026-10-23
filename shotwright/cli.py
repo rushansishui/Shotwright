@@ -26,7 +26,7 @@ from shotwright.logs import setup_logging
 from shotwright.media import ffmpeg
 from shotwright.pipeline.render import Renderer
 from shotwright.providers import registry
-from shotwright.services import localize, storyboard, visuals
+from shotwright.services import localize, prompting, storyboard, visuals
 
 
 def _store(args) -> tuple:
@@ -66,15 +66,19 @@ def cmd_new(args) -> int:
         if not args.subject:
             print("使用 --llm 时需要 --subject", file=sys.stderr)
             return 2
-        title, shots = storyboard.generate_storyboard(
-            registry.create("llm", None, settings),
+        board = storyboard.write_storyboard(
+            registry.create("llm", None, settings),  # type: ignore[arg-type]
             args.subject,
             language=languages.get(args.language).prompt_name,
+            prompt_lang=prompting.prompt_language(project),
             shots=args.shots,
             duration=args.duration,
             video_type=args.type,
+            aspect=args.aspect,
         )
-        project.title, project.shots = title, shots
+        project.title, project.shots, project.look = board.title, board.shots, board.look
+        for issue in board.issues:
+            print(f"分镜自检：{issue}", file=sys.stderr)
     else:
         script = Path(args.script_file).read_text(encoding="utf-8") if args.script_file else args.script
         if not script:
