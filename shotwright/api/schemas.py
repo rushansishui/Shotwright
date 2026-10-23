@@ -152,6 +152,16 @@ class CandidatesRequest(ChargeConsent):
     """草稿档用较低分辨率生成 AI 视频。"""
 
 
+class RewriteShot(_Body):
+    instruction: str = Field(..., min_length=1, max_length=500)
+    """一句改写要求，例如「改成俯拍特写，突出按键」。"""
+
+
+class ExpandRequest(_Body):
+    only_short: bool = True
+    """只补全画面描述太短或缺少衔接的镜头；为假时重写所有非纯色镜头。"""
+
+
 class CreateVersion(_Body):
     language: str = Field(..., max_length=40)
     """要生成的语言版本，例如 en-US。"""

@@ -1237,3 +1237,12 @@ input[type="color"] {
   flex: none;
   width: auto;
 }
+
+.expand-hint {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}

@@ -60,6 +60,9 @@ export function ShotCard(props: {
   onUpdate: (body: { text?: string; visual?: VisualPatch }) => void;
   /** ``patch`` 是还没失焦保存的提示词，先存好再生成。 */
   onCandidates: (confirmCharge?: boolean, patch?: VisualPatch, editSelected?: boolean, options?: GenerateOptions) => void;
+  /** 配置了大模型时可以让 AI 改写这个镜头的画面。 */
+  canRewrite?: boolean;
+  onRewrite?: (instruction: string) => void;
   onUpload: (file: File) => void;
   onMove: (delta: number) => void;
   onInsert: () => void;
@@ -75,6 +78,7 @@ export function ShotCard(props: {
   const [link, setLink] = useState(visual.link ?? "");
   const [still, setStill] = useState(visual.image_prompt ?? "");
   const [count, setCount] = useState(1);
+  const [instruction, setInstruction] = useState("");
   const [quality, setQuality] = useState<"draft" | "final">("final");
   const fileInput = useRef<HTMLInputElement>(null);
   const { t, lang } = useI18n();
@@ -300,6 +304,37 @@ export function ShotCard(props: {
               ) : (
                 t("shot.generate")
               )}
+            </button>
+          </div>
+        )}
+        {props.canRewrite && (visual.mode === "ai" || visual.mode === "image") && (
+          <div className="inline-field">
+            <label htmlFor={`rewrite-${shot.id}`}>{t("shot.rewrite")}</label>
+            <input
+              id={`rewrite-${shot.id}`}
+              className="input"
+              value={instruction}
+              placeholder={t("shot.rewritePlaceholder")}
+              disabled={visual.locked || props.busy}
+              onChange={(e) => setInstruction(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && instruction.trim()) {
+                  props.onRewrite?.(instruction.trim());
+                  setInstruction("");
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="btn small"
+              disabled={visual.locked || props.busy || !instruction.trim()}
+              title={t("shot.rewriteHint")}
+              onClick={() => {
+                props.onRewrite?.(instruction.trim());
+                setInstruction("");
+              }}
+            >
+              {t("shot.rewriteRun")}
             </button>
           </div>
         )}

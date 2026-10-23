@@ -113,6 +113,11 @@ export const api = {
       `/projects/${id}/shots/${shotId}/candidates`,
       json("POST", { confirm_charge: confirmCharge, edit_selected: editSelected, ...options }),
     ),
+  /** 单镜头 AI 改写：只改画面描述、运镜和衔接，不生成画面、不收费。 */
+  rewriteShot: (id: string, shotId: string, instruction: string) =>
+    request<Project>(`/projects/${id}/shots/${shotId}/rewrite`, json("POST", { instruction })),
+  /** 一键补全：扩写过短的画面描述、补衔接说明，没有全片设定时一并生成。 */
+  expand: (id: string, onlyShort = true) => request<Project>(`/projects/${id}/expand`, json("POST", { only_short: onlyShort })),
   /** 服务器上正在检索或生成的镜头（页面刷新后用来恢复"生成中"状态）。 */
   inProgress: (id: string) => request<Record<string, { mode: string; seconds: number }>>(`/projects/${id}/in-progress`),
   /** 检索背景音乐候选（只返回元数据+试听地址，不下载）；query 留空时由服务端用大模型提炼。 */

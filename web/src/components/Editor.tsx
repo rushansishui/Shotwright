@@ -9,6 +9,7 @@ import { ShotCard } from "./ShotCard";
 import { useEditor } from "./editor/useEditor";
 import { BgmSection } from "./editor/BgmSection";
 import { LookSection } from "./editor/LookSection";
+import { projectNeedsExpansion } from "../prompts";
 import { ReferencesSection } from "./editor/ReferencesSection";
 import { OverlaySection } from "./editor/OverlaySection";
 
@@ -35,6 +36,7 @@ export function Editor({ projectId }: { projectId: string }) {
   const { t, lang } = useI18n();
   const footageInput = useRef<HTMLInputElement>(null);
   const [footageBusy, setFootageBusy] = useState(false);
+  const [expanding, setExpanding] = useState(false);
 
   if (!project) {
     return <main className="page">{error ? <p className="hint error">{error}</p> : <p className="muted">{t("common.loading")}</p>}</main>;
@@ -54,6 +56,8 @@ export function Editor({ projectId }: { projectId: string }) {
   ] as const) {
     for (const p of providers?.[kind] ?? []) sourceModes[p.id] ??= mode;
   }
+  const llm = defaultProvider("llm");
+  const expandCount = llm ? projectNeedsExpansion(project) : 0;
   const aiVideo = defaultProvider("video_gen");
   const aiImage = defaultProvider("image_gen");
   const updateSubtitle = (patch: Partial<SubtitleStyle>) =>
@@ -152,6 +156,23 @@ export function Editor({ projectId }: { projectId: string }) {
           }
         >
           {project.shots.length === 0 && <p className="muted">{t("editor.noShots")}</p>}
+          {expandCount > 0 && (
+            <div className="hint warn expand-hint">
+              <span>{t("editor.expandHint")}</span>
+              <button
+                type="button"
+                className="btn small"
+                disabled={expanding}
+                onClick={async () => {
+                  setExpanding(true);
+                  await run(() => api.expand(id));
+                  setExpanding(false);
+                }}
+              >
+                {expanding ? t("editor.expanding") : t("editor.expand")}
+              </button>
+            </div>
+          )}
           <div className="shots">
             {project.shots.map((shot, index) => (
               <ShotCard
@@ -174,6 +195,8 @@ export function Editor({ projectId }: { projectId: string }) {
                     return api.candidates(id, shot.id, confirmCharge, editSelected, options);
                   }, shot.id)
                 }
+                canRewrite={!!llm}
+                onRewrite={(instruction) => run(() => api.rewriteShot(id, shot.id, instruction), shot.id)}
                 onUpload={(file) => uploadForShot(shot.id, file)}
                 onMove={(delta) => moveShot(index, delta)}
                 onInsert={() => run(() => api.addShot(id, shot.id))}

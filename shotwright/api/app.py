@@ -33,7 +33,9 @@ from shotwright.api.schemas import (
     ChargeConsent,
     CreateProject,
     CreateVersion,
+    ExpandRequest,
     ReorderShots,
+    RewriteShot,
     SplitShot,
     UpdateProject,
     UpdateShot,
@@ -48,7 +50,7 @@ from shotwright.providers import registry
 from shotwright.providers.base import ChargeConfirmationRequired, ProviderError
 from shotwright.providers.tts.edge import VOICES
 from shotwright.services import cost as cost_service
-from shotwright.services import editing, footage, localize, music, prompting, storyboard, visuals
+from shotwright.services import editing, footage, localize, music, prompting, rewrite, storyboard, visuals
 
 log = logging.getLogger("shotwright.api")
 
@@ -642,6 +644,44 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             # 保存之后再移除，页面看到"完成"时就能读到新素材。
             with in_progress_lock:
                 in_progress.pop(key, None)
+
+    _VISUAL_TEXT = ("prompt", "image_prompt", "camera", "link")
+
+    @api.post("/projects/{project_id}/shots/{shot_id}/rewrite")
+    def rewrite_shot(project_id: str, shot_id: str, body: RewriteShot):
+        """单镜头 AI 改写：按一句要求只改这个镜头的画面，保持全片设定和衔接。不生成画面、不收费。"""
+        project = store.load(_id(project_id))
+        shot = project.shot(_id(shot_id))
+        llm = registry.create("llm", None, settings)
+        rewrite.rewrite_shot(llm, project, shot, body.instruction)  # type: ignore[arg-type]
+
+        def change(latest: Project) -> None:
+            target = latest.shot(shot_id)
+            for name in _VISUAL_TEXT:
+                setattr(target.visual, name, getattr(shot.visual, name))
+
+        return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/expand")
+    def expand_project(project_id: str, body: ExpandRequest | None = None):
+        """一键补全：扩写过短的画面描述、补衔接说明，没有全片设定时一并生成。不生成画面、不收费。"""
+        project = store.load(_id(project_id))
+        llm = registry.create("llm", None, settings)
+        changed = rewrite.expand_project(llm, project, only_short=(body or ExpandRequest()).only_short)  # type: ignore[arg-type]
+
+        def change(latest: Project) -> None:
+            if latest.look.is_empty() and not project.look.is_empty():
+                latest.look = project.look
+            for shot_id in changed:
+                try:
+                    target = latest.shot(shot_id)
+                except KeyError:
+                    continue
+                source = project.shot(shot_id)
+                for name in _VISUAL_TEXT:
+                    setattr(target.visual, name, getattr(source.visual, name))
+
+        return _mutate(project_id, change)
 
     # ---- 素材 ---------------------------------------------------------------
 

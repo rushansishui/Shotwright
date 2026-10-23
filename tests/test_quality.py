@@ -587,7 +587,9 @@ def test_chain_frames_uses_previous_last_frame(store, settings):
     [second] = visuals.refresh_candidates(store, settings, project, project.shots[1], confirm_charge=True)
     assert _VaryingVideo.calls[-1]["first_frame"] is not None
     frame_id = project.assets[second].meta["first_frame"]
-    assert project.assets[frame_id].kind == "image" and project.assets[frame_id].meta["last_frame_of"] == first
+    assert (
+        project.assets[frame_id].kind == "image" and project.assets[frame_id].meta["last_frame_of"] == first
+    )
 
 
 def test_long_shot_is_extended_from_last_frame(store, settings):
@@ -608,3 +610,87 @@ def test_long_shot_is_extended_from_last_frame(store, settings):
     assert asset.meta["segments"] == str(len(calls))
     assert probe(store.asset_path(project, asset_id)).duration > 3.5
     assert project.shots[0].visual.take(asset_id).kind == "extend"
+
+
+def _register_llm(settings, reply_fn, name="rewriter"):
+    from shotwright.providers import registry
+    from shotwright.providers.base import ProviderSpec
+
+    class Replying:
+        calls: list = []
+
+        def __init__(self, _settings):
+            pass
+
+        def complete(self, messages, *, json_mode=False):
+            Replying.calls.append(messages)
+            return reply_fn(messages)
+
+    registry.register(ProviderSpec(kind="llm", id=name, name=name, offline=True), Replying)
+    settings.defaults["llm"] = name
+    return Replying
+
+
+def test_rewrite_shot_keeps_text_and_uses_neighbours(client, settings):
+    import json
+
+    llm = _register_llm(
+        settings,
+        lambda m: json.dumps(
+            {
+                "prompt": "俯拍特写，P1 的按键被按下",
+                "still": "P1 俯拍特写",
+                "camera": "crane",
+                "link": "承接上一镜的手",
+            },
+            ensure_ascii=False,
+        ),
+    )
+    created = _create(client)
+    shot_id = created["shots"][1]["id"]
+    response = client.post(
+        f"/api/v2/projects/{created['id']}/shots/{shot_id}/rewrite", json={"instruction": "改成俯拍特写"}
+    )
+    assert response.status_code == 200, response.text
+    shot = next(s for s in response.json()["shots"] if s["id"] == shot_id)
+    assert shot["visual"]["prompt"].startswith("俯拍特写") and shot["visual"]["camera"] == "crane"
+    assert shot["text"] == created["shots"][1]["text"]
+    user = llm.calls[-1][-1]["content"]
+    assert "上一个镜头" in user and "下一个镜头" not in user and "改成俯拍特写" in user
+
+
+def test_expand_fills_short_prompts_and_missing_look(client, settings):
+    import json
+
+    def reply(messages):
+        return json.dumps(
+            {
+                "look": {
+                    "subjects": [{"code": "P1", "name": "咖啡机", "kind": "product", "appearance": "白色"}]
+                },
+                "shots": [
+                    {"index": 1, "prompt": _GOOD_PROMPT_ZH, "camera": "orbit", "link": "开场"},
+                    {"index": 2, "prompt": "", "link": "接上一镜"},
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+    llm = _register_llm(settings, reply, name="expander")
+    created = _create(client)
+    result = client.post(f"/api/v2/projects/{created['id']}/expand", json={}).json()
+    assert result["look"]["subjects"][0]["code"] == "P1"
+    first, second = result["shots"][0], result["shots"][1]
+    assert first["visual"]["prompt"] == _GOOD_PROMPT_ZH and first["visual"]["camera"] == "orbit"
+    assert second["visual"]["prompt"] == "" and second["visual"]["link"] == "接上一镜"  # 空字段保留原值
+    assert "还没有全片设定" in llm.calls[-1][0]["content"]
+
+
+def test_needs_expansion_skips_locked_and_color():
+    from shotwright.services.rewrite import needs_expansion
+
+    project = Project()
+    assert needs_expansion(project, Shot(visual=ShotVisual(mode="ai", prompt="短")))
+    assert not needs_expansion(project, Shot(visual=ShotVisual(mode="ai", prompt="短", locked=True)))
+    assert not needs_expansion(project, Shot(visual=ShotVisual(mode="color")))
+    assert not needs_expansion(project, Shot(visual=ShotVisual(mode="ai", prompt=_GOOD_PROMPT_ZH, link="接")))
