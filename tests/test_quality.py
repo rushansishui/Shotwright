@@ -694,3 +694,23 @@ def test_needs_expansion_skips_locked_and_color():
     assert not needs_expansion(project, Shot(visual=ShotVisual(mode="ai", prompt="短", locked=True)))
     assert not needs_expansion(project, Shot(visual=ShotVisual(mode="color")))
     assert not needs_expansion(project, Shot(visual=ShotVisual(mode="ai", prompt=_GOOD_PROMPT_ZH, link="接")))
+
+
+def test_budget_blocks_generation_over_limit(store, settings, client):
+    from shotwright.providers.base import BudgetExceeded
+    from shotwright.services import visuals
+
+    settings.providers.setdefault("video_gen", {})["seedance"] = {"api_key": "k"}
+    shot = Shot(text="一句话说完。", visual=ShotVisual(mode="ai", prompt="x", provider="seedance"))
+    project = Project(shots=[shot], budget=0.5, cost_credits=0.2)
+    # Seedance 至少按 4 秒计费，约 0.56 元，超过剩余的 0.3 元。
+    import pytest
+
+    with pytest.raises(BudgetExceeded, match="超出项目费用上限"):
+        visuals.check_budget(settings, project, project.shots[0], "video_gen", "seedance")
+    project.budget = None
+    visuals.check_budget(settings, project, project.shots[0], "video_gen", "seedance")
+
+    created = _create(client)
+    assert client.patch(f"/api/v2/projects/{created['id']}", json={"budget": 10}).json()["budget"] == 10
+    assert client.patch(f"/api/v2/projects/{created['id']}", json={"budget": None}).json()["budget"] is None

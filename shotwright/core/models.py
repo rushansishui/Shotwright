@@ -535,6 +535,8 @@ class Project(_Model):
     """项目级参考素材库：产品图、人物设定、Logo、风格图。镜头生成时作为参考。"""
     shots: list[Shot] = Field(default_factory=list)
     assets: dict[str, Asset] = Field(default_factory=dict)
+    budget: float | None = Field(None, ge=0.0, le=1_000_000)
+    """项目费用上限（元）；为空表示不限。收费生成前估算本次费用，累计会超过上限时拒绝提交。"""
     cost_credits: float = Field(0.0, ge=0.0)
     """项目累计花费的估算金额（元）：每次收费生成成功后按参考单价累加，供界面显示。"""
     revision: int = 0

@@ -405,6 +405,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     setattr(project, name, value)
             if "loudness" in body.model_fields_set:
                 project.loudness = body.loudness
+            if "budget" in body.model_fields_set:
+                project.budget = body.budget
             if project.bgm.asset_id and project.bgm.asset_id not in project.assets:
                 raise ValueError("背景音乐素材不存在")
             for item in project.look.subjects:

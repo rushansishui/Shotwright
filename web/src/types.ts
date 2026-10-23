@@ -187,6 +187,8 @@ export interface Project {
   assets: Record<string, Asset>;
   /** 累计收费生成的参考费用（元）。 */
   cost_credits: number;
+  /** 项目费用上限（元）；null 表示不限。 */
+  budget?: number | null;
   revision: number;
   updated_at: number;
 }

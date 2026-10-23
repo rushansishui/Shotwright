@@ -17,6 +17,7 @@ from shotwright.core.store import ProjectStore, read_json, write_json
 from shotwright.media.ffmpeg import MediaError, concat_videos, extract_frame, probe
 from shotwright.providers import registry
 from shotwright.providers.base import (
+    BudgetExceeded,
     ChargeConfirmationRequired,
     ImageGenProvider,
     ProviderError,
@@ -250,6 +251,31 @@ DRAFT_RESOLUTION = "720p"
 """草稿档 AI 视频的默认分辨率；可在 Provider 配置里用 draft_resolution 修改。"""
 
 
+def check_budget(
+    settings: Settings,
+    project: Project,
+    shot: Shot,
+    kind: str,
+    provider_id: str | None,
+    *,
+    resolution: str = "",
+    seconds: float | None = None,
+) -> None:
+    """项目设了费用上限时，估算本次生成的参考费用，累计会超过上限就拒绝提交。"""
+    if project.budget is None:
+        return
+    from shotwright.services import cost
+
+    amount = cost.generation_cost(
+        settings, project, shot, kind, provider_id or "", resolution=resolution, seconds=seconds
+    )
+    if amount > 0 and project.cost_credits + amount > project.budget + 1e-9:
+        raise BudgetExceeded(
+            f"超出项目费用上限：已花约 {project.cost_credits:.2f} 元，本次约 {amount:.2f} 元，"
+            f"上限 {project.budget:.2f} 元。可以在渲染面板提高上限"
+        )
+
+
 def apply_quality(settings: Settings, provider: object, provider_id: str | None, quality: Quality) -> str:
     """按草稿 / 成片档设置生成分辨率，返回实际使用的分辨率（Provider 不支持时返回空字符串）。
 
@@ -463,6 +489,7 @@ def generate_ai_candidate(
     wanted = estimated_shot_seconds(project, shot)
     longest = _max_duration(provider, provider_id)
     extend = reference_video is None and longest is not None and wanted > longest + 0.5
+    check_budget(settings, project, shot, "video_gen", provider_id, resolution=resolution)
     kind: TakeKind = "edit" if reference_video is not None else "extend" if extend else "video"
     with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
         work = Path(temp)
@@ -580,6 +607,7 @@ def generate_image_candidate(
     provider_id = _provider_id(settings, "image_gen", shot)
     provider: ImageGenProvider = registry.create("image_gen", provider_id, settings)  # type: ignore[assignment]
     require_charge_confirmation(settings, "image_gen", provider_id, confirm_charge)
+    check_budget(settings, project, shot, "image_gen", provider_id)
     prompt = build_prompt(settings, project, shot, "image_gen", provider_id)
     with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
         path = provider.generate(prompt, aspect=project.canvas.aspect, output=Path(temp) / "gen")

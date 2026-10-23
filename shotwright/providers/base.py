@@ -32,6 +32,10 @@ class ChargeConfirmationRequired(ProviderError):
     """收费操作没有得到用户的明确确认。"""
 
 
+class BudgetExceeded(ProviderError):
+    """本次收费生成会让项目累计费用超过上限。"""
+
+
 class UnconfirmedTaskError(ProviderError):
     """收费任务可能已在远端创建，但本地无法确认结果。不要自动重试，以免重复扣费。"""
 

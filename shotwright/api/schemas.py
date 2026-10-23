@@ -62,6 +62,8 @@ class UpdateProject(_Body):
     look: Look | None = None
     """全片设定；整体替换。"""
     chain_frames: bool | None = None
+    budget: float | None = Field(None, ge=0.0, le=1_000_000)
+    """项目费用上限（元）；显式传 null 表示不限，不传则不改。"""
     """首尾帧衔接开关。"""
     target_seconds: float | None = Field(None, gt=0, le=1800)
     """目标总时长（秒）。"""

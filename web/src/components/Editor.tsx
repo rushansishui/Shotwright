@@ -366,7 +366,14 @@ export function Editor({ projectId }: { projectId: string }) {
         <Versions project={project} languages={languages} />
       </div>
 
-      <RenderPanel project={project} paidAvailable={Boolean(aiVideo || aiImage)} shotIndex={activeIndex} onShotIndex={setActiveIndex} onRendered={load} />
+      <RenderPanel
+        project={project}
+        paidAvailable={Boolean(aiVideo || aiImage)}
+        shotIndex={activeIndex}
+        onShotIndex={setActiveIndex}
+        onRendered={load}
+        onBudget={(budget) => run(() => api.updateProject(id, { budget }))}
+      />
     </main>
   );
 }

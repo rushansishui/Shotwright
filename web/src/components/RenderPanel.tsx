@@ -54,6 +54,7 @@ export function RenderPanel(props: {
   shotIndex: number;
   onShotIndex: (index: number) => void;
   onRendered: () => void;
+  onBudget: (budget: number | null) => void;
 }) {
   const { project } = props;
   const { t } = useI18n();
@@ -99,6 +100,8 @@ export function RenderPanel(props: {
   const [allowPaid, setAllowPaid] = useState(false);
   const [quality, setQuality] = useState<"draft" | "final">("final");
   const [costEstimate, setCostEstimate] = useState<CostEstimate | null>(null);
+  const [budget, setBudget] = useState(project.budget == null ? "" : String(project.budget));
+  useEffect(() => setBudget(project.budget == null ? "" : String(project.budget)), [project.budget]);
   const running = job?.state === "queued" || job?.state === "running";
   const result = job?.state === "done" ? job.result : latest;
 
@@ -189,6 +192,27 @@ export function RenderPanel(props: {
         )}
         {project.cost_credits > 0 && (
           <p className="muted small">{t("render.spent", { total: project.cost_credits.toFixed(2) })}</p>
+        )}
+        {!running && (
+          <div className="inline-field budget">
+            <label htmlFor="budget">{t("render.budget")}</label>
+            <input
+              id="budget"
+              className="input compact"
+              type="number"
+              min={0}
+              step={1}
+              placeholder={t("render.budgetNone")}
+              value={budget}
+              onChange={(e) => setBudget(e.target.value)}
+              onBlur={() => {
+                const value = budget.trim() === "" ? null : Math.max(0, Number(budget));
+                if (value !== (project.budget ?? null) && (value === null || Number.isFinite(value))) {
+                  props.onBudget(value);
+                }
+              }}
+            />
+          </div>
         )}
         {running ? (
           <div className="progress-block">
