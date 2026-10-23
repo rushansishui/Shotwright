@@ -785,3 +785,39 @@ def test_available_sources_follow_configuration(settings):
     assert visuals.available_sources(settings) == {"ai", "image"}  # 测试里的假服务都不需要配置
     settings.defaults["video_gen"] = "seedance"
     assert "ai" not in visuals.available_sources(settings)
+
+
+def test_stock_prefers_resolution_and_ranks_by_vision(store, settings):
+    from conftest import make_clip
+
+    from shotwright.providers import registry
+    from shotwright.providers.base import ProviderSpec, StockCandidate
+    from shotwright.services import visuals
+
+    class SizedStock:
+        def __init__(self, _settings):
+            pass
+
+        def search(self, query, *, aspect, min_duration, limit):
+            return [
+                StockCandidate("sized", "low", "x://low", "video", 360, 640, 3.0),
+                StockCandidate("sized", "a", "x://a", "video", 1080, 1920, 3.0),
+                StockCandidate("sized", "b", "x://b", "video", 1080, 1920, 3.0),
+            ]
+
+        def download(self, candidate, output):
+            pattern = {"low": "testsrc2", "a": "smptebars", "b": "rgbtestsrc"}[candidate.remote_id]
+            return make_clip(output.with_suffix(".mp4"), pattern=pattern)
+
+    registry.register(ProviderSpec(kind="stock", id="sized", name="Sized", offline=True), SizedStock)
+    registry.register(ProviderSpec(kind="llm", id="seer", name="Seer", offline=True), _Seer)
+    settings.defaults.update({"stock": "sized", "llm": "seer"})
+    shot = Shot(text="城市夜景。", visual=ShotVisual(mode="stock", terms=["city night"]))
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=[shot]))
+    _Seer.replies[:] = ['{"items": [{"index": 1, "relevance": 0.9, "text": true}, {"index": 2, "relevance": 0.7}]}']
+    added = visuals.fetch_stock_candidates(store, settings, project, project.shots[0], limit=2)
+    remote = [project.assets[a].meta["remote_id"] for a in added]
+    # 低分辨率的被排除在前两个之外；带水印的排到最后。
+    assert remote == ["b", "a"]
+    assert project.assets[added[1]].meta["issue"] == "画面里有水印或文字"
+    assert project.shots[0].visual.selected == added[0]

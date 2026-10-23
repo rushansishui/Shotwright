@@ -152,6 +152,7 @@ def fetch_stock_candidates(
         found.extend(cached)
         if len(found) >= limit:
             break
+    found = _prefer_resolution(found, project)
     seen = {project.assets[a].meta.get("remote_id") for a in shot.visual.candidates if a in project.assets}
     added: list[str] = []
     failed = 0
@@ -188,8 +189,26 @@ def fetch_stock_candidates(
     if added and failed:
         # 有成功也有失败时，在镜头上记一条提示，让用户知道候选不全。
         shot.error = f"{failed} 个候选下载失败，已跳过"[:200]
+    if len(added) > 1:
+        from shotwright.services import inspect
+
+        added = inspect.rank_stock(store, settings, project, shot, added)
     _attach(shot, added)
     return added
+
+
+LOW_RESOLUTION = 0.6
+"""素材短边不到画布短边的这个比例时，放大后会明显发虚。"""
+
+
+def _prefer_resolution(found: list[StockCandidate], project: Project) -> list[StockCandidate]:
+    """分辨率够的素材排在前面；不够的（短边不到画布的 60%）放到最后，只在没有别的可选时才用。"""
+    needed = min(project.canvas.width, project.canvas.height) * LOW_RESOLUTION
+    sharp = [c for c in found if not c.width or not c.height or min(c.width, c.height) >= needed]
+    soft = [c for c in found if c not in sharp]
+    if soft:
+        log.info("项目 %s：%d 个素材分辨率不足，排到最后", project.id, len(soft))
+    return sharp + soft
 
 
 def _download_with_retry(

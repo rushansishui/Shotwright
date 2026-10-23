@@ -152,3 +152,55 @@ def inspect_takes(
     if best is not None and len(scored) > 1 and shot.visual.selected in asset_ids:
         shot.visual.selected = best[1]
     return bool(scored)
+
+
+STOCK_PROMPT = """下面 {n} 张图依次是素材库候选视频的截图（第 1 张对应候选 1，依此类推）。
+这个镜头需要的画面：{description}
+
+请逐个评估：relevance 是与需要的画面的切题程度（0–1）；text 表示画面里是否有水印、字幕、文字或明显的商标（true / false）。
+只输出 JSON：{{"items": [{{"index": 1, "relevance": 0.0, "text": false}}]}}"""
+
+
+def rank_stock(
+    store: ProjectStore, settings: Settings, project: Project, shot: Shot, asset_ids: list[str]
+) -> list[str]:
+    """用看图模型给素材库候选排序：切题的排前面，带水印或文字的排最后并标注。
+
+    一次请求看完所有候选（每个取中间一帧）。没有配置看图模型或检查失败时保持原顺序。
+    """
+    llm = vision_llm(settings)
+    if llm is None or len(asset_ids) < 2:
+        return asset_ids
+    description = "；".join(filter(None, [shot.text[:200], shot.visual.prompt[:300], ", ".join(shot.visual.terms)]))
+    try:
+        with tempfile.TemporaryDirectory(prefix="shotwright-rank-") as temp:
+            work = Path(temp)
+            frames = []
+            for asset_id in asset_ids:
+                asset = project.assets[asset_id]
+                source = store.asset_path(project, asset_id)
+                at = (asset.duration or 0.0) / 2 if asset.kind == "video" else 0.0
+                frames.append(extract_frame(source, work / f"{asset_id}.jpg", at=at))
+            reply = llm.see(STOCK_PROMPT.format(n=len(frames), description=description[:600]), frames)
+        match = re.search(r"\{.*\}", reply, re.DOTALL)
+        items = json.loads(match.group(0)).get("items", []) if match else []
+    except (ProviderError, MediaError, ValueError) as exc:
+        log.warning("项目 %s 镜头 %s：素材排序失败，保持原顺序：%s", project.id, shot.id, exc)
+        return asset_ids
+    scores: dict[str, float] = {}
+    for item in items:
+        try:
+            asset_id = asset_ids[int(item.get("index")) - 1]
+            relevance = max(0.0, min(1.0, float(item.get("relevance", 0))))
+        except (TypeError, ValueError, IndexError):
+            continue
+        has_text = bool(item.get("text"))
+        asset = project.assets[asset_id]
+        meta = {**asset.meta, "score": f"{relevance:.2f}"}
+        if has_text:
+            meta["issue"] = "画面里有水印或文字"
+        project.assets[asset_id] = asset.model_copy(update={"meta": meta})
+        scores[asset_id] = relevance - (1.0 if has_text else 0.0)
+    ordered = sorted(asset_ids, key=lambda asset_id: scores.get(asset_id, 0.0), reverse=True)
+    log.info("项目 %s 镜头 %s：素材按看图检查排序 %s", project.id, shot.id, ordered)
+    return ordered

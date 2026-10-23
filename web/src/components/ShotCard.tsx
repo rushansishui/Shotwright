@@ -26,10 +26,21 @@ export function Thumb(props: { project: Project; assetId: string | null; color: 
 }
 
 /** 候选缩略图上的版本号、检查得分和问题提示。 */
-function TakeBadge({ takes, assetId }: { takes: Take[]; assetId: string }) {
+function TakeBadge({ takes, assetId, asset }: { takes: Take[]; assetId: string; asset?: Asset }) {
   const { t } = useI18n();
   const index = takes.findIndex((item) => item.asset_id === assetId);
-  if (index < 0) return null;
+  if (index < 0) {
+    // 素材库候选没有版本记录，但可能有看图排序的得分和问题。
+    const issue = asset?.meta.issue;
+    const score = asset?.meta.score;
+    if (!issue && !score) return null;
+    return (
+      <span className={`take-badge ${issue ? "warn" : ""}`} title={issue ?? ""}>
+        {score ? Math.round(Number(score) * 100) : ""}
+        {issue ? " !" : ""}
+      </span>
+    );
+  }
   const take = takes[index];
   const score = take.score === null ? "" : ` · ${Math.round(take.score * 100)}`;
   return (
@@ -529,7 +540,7 @@ export function ShotCard(props: {
                 title={project.assets[id]?.meta.author ? t("shot.author", { name: project.assets[id].meta.author }) : ""}
               >
                 <Thumb project={project} assetId={id} color={visual.color} className="candidate-media" />
-                <TakeBadge takes={visual.takes ?? []} assetId={id} />
+                <TakeBadge takes={visual.takes ?? []} assetId={id} asset={project.assets[id]} />
               </button>
             ))}
           </div>
