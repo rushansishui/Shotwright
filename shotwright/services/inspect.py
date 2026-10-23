@@ -204,3 +204,49 @@ def rank_stock(
     ordered = sorted(asset_ids, key=lambda asset_id: scores.get(asset_id, 0.0), reverse=True)
     log.info("项目 %s 镜头 %s：素材按看图检查排序 %s", project.id, shot.id, ordered)
     return ordered
+
+
+FINAL_PROMPT = """下面 {n} 张图是一条成片里按顺序截取的画面，每张来自一个镜头（第 1 张是镜头 {first}，依此类推）。
+画面底部或顶部的字幕、价格和卖点文字是后期加上的，不算问题。
+请逐张检查这些常见的生成瑕疵：手指或肢体畸形、面部扭曲、物体融合或残缺、画面里出现乱码或错误的文字、明显的水印。
+只输出 JSON：{{"items": [{{"index": 1, "issues": ["问题，用一句中文写清楚"]}}]}}；没有问题的画面 issues 为空列表。"""
+
+FRAMES_PER_CALL = 6
+
+
+def inspect_final(
+    settings: Settings, video: Path, starts: list[float], durations: list[float]
+) -> list[dict]:
+    """成片抽帧检查：每个镜头取中间一帧，交给看图模型找手指、面部、乱码文字等瑕疵。
+
+    返回 [{"shot": 镜头序号, "issues": [...]}]，只包含有问题的镜头。没有配置看图模型时返回空列表。
+    """
+    llm = vision_llm(settings)
+    if llm is None or not starts:
+        return []
+    found: list[dict] = []
+    with tempfile.TemporaryDirectory(prefix="shotwright-final-check-") as temp:
+        work = Path(temp)
+        frames = [
+            extract_frame(video, work / f"shot{index}.jpg", at=start + duration / 2)
+            for index, (start, duration) in enumerate(zip(starts, durations, strict=True))
+        ]
+        for offset in range(0, len(frames), FRAMES_PER_CALL):
+            batch = frames[offset : offset + FRAMES_PER_CALL]
+            try:
+                reply = llm.see(FINAL_PROMPT.format(n=len(batch), first=offset + 1), batch)
+                match = re.search(r"\{.*\}", reply, re.DOTALL)
+                items = json.loads(match.group(0)).get("items", []) if match else []
+            except (ProviderError, ValueError) as exc:
+                log.warning("成片抽帧检查失败：%s", exc)
+                continue
+            for item in items:
+                try:
+                    shot = offset + int(item.get("index"))
+                except (TypeError, ValueError):
+                    continue
+                issues = [str(text).strip()[:120] for text in item.get("issues") or [] if str(text).strip()]
+                issues = [text for text in issues if not _NO_ISSUE.fullmatch(text)]
+                if issues and 1 <= shot <= len(frames):
+                    found.append({"shot": shot, "issues": issues})
+    return found

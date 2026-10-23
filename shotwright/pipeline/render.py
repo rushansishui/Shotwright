@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 import tempfile
 import threading
@@ -65,6 +66,8 @@ __all__ = [
     "StageRecord",
     "Renderer",
 ]
+
+log = logging.getLogger("shotwright.render")
 
 Progress = Callable[[float, str], None]
 
@@ -226,6 +229,10 @@ class Renderer:
             srt_path = output_dir / "subtitles.srt"
             srt_path.write_text(subs.to_srt(cues), encoding="utf-8")
         info = probe(video_path)
+        inspection: list[dict] = []
+        if self.quality == "final":
+            self._report(0.97, "成片抽帧检查")
+            inspection = self._inspect(video_path, timings)
         result = RenderResult(
             render_id=render_id,
             project_id=project.id,
@@ -236,6 +243,7 @@ class Renderer:
             timings=timings,
             stages=self.stages,
             warnings=self.warnings,
+            inspection=inspection,
         )
         write_json(output_dir / "render.json", result.to_dict())
         self._report(1.0, "完成")
@@ -524,6 +532,21 @@ class Renderer:
             ],
             cancel=self._cancel,
         )
+
+    def _inspect(self, video: Path, timings: list[ShotTiming]) -> list[dict]:
+        """成片抽帧检查（配置了看图模型时）：发现的问题同时写进提示，方便在界面上看到。"""
+        from shotwright.services import inspect
+
+        try:
+            found = inspect.inspect_final(
+                self.settings, video, [t.start for t in timings], [t.duration for t in timings]
+            )
+        except MediaError as exc:
+            log.warning("成片抽帧检查失败：%s", exc)
+            return []
+        for item in found:
+            self.warnings.append(f"成片检查：镜头 {item['shot']}：{'；'.join(item['issues'])}")
+        return found
 
     def _whoosh(self, project: Project) -> Path:
         """转场音效：用滤过的粉红噪声合成一声短促的「嗖」，按版本缓存。"""

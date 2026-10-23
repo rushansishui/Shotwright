@@ -58,6 +58,8 @@ class RenderResult:
     timings: list[ShotTiming]
     stages: list[StageRecord]
     warnings: list[str] = field(default_factory=list)
+    inspection: list[dict] = field(default_factory=list)
+    """成片抽帧检查发现的问题：[{"shot": 镜头序号, "issues": [...]}]。"""
 
     def to_dict(self) -> dict:
         from dataclasses import asdict

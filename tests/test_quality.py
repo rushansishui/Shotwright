@@ -1037,3 +1037,33 @@ def test_delivery_platform_encoding_and_safe_area(store, settings):
 
     project.canvas.aspect = "16:9"
     assert "platform_aspect" in [issue.code for issue in checkup.check_project(project, settings)]
+
+
+def test_final_render_runs_frame_inspection(store, settings):
+    import json
+
+    from shotwright.pipeline.render import Renderer
+    from shotwright.providers import registry
+    from shotwright.providers.base import ProviderSpec
+
+    registry.register(ProviderSpec(kind="llm", id="seer", name="Seer", offline=True), _Seer)
+    settings.defaults["llm"] = "seer"
+    shots = [
+        Shot(text="第一句话。", visual=ShotVisual(mode="color")),
+        Shot(text="第二句话。", visual=ShotVisual(mode="color")),
+    ]
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=shots, loudness=None))
+    _Seer.prompts.clear()
+    _Seer.replies[:] = ['{"items": [{"index": 1, "issues": []}, {"index": 2, "issues": ["手指畸形", "无"]}]}']
+    result = Renderer(store, settings).render(project.id)
+    assert result.inspection == [{"shot": 2, "issues": ["手指畸形"]}]
+    assert any("成片检查：镜头 2：手指畸形" in warning for warning in result.warnings)
+    assert _Seer.prompts[0][1] == 2  # 每个镜头一帧
+    saved = json.loads(
+        (store.render_dir(project.id, result.render_id) / "render.json").read_text(encoding="utf-8")
+    )
+    assert saved["inspection"][0]["shot"] == 2
+
+    _Seer.prompts.clear()
+    Renderer(store, settings, quality="draft").render(project.id)
+    assert _Seer.prompts == []  # 草稿档不检查

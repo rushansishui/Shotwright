@@ -266,6 +266,8 @@ export interface RenderResult {
   subtitles: string | null;
   duration: number;
   warnings: string[];
+  /** 成片抽帧检查发现的问题（配置了看图模型、成片档时才有）。 */
+  inspection?: { shot: number; issues: string[] }[];
   stages: { key: string; kind: string; reused: boolean; seconds: number }[];
 }
 
