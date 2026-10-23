@@ -8,6 +8,7 @@ shotwright list                          列出项目
 shotwright show <项目>                   查看镜头
 shotwright shot <项目> <序号> --text …   修改某个镜头
 shotwright render <项目> [--allow-paid]  渲染（只重做有改动的镜头）
+shotwright bench [--render]              跑质量基准集，结果存档并与上次对比
 """
 
 from __future__ import annotations
@@ -165,6 +166,40 @@ def cmd_translate(args) -> int:
     return 0
 
 
+def cmd_bench(args) -> int:
+    import json
+    import time
+
+    from shotwright.services import bench
+
+    settings, store = _store(args)
+    if args.offline:
+        settings.auto_fetch_visuals = False
+    root = Path(args.out) if args.out else settings.storage_dir.parent / "bench"
+    previous = None
+    if args.compare:
+        previous = json.loads((Path(args.compare) / "report.json").read_text(encoding="utf-8"))
+    else:
+        runs = sorted(p for p in root.glob("*") if (p / "report.json").exists()) if root.exists() else []
+        if runs:
+            previous = json.loads((runs[-1] / "report.json").read_text(encoding="utf-8"))
+    out_dir = root / time.strftime("%Y%m%d-%H%M%S")
+    report = bench.run_bench(
+        store,
+        settings,
+        out_dir,
+        render=args.render,
+        allow_paid=args.allow_paid,
+        aspects=args.aspect or None,
+        only=args.brief or None,
+    )
+    text = bench.format_report(report.to_dict(), previous)
+    (out_dir / "report.md").write_text(text, encoding="utf-8")
+    print(text)
+    print(f"结果已保存到 {out_dir}")
+    return 1 if report.summary()["failed"] else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="shotwright", description="Shotwright 镜匠：以分镜为核心的短视频生成工具"
@@ -229,6 +264,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="允许为缺画面的 AI 镜头调用收费生成（Seedance、Seedream 等）；默认改用素材检索",
     )
     render.set_defaults(func=cmd_render)
+
+    bench = sub.add_parser("bench", help="跑质量基准集（固定诉求），结果存档并与上次对比")
+    bench.add_argument("--render", action="store_true", help="同时渲染草稿成片，测量响度和慢放定格占比")
+    bench.add_argument("--allow-paid", action="store_true", help="渲染时允许为 AI 镜头调用收费生成")
+    bench.add_argument("--offline", action="store_true", help="渲染时不检索素材，缺画面的镜头用纯色")
+    bench.add_argument("--aspect", action="append", choices=["9:16", "16:9", "1:1"], help="只跑这些画面比例")
+    bench.add_argument("--brief", action="append", help="只跑这些诉求（briefs.json 里的 id）")
+    bench.add_argument("--out", help="结果目录（默认 storage/bench）")
+    bench.add_argument("--compare", help="与这次结果对比（默认与最近一次对比）")
+    bench.set_defaults(func=cmd_bench)
     return parser
 
 

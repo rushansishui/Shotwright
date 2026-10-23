@@ -141,9 +141,10 @@ def test_api_saves_video_type_and_footage_sets_default(client, tmp_path):
         json={"mode": "split", "script": "一句话。", "video_type": "brand", "voice": {"provider": "silent"}},
     ).json()
     assert created["video_type"] == "brand"
-    assert client.patch(f"/api/v2/projects/{created['id']}", json={"video_type": "talking"}).json()[
-        "video_type"
-    ] == "talking"
+    assert (
+        client.patch(f"/api/v2/projects/{created['id']}", json={"video_type": "talking"}).json()["video_type"]
+        == "talking"
+    )
     assert client.patch(f"/api/v2/projects/{created['id']}", json={"video_type": "nope"}).status_code == 422
 
     empty = client.post("/api/v2/projects", json={"mode": "empty"}).json()
@@ -152,3 +153,53 @@ def test_api_saves_video_type_and_footage_sets_default(client, tmp_path):
         response = client.post(f"/api/v2/projects/{empty['id']}/footage", files={"file": ("raw.mp4", handle)})
     assert response.status_code == 201, response.text
     assert client.get(f"/api/v2/projects/{empty['id']}").json()["video_type"] == "footage"
+
+
+class _ScriptedLLM:
+    """按固定回复写分镜的大模型。"""
+
+    def __init__(self, settings=None):
+        pass
+
+    def complete(self, messages, *, json_mode=False):
+        return (
+            '{"title": "t", "shots": ['
+            '{"text": "第一个镜头的文案。", "terms": ["coffee"], "prompt": "a white coffee maker on a desk"},'
+            '{"text": "第二个镜头的文案。", "terms": ["subway"], "prompt": "a woman runs to the subway"}]}'
+        )
+
+
+def test_bench_runs_briefs_and_reports(store, settings, tmp_path):
+    from shotwright.providers import registry
+    from shotwright.providers.base import ProviderSpec
+    from shotwright.services import bench
+
+    registry.register(ProviderSpec(kind="llm", id="scripted", name="Scripted", offline=True), _ScriptedLLM)
+    settings.defaults["llm"] = "scripted"
+    settings.auto_fetch_visuals = True
+    report = bench.run_bench(
+        store,
+        settings,
+        tmp_path / "run",
+        render=True,
+        aspects=["16:9"],
+        only=["product_ad"],
+        progress=lambda m: None,
+    )
+    case = report.cases[0]
+    assert not case.error, case.error
+    assert case.shots == 2 and case.prompt_avg == 6.5
+    assert case.rendered and case.loudness is None  # 静音配音、没有背景音乐：测不出响度
+    # 假素材 2 秒，和镜头时长相当，几乎不需要补足。
+    assert case.fill_ratio < 0.05 and case.blank_ratio == 0.0
+    text = (tmp_path / "run" / "report.md").read_text(encoding="utf-8")
+    assert "画面描述平均长度" in text and "product_ad" in text
+    compared = bench.format_report(report.to_dict(), report.to_dict())
+    assert "| 变化 |" in compared
+
+
+def test_prompt_size_counts_words_and_cjk():
+    from shotwright.services.bench import prompt_size
+
+    assert prompt_size("a white coffee maker") == 4
+    assert prompt_size("白色咖啡机放在木桌上") == 5
