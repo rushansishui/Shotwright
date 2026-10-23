@@ -376,6 +376,7 @@ export function Editor({ projectId }: { projectId: string }) {
         onShotIndex={setActiveIndex}
         onRendered={load}
         onBudget={(budget) => run(() => api.updateProject(id, { budget }))}
+        onDelivery={(delivery) => run(() => api.updateProject(id, { delivery }))}
       />
     </main>
   );

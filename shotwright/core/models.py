@@ -79,6 +79,9 @@ FillMode = Literal["slow_hold", "hold", "loop"]
 CameraMove = Literal["auto", "static", "push_in", "pull_out", "pan", "truck", "orbit", "crane", "handheld"]
 """镜头运动：自动（交给模型）、固定、推、拉、摇、移（跟拍）、环绕、升降、手持。"""
 
+DeliveryPlatform = Literal["general", "douyin", "kuaishou", "channels", "xiaohongshu", "shorts", "bilibili"]
+"""交付平台（规格见 core/platforms.py）。"""
+
 GradePreset = Literal["", "natural", "warm", "cool", "vivid", "film", "bw"]
 """统一调色预设（见 media/grades.py）。"""
 
@@ -556,6 +559,8 @@ class Project(_Model):
     ai_badge: bool = False
     """在画面上显示「AI 生成」角标（元数据标识始终写入，不受此开关影响）。"""
     bgm: BgmSettings = Field(default_factory=BgmSettings)
+    delivery: DeliveryPlatform = "general"
+    """交付平台：决定成片的编码参数，字幕和叠加文字会挪进这个平台的安全区。"""
     sfx: SfxSettings = Field(default_factory=SfxSettings)
     """音效层：转场音效和环境声。"""
     loudness: float | None = Field(-14.0, ge=-30.0, le=-5.0)

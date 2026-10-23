@@ -10,6 +10,7 @@ from shotwright.core.models import (
     BgmSettings,
     CameraMove,
     Canvas,
+    DeliveryPlatform,
     FillMode,
     FitMode,
     Look,
@@ -78,6 +79,8 @@ class UpdateProject(_Body):
     ai_badge: bool | None = None
     """画面上是否显示「AI 生成」角标。"""
     bgm: BgmSettings | None = None
+    delivery: DeliveryPlatform | None = None
+    """交付平台：决定编码参数和字幕、叠加文字的安全区。"""
     sfx: SfxSettings | None = None
     """音效层：转场音效和环境声。"""
     loudness: float | None = Field(None, ge=-30.0, le=-5.0)

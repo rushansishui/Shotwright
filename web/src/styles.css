@@ -1282,3 +1282,10 @@ input[type="color"] {
   font-size: 12px;
   color: var(--muted);
 }
+
+.safe-area {
+  position: absolute;
+  border: 1px dashed rgba(255, 255, 255, 0.55);
+  border-radius: 4px;
+  pointer-events: none;
+}

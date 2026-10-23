@@ -3,9 +3,9 @@ import { api, assetUrl, estimateSeconds, plainText, renderUrl } from "../api";
 import { useI18n } from "../i18n";
 import { Segmented } from "./Controls";
 import type { MessageKey } from "../messages";
-import type { CheckIssue, CostEstimate, Job, Project, RenderResult } from "../types";
+import type { CheckIssue, CostEstimate, Job, PlatformInfo, Project, RenderResult } from "../types";
 
-function Preview({ project, shotIndex }: { project: Project; shotIndex: number }) {
+function Preview({ project, shotIndex, platform }: { project: Project; shotIndex: number; platform?: PlatformInfo }) {
   const { t } = useI18n();
   const shot = project.shots[shotIndex];
   const frame = useRef<HTMLDivElement>(null);
@@ -23,6 +23,13 @@ function Preview({ project, shotIndex }: { project: Project; shotIndex: number }
   const asset = shot?.visual.selected && shot.visual.mode !== "color" ? project.assets[shot.visual.selected] : undefined;
   const position = { top: "flex-start", middle: "center", bottom: "flex-end" }[style.position];
   const fit = shot?.visual.fit === "contain" ? "contain" : "cover";
+  const canvasHeight = project.canvas.aspect === "9:16" ? 1920 : 1080;
+  const safe = platform && platform.id !== "general" ? platform.safe : null;
+  // 和后端 render.safe_margin 一致：字幕挪进安全区，再留 24 像素。
+  const margin =
+    safe && style.position !== "middle"
+      ? Math.max(style.margin, (style.position === "top" ? safe.top : safe.bottom) * canvasHeight + 24)
+      : style.margin;
 
   return (
     <div ref={frame} className={`preview a${project.canvas.aspect.replace(":", "-")}`} style={{ background: shot?.visual.color ?? "#1F2937" }}>
@@ -31,7 +38,13 @@ function Preview({ project, shotIndex }: { project: Project; shotIndex: number }
       )}
       {asset?.kind === "image" && <img src={assetUrl(project.id, asset.id)} alt="" style={{ objectFit: fit }} />}
       {style.enabled && shot?.text && (
-        <div className="preview-subs" style={{ justifyContent: position, padding: `${style.margin * scale}px 7%` }}>
+        <div
+          className="preview-subs"
+          style={{
+            justifyContent: position,
+            padding: `${margin * scale}px ${Math.max(7, (safe?.right ?? 0) * 100 + 1)}% ${margin * scale}px ${Math.max(7, (safe?.left ?? 0) * 100 + 1)}%`,
+          }}
+        >
           <span
             style={{
               fontSize: Math.max(10, style.size * scale),
@@ -43,6 +56,18 @@ function Preview({ project, shotIndex }: { project: Project; shotIndex: number }
             {plainText(shot.text).replace(/[，。,]$/u, "").slice(0, 34)}
           </span>
         </div>
+      )}
+      {safe && (
+        <div
+          className="safe-area"
+          title={t("render.safeArea")}
+          style={{
+            top: `${safe.top * 100}%`,
+            bottom: `${safe.bottom * 100}%`,
+            left: `${safe.left * 100}%`,
+            right: `${safe.right * 100}%`,
+          }}
+        />
       )}
       {!shot && <span className="preview-empty">{t("render.noShots")}</span>}
     </div>
@@ -56,9 +81,10 @@ export function RenderPanel(props: {
   onShotIndex: (index: number) => void;
   onRendered: () => void;
   onBudget: (budget: number | null) => void;
+  onDelivery: (delivery: string) => void;
 }) {
   const { project } = props;
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   /** 体检问题按 code 本地化；没有对应文案时用后端的中文说明。 */
   const checkupText = (issue: CheckIssue) => {
     const key = `checkup.${issue.code}` as MessageKey;
@@ -68,6 +94,10 @@ export function RenderPanel(props: {
     return text === key ? issue.message : text;
   };
   const [job, setJob] = useState<Job | null>(null);
+  const [platforms, setPlatforms] = useState<PlatformInfo[]>([]);
+  useEffect(() => {
+    api.platforms().then(setPlatforms).catch(() => setPlatforms([]));
+  }, []);
   const [latest, setLatest] = useState<(RenderResult & { created_at: number }) | null>(null);
   const [error, setError] = useState("");
   const onRendered = useRef(props.onRendered);
@@ -148,7 +178,11 @@ export function RenderPanel(props: {
             {t("render.shotOf", { i: Math.min(props.shotIndex + 1, project.shots.length), n: project.shots.length })}
           </span>
         </div>
-        <Preview project={project} shotIndex={props.shotIndex} />
+        <Preview
+          project={project}
+          shotIndex={props.shotIndex}
+          platform={platforms.find((item) => item.id === (project.delivery ?? "general"))}
+        />
         <div className="preview-nav">
           <button type="button" className="btn" disabled={props.shotIndex <= 0} onClick={() => props.onShotIndex(props.shotIndex - 1)}>
             {t("render.prev")}
@@ -201,6 +235,26 @@ export function RenderPanel(props: {
             <input type="checkbox" checked={allowPaid} onChange={(e) => setAllowPaid(e.target.checked)} />
             {t("render.allowPaid", { n: pendingAi })}
           </label>
+        )}
+        {!running && platforms.length > 0 && (
+          <div className="field">
+            <label className="label" htmlFor="delivery">
+              {t("render.delivery")}
+            </label>
+            <select
+              id="delivery"
+              className="input"
+              value={project.delivery ?? "general"}
+              onChange={(e) => props.onDelivery(e.target.value)}
+            >
+              {platforms.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {lang === "zh" ? item.name : item.name_en}
+                </option>
+              ))}
+            </select>
+            <p className="muted small">{t("render.deliveryHint")}</p>
+          </div>
         )}
         {!running && (
           <div className="field">

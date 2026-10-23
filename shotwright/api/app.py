@@ -12,6 +12,7 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from pathlib import Path
 from typing import Literal
 
@@ -42,7 +43,7 @@ from shotwright.api.schemas import (
     UpdateShot,
 )
 from shotwright.config import ROOT_DIR, Settings, load_settings
-from shotwright.core import languages
+from shotwright.core import languages, platforms
 from shotwright.core.models import Project, Shot, ShotVisual, VoiceSettings, validate_id
 from shotwright.core.store import ProjectNotFound, ProjectStore, read_json
 from shotwright.logs import setup_logging
@@ -411,6 +412,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 "transition",
                 "bgm",
                 "sfx",
+                "delivery",
                 "references",
                 "ai_badge",
             ):
@@ -855,6 +857,14 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         """估算渲染本项目的费用（元），不实际触发任何 AI 调用。草稿档按草稿分辨率估算。"""
         project = store.load(_id(project_id))
         return cost_service.estimate_render_cost(project, settings, quality).to_dict()
+
+    @api.get("/platforms")
+    def list_platforms():
+        """交付平台规格：推荐画面比例和安全区（界面用来画安全区参考线）。"""
+        return [
+            {"id": p.id, "name": p.name, "name_en": p.name_en, "aspects": list(p.aspects), "safe": asdict(p.safe)}
+            for p in platforms.PLATFORMS.values()
+        ]
 
     @api.get("/projects/{project_id}/checkup")
     def get_checkup(project_id: str, quality: Literal["draft", "final"] = "final"):

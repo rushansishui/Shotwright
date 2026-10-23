@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Literal
 
 from shotwright.config import Settings
+from shotwright.core import platforms
 from shotwright.core.fingerprint import fingerprint
 from shotwright.core.ids import new_id
 from shotwright.core.models import Project, Shot
@@ -75,9 +76,29 @@ def _overlay_end(item) -> float:
     return item.start + item.duration if item.duration else 1e6
 
 
+SAFE_GAP = 24
+"""字幕和叠加文字离安全区边缘再留的距离（像素）。"""
+
+
+def side_margins(project: Project) -> tuple[int, int]:
+    """字幕左右留白：至少 60 像素，交付平台的安全区更宽时用安全区。"""
+    _top, _bottom, left, right = platforms.safe_margins(project.delivery, project.canvas.width, project.canvas.height)
+    return max(60, left + SAFE_GAP // 2), max(60, right + SAFE_GAP // 2)
+
+
+def safe_margin(project: Project, position: str, margin: int) -> int:
+    """把顶部 / 底部的边距挪进交付平台的安全区；居中的不动。"""
+    top, bottom, _left, _right = platforms.safe_margins(project.delivery, project.canvas.width, project.canvas.height)
+    if position == "top":
+        return max(margin, top + SAFE_GAP)
+    if position == "bottom":
+        return max(margin, bottom + SAFE_GAP)
+    return margin
+
+
 def _overlay_position(item, project: Project) -> tuple[str, str]:
     """图片叠加的位置表达式（ffmpeg overlay 的 x / y）。"""
-    margin = item.margin
+    margin = safe_margin(project, item.position, item.margin)
     x = "(W-w)/2"
     if item.position == "top":
         y = f"{margin}"
@@ -452,7 +473,8 @@ class Renderer:
         if not style.enabled:
             return []
         font = self._font_path(project)
-        max_width = int(project.canvas.width * 0.86)
+        left, right = side_margins(project)
+        max_width = min(int(project.canvas.width * 0.86), project.canvas.width - left - right)
         cues: list[subs.Cue] = []
         for shot, timing in zip(project.shots, timings, strict=True):
             if not shot.text.strip():
@@ -554,10 +576,19 @@ class Renderer:
             and not project.ai_badge
             and project.loudness is None
             and not grade
+            and not (self.quality == "final" and project.delivery != platforms.DEFAULT_PLATFORM)
         ):
             self.stages.append(StageRecord("final", "final", assembly_fp, True, 0.0))
             return assembly
 
+        # 字幕和叠加文字挪进交付平台的安全区，不被平台界面挡住。
+        style = style.model_copy(update={"margin": safe_margin(project, style.position, style.margin)})
+        text_overlays = [
+            item.model_copy(update={"margin": safe_margin(project, item.position, item.margin)})
+            for item in text_overlays
+        ]
+        margin_l, margin_r = side_margins(project)
+        reencode = self.quality == "final" and project.delivery != platforms.DEFAULT_PLATFORM
         needs_ass = bool(cues or text_overlays or project.ai_badge)
         font = self._font_path(project) if needs_ass else None
         fp = fingerprint(
@@ -575,6 +606,7 @@ class Renderer:
             project.loudness,
             AUDIO_MIX,
             (grade, GRADE_VERSION) if grade else None,
+            project.delivery if project.delivery != platforms.DEFAULT_PLATFORM else None,
             (project.sfx.model_dump(), ambience.sha256 if ambience else None, cuts if whoosh else None, WHOOSH_VERSION)
             if ambience or whoosh
             else None,
@@ -611,6 +643,8 @@ class Renderer:
                             height=project.canvas.height,
                             family=family,
                             overlays=text_overlays,
+                            margin_l=margin_l,
+                            margin_r=margin_r,
                         ),
                         encoding="utf-8",
                     )
@@ -684,6 +718,10 @@ class Renderer:
                 if audio_graph:
                     filters.append(audio_graph)
                     audio_map = "[a]"
+                if reencode and not video_in.startswith("v"):
+                    # 交付平台有码率和编码要求，没有滤镜时也要重新编码一次。
+                    filters.append(f"[{video_in}]null[{video_out}]")
+                    video_in = video_out
                 command = [*args]
                 if filters:
                     command += ["-filter_complex", ";".join(filters)]
@@ -691,7 +729,12 @@ class Renderer:
                 # 方括号形式只在滤镜图里有同名的输出标签时才成立。
                 video_map = f"[{video_in}]" if video_in.startswith("v") else video_in
                 command += ["-map", video_map, "-map", audio_map]
-                command += _video_args(project.canvas.fps, self.quality) if video_in.startswith("v") else ["-c:v", "copy"]
+                if not video_in.startswith("v"):
+                    command += ["-c:v", "copy"]
+                elif reencode:
+                    command += platforms.encode_args(project.delivery, project.canvas.fps)
+                else:
+                    command += _video_args(project.canvas.fps, self.quality)
                 command += AUDIO_ARGS if audio_map != "0:a" else ["-c:a", "copy"]
                 mixed = work / "mixed.mp4"
                 command += [

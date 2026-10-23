@@ -998,3 +998,42 @@ def test_ambience_search_sets_project_ambience(client, settings, tmp_path):
         result["sfx"]["ambience"] in result["assets"]
         and result["sfx"]["ambience_query"] == "city night ambience"
     )
+
+
+def test_delivery_platform_encoding_and_safe_area(store, settings):
+    import json
+    import subprocess
+
+    from shotwright.pipeline.render import Renderer, safe_margin, side_margins
+    from shotwright.services import checkup
+
+    shots = [Shot(text="第一句话。", visual=ShotVisual(mode="color"))]
+    project = store.create(
+        Project(voice=VoiceSettings(provider="silent"), shots=shots, loudness=None, delivery="douyin")
+    )
+    assert (
+        safe_margin(project, "bottom", 240) == 1920 * 0.20 + 24 and safe_margin(project, "middle", 10) == 10
+    )
+    assert side_margins(project)[1] > side_margins(project)[0]  # 右侧有点赞、评论按钮
+    result = Renderer(store, settings).render(project.id)
+    video = store.render_dir(project.id, result.render_id) / result.video
+    probe = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=profile",
+            "-of",
+            "json",
+            str(video),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(probe.stdout)["streams"][0]["profile"] == "High"
+
+    project.canvas.aspect = "16:9"
+    assert "platform_aspect" in [issue.code for issue in checkup.check_project(project, settings)]

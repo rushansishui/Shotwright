@@ -196,6 +196,8 @@ export interface Project {
     beat_sync?: boolean;
   };
   sfx?: SfxSettings;
+  /** 交付平台：决定编码参数和字幕、叠加文字的安全区。 */
+  delivery?: string;
   /** 导出响度（LUFS）；null 表示不处理。 */
   loudness?: number | null;
   references: ReferenceAsset[];
@@ -207,6 +209,16 @@ export interface Project {
   budget?: number | null;
   revision: number;
   updated_at: number;
+}
+
+/** 交付平台规格（来自后端唯一的平台规格表）。 */
+export interface PlatformInfo {
+  id: string;
+  name: string;
+  name_en: string;
+  aspects: Aspect[];
+  /** 安全区：四周被平台界面遮住的比例。 */
+  safe: { top: number; bottom: number; left: number; right: number };
 }
 
 /** 渲染前体检发现的一个问题。 */

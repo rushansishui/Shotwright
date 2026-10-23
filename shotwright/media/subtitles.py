@@ -294,8 +294,13 @@ def to_ass(
     height: int,
     family: str,
     overlays: list | None = None,
+    margin_l: int = 60,
+    margin_r: int = 60,
 ) -> str:
-    """生成 ASS。``overlays`` 是画面上方的文字叠加（卖点、价格、购买引导）。"""
+    """生成 ASS。``overlays`` 是画面上方的文字叠加（卖点、价格、购买引导）。
+
+    ``margin_l`` / ``margin_r`` 是左右留白（像素），交付平台的安全区会把它们加大。
+    """
     alignment = {"bottom": 2, "middle": 5, "top": 8}[style.position]
     overlay_styles: list[str] = []
     overlay_events: list[str] = []
@@ -307,7 +312,7 @@ def to_ass(
         overlay_styles.append(
             f"Style: {name},{family},{item.size},{_ass_color(item.color)},&H000000FF,"
             f"{_ass_color(item.outline_color)},&H64000000,1,0,0,0,100,100,0,0,1,3,0,"
-            f"{position},60,60,{item.margin},1"
+            f"{position},{margin_l},{margin_r},{item.margin},1"
         )
         end = "" if item.duration is None else _ass_time(item.start + item.duration)
         overlay_events.append(
@@ -323,7 +328,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{family},{style.size},{_ass_color(style.color)},&H000000FF,{_ass_color(style.outline_color)},&H64000000,0,0,0,0,100,100,0,0,1,{style.outline:g},0,{alignment},60,60,{style.margin},1
+Style: Default,{family},{style.size},{_ass_color(style.color)},&H000000FF,{_ass_color(style.outline_color)},&H64000000,0,0,0,0,100,100,0,0,1,{style.outline:g},0,{alignment},{margin_l},{margin_r},{style.margin},1
 """
     if overlay_styles:
         header += "\n".join(overlay_styles) + "\n"

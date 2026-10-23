@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 
 from shotwright.config import Settings
+from shotwright.core import platforms
 from shotwright.core.models import MIN_SLOW_SPEED, Project
 from shotwright.services.durations import estimated_shot_seconds
 
@@ -77,6 +78,16 @@ def check_project(project: Project, settings: Settings, *, quality: str = "final
                     )
                 )
     issues += _overlay_issues(project)
+    spec = platforms.platform(project.delivery)
+    if project.canvas.aspect not in spec.aspects:
+        issues.append(
+            CheckIssue(
+                "platform_aspect",
+                f"交付平台「{spec.name}」推荐 {' / '.join(spec.aspects)}，当前画面比例是 {project.canvas.aspect}",
+                None,
+                {"platform": spec.name, "aspects": " / ".join(spec.aspects), "aspect": project.canvas.aspect},
+            )
+        )
     if ai_shots >= 2 and project.look.is_empty():
         issues.append(CheckIssue("no_look", "有多个 AI 镜头但没有全片设定，人物和产品在各镜头可能不一致", None, {}))
     if project.budget is not None:
