@@ -113,3 +113,42 @@ def test_api_turns_loudness_off_and_on(client):
     assert patched["loudness"] is None  # 不传就不改
     patched = client.patch(f"/api/v2/projects/{project['id']}", json={"loudness": -16}).json()
     assert patched["loudness"] == -16
+
+
+class _RecordingLLM:
+    def __init__(self, reply):
+        self.reply = reply
+        self.messages = []
+
+    def complete(self, messages, *, json_mode=False):
+        self.messages.append(messages)
+        return self.reply
+
+
+def test_video_type_is_stored_and_sent_to_llm():
+    from shotwright.services import storyboard
+
+    llm = _RecordingLLM('{"title": "t", "shots": [{"text": "一句话。", "terms": ["a"], "prompt": "p"}]}')
+    storyboard.generate_storyboard(llm, "卖咖啡机", video_type="product_ad")
+    assert "视频类型：商品广告" in llm.messages[0][-1]["content"]
+
+
+def test_api_saves_video_type_and_footage_sets_default(client, tmp_path):
+    from conftest import make_clip
+
+    created = client.post(
+        "/api/v2/projects",
+        json={"mode": "split", "script": "一句话。", "video_type": "brand", "voice": {"provider": "silent"}},
+    ).json()
+    assert created["video_type"] == "brand"
+    assert client.patch(f"/api/v2/projects/{created['id']}", json={"video_type": "talking"}).json()[
+        "video_type"
+    ] == "talking"
+    assert client.patch(f"/api/v2/projects/{created['id']}", json={"video_type": "nope"}).status_code == 422
+
+    empty = client.post("/api/v2/projects", json={"mode": "empty"}).json()
+    clip = make_clip(tmp_path / "raw.mp4", seconds=1.0)
+    with clip.open("rb") as handle:
+        response = client.post(f"/api/v2/projects/{empty['id']}/footage", files={"file": ("raw.mp4", handle)})
+    assert response.status_code == 201, response.text
+    assert client.get(f"/api/v2/projects/{empty['id']}").json()["video_type"] == "footage"

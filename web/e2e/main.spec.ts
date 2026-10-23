@@ -117,4 +117,18 @@ test.describe("Shotwright 主流程", () => {
     await shots.first().getByRole("button", { name: /与下一个镜头合并|Merge with the next shot/ }).click();
     await expect(shots).toHaveCount(2);
   });
+
+  test("诉求模板：选类型、填模板，提交前提醒没填的内容", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("radio", { name: /口播|Talking head/ }).click();
+    await expect(page.locator("#subject")).toHaveAttribute("placeholder", /视频号|YouTube Shorts/);
+    await page.getByRole("button", { name: /使用模板|Use template/ }).click();
+    await expect(page.locator("#subject")).toHaveValue(/主讲人|Presenter/);
+    await page.getByRole("button", { name: /生成分镜|Create storyboard/ }).click();
+    await expect(page.getByRole("alert")).toContainText(/没有填写|unfilled/);
+    await expect(page.getByRole("button", { name: /仍然生成|Create anyway/ })).toBeVisible();
+    // 填入例子后不再提醒。
+    await page.getByRole("button", { name: /填入例子|Fill in example/ }).click();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+  });
 });

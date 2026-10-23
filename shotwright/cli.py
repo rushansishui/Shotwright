@@ -51,7 +51,10 @@ def cmd_serve(args) -> int:
 def cmd_new(args) -> int:
     settings, store = _store(args)
     project = Project(
-        subject=args.subject or "", canvas=Canvas(aspect=args.aspect), target_seconds=args.duration
+        subject=args.subject or "",
+        canvas=Canvas(aspect=args.aspect),
+        target_seconds=args.duration,
+        video_type=args.type,
     )
     tts = args.tts or settings.default_provider("tts") or "edge"
     project.voice = VoiceSettings(provider=tts)
@@ -68,6 +71,7 @@ def cmd_new(args) -> int:
             language=languages.get(args.language).prompt_name,
             shots=args.shots,
             duration=args.duration,
+            video_type=args.type,
         )
         project.title, project.shots = title, shots
     else:
@@ -180,6 +184,12 @@ def build_parser() -> argparse.ArgumentParser:
     new.add_argument("--script-file", help="从文件读取文案（UTF-8）")
     new.add_argument("--llm", action="store_true", help="让大模型根据主题写文案并拆镜头")
     new.add_argument("--shots", type=int, default=None, help="期望的镜头数量；默认由大模型决定")
+    new.add_argument(
+        "--type",
+        choices=["product_ad", "brand", "explainer", "talking", "footage"],
+        default=None,
+        help="视频类型：商品广告、品牌宣传、知识科普、口播、原片改造；诉求模板见 docs/BRIEF_TEMPLATES.md",
+    )
     new.add_argument("--duration", type=float, default=None, help="目标总时长（秒）；默认由大模型决定")
     new.add_argument("--aspect", choices=["9:16", "16:9", "1:1"], default="9:16")
     new.add_argument(

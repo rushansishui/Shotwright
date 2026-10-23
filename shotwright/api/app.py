@@ -326,7 +326,9 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
     @api.post("/projects", status_code=201)
     def create_project(body: CreateProject):
         lang = languages.get(body.language)
-        project = Project(title=body.title, subject=body.subject, target_seconds=body.duration)
+        project = Project(
+            title=body.title, subject=body.subject, target_seconds=body.duration, video_type=body.video_type
+        )
         if body.canvas:
             project.canvas = body.canvas
         if not body.voice and settings.default_provider("tts"):
@@ -346,6 +348,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 language=lang.prompt_name,
                 shots=body.shots,
                 duration=body.duration,
+                video_type=body.video_type,
             )
             project.title = project.title or title
             project.shots = shots
@@ -370,6 +373,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             for name in (
                 "title",
                 "subject",
+                "video_type",
                 "target_seconds",
                 "canvas",
                 "voice",
@@ -663,6 +667,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 result = footage.import_footage(
                     store, settings, project, path, filename=filename, replace_shots=replace_shots
                 )
+                if project.video_type is None:
+                    project.video_type = "footage"
                 store.save(project)
         return {
             "source_asset": result.source_asset,

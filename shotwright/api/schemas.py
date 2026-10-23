@@ -15,6 +15,7 @@ from shotwright.core.models import (
     ReferenceAsset,
     SubtitleStyle,
     TransitionSettings,
+    VideoType,
     VisualMode,
     VoiceSettings,
     check_subject,
@@ -31,6 +32,8 @@ class CreateProject(_Body):
     script: str = Field("", max_length=20000)
     title: str = Field("", max_length=120)
     mode: Literal["llm", "split", "empty"] = "split"
+    video_type: VideoType | None = None
+    """视频类型（商品广告、品牌宣传、知识科普、口播、原片改造），写分镜时据此安排结构。"""
     """llm：让大模型写文案并拆镜头；split：把 script 按句拆成镜头；empty：空项目。"""
     shots: int | None = Field(None, ge=1, le=60)
     """期望的镜头数；为空时由大模型按目标时长和诉求内容自行决定。"""
@@ -53,6 +56,7 @@ class UpdateProject(_Body):
     """切换视频语言：同时换成该语言的默认配音声音和字幕字体（文案不变）。"""
     subject: str | None = None
     """视频诉求；上限 4096 字节。"""
+    video_type: VideoType | None = None
     target_seconds: float | None = Field(None, gt=0, le=1800)
     """目标总时长（秒）。"""
     canvas: Canvas | None = None

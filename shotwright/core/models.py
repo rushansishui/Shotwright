@@ -47,6 +47,15 @@ ASSET_FOLDERS: tuple[str, ...] = (
     "reference",
     "other",
 )
+VideoType = Literal["product_ad", "brand", "explainer", "talking", "footage"]
+"""视频类型：商品广告、品牌宣传、知识科普、口播、原片改造。决定诉求模板、写分镜时的叙事结构和镜头类型。"""
+VIDEO_TYPE_NAMES: dict[str, str] = {
+    "product_ad": "商品广告",
+    "brand": "品牌宣传",
+    "explainer": "知识科普",
+    "talking": "口播",
+    "footage": "原片改造",
+}
 ShotStatus = Literal["draft", "ready", "rendering", "done", "failed"]
 
 ReferenceRole = Literal["product", "person", "logo", "style"]
@@ -359,6 +368,8 @@ class Project(_Model):
     title: str = ""
     subject: str = ""
     """视频诉求：用户想要的内容。最多 4096 字节（UTF-8）。"""
+    video_type: VideoType | None = None
+    """视频类型；为空表示没选（旧项目或只按文案拆镜头）。"""
     language: str = "zh-CN"
     """视频内容的语言（BCP-47，例如 zh-CN、en-US），决定文案语言、默认配音和字幕字体。"""
     target_seconds: float | None = Field(None, gt=0, le=1800)

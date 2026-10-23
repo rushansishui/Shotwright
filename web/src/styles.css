@@ -1144,3 +1144,24 @@ input[type="color"] {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---- 首页：诉求写作要点与提交前检查 ---- */
+.brief-tips {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--muted, #6b7280);
+}
+
+.brief-tips summary {
+  cursor: pointer;
+}
+
+.brief-tips ul,
+.brief-check ul {
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+
+.brief-check p {
+  margin: 0;
+}

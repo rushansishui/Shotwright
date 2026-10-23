@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 
-from shotwright.core.models import Shot, ShotVisual
+from shotwright.core.models import VIDEO_TYPE_NAMES, Shot, ShotVisual
 from shotwright.providers.base import LLMProvider, ProviderError
 
 _SENTENCE_END = re.compile(r"(?<=[。！？!?；;…])\s*|(?<=\.)\s+|\n+")
@@ -70,6 +70,12 @@ def _length_rule(shots: int | None, duration: float | None) -> str:
     return "镜头数量由你按内容决定，整条视频控制在 30–60 秒。"
 
 
+def _user_message(subject: str, video_type: str | None) -> str:
+    kind = VIDEO_TYPE_NAMES.get(video_type or "")
+    prefix = f"视频类型：{kind}\n" if kind else ""
+    return f"{prefix}主题与诉求：{subject}"
+
+
 def _extract_json(text: str) -> dict:
     cleaned = text.strip()
     fence = re.search(r"```(?:json)?\s*(.*?)```", cleaned, re.DOTALL)
@@ -91,6 +97,7 @@ def generate_storyboard(
     language: str = "简体中文",
     shots: int | None = None,
     duration: float | None = None,
+    video_type: str | None = None,
 ) -> tuple[str, list[Shot]]:
     """根据诉求生成分镜。``shots`` / ``duration`` 为空时交给大模型自行决定。"""
     messages = [
@@ -98,7 +105,7 @@ def generate_storyboard(
             "role": "system",
             "content": SYSTEM_PROMPT.format(language=language, length_rule=_length_rule(shots, duration)),
         },
-        {"role": "user", "content": f"主题与诉求：{subject}"},
+        {"role": "user", "content": _user_message(subject, video_type)},
     ]
     data = _extract_json(llm.complete(messages, json_mode=True))
     title = str(data.get("title") or subject)[:120]

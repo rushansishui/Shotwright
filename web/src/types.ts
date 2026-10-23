@@ -107,10 +107,14 @@ export interface TransitionSettings {
   duration: number;
 }
 
+/** 视频类型：商品广告、品牌宣传、知识科普、口播、原片改造。 */
+export type VideoType = "product_ad" | "brand" | "explainer" | "talking" | "footage";
+
 export interface Project {
   id: string;
   title: string;
   subject: string;
+  video_type?: VideoType | null;
   language: string;
   target_seconds: number | null;
   /** 目标总时长（秒）；成片以实际配音为准。 */

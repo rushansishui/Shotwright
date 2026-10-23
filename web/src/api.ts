@@ -10,6 +10,7 @@ import type {
   RenderResult,
   Shot,
   VersionInfo,
+  VideoType,
   VisualPatch,
   VoiceSettings,
 } from "./types";
@@ -75,13 +76,14 @@ export const api = {
     shots?: number | null;
     /** 目标总时长（秒）；为空时由大模型估算。 */
     duration?: number | null;
+    video_type?: VideoType | null;
   }) => request<Project>("/projects", json("POST", body)),
   updateProject: (
     id: string,
     body: Partial<
       Pick<
         Project,
-        "title" | "language" | "canvas" | "voice" | "subtitle" | "bgm" | "loudness" | "references" | "overlays" | "transition" | "ai_badge"
+        "title" | "video_type" | "language" | "canvas" | "voice" | "subtitle" | "bgm" | "loudness" | "references" | "overlays" | "transition" | "ai_badge"
       >
     >,
   ) =>
