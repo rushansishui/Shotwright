@@ -8,9 +8,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from shotwright.core.models import (
     BgmSettings,
+    CameraMove,
     Canvas,
     FillMode,
     FitMode,
+    Look,
     Overlay,
     ReferenceAsset,
     SubtitleStyle,
@@ -57,6 +59,8 @@ class UpdateProject(_Body):
     subject: str | None = None
     """视频诉求；上限 4096 字节。"""
     video_type: VideoType | None = None
+    look: Look | None = None
+    """全片设定；整体替换。"""
     target_seconds: float | None = Field(None, gt=0, le=1800)
     """目标总时长（秒）。"""
     canvas: Canvas | None = None
@@ -83,6 +87,8 @@ class VisualPatch(_Body):
     mode: VisualMode | None = None
     terms: list[str] | None = Field(None, max_length=10)
     prompt: str | None = Field(None, max_length=2000)
+    camera: CameraMove | None = None
+    link: str | None = Field(None, max_length=400)
     provider: str | None = None
     selected: str | None = None
     first_frame: str | None = None

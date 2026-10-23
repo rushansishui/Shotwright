@@ -214,6 +214,7 @@ registry.register(
         has_audio=False,
         video_to_video=True,
         max_ref_images=1,
+        prompt_languages=("zh", "en"),
     ),
     SeedanceVideo,
 )

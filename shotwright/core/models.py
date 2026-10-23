@@ -30,6 +30,7 @@ def check_subject(subject: str) -> str:
     return subject
 
 
+_CODE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,11}$")
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 _HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
@@ -72,6 +73,12 @@ FitMode = Literal["cover", "contain", "blur"]
 
 FillMode = Literal["slow_hold", "hold", "loop"]
 """视频素材比镜头短时怎么补足：适度慢放再定格最后一帧、直接定格、循环播放。"""
+
+CameraMove = Literal["auto", "static", "push_in", "pull_out", "pan", "truck", "orbit", "crane", "handheld"]
+"""镜头运动：自动（交给模型）、固定、推、拉、摇、移（跟拍）、环绕、升降、手持。"""
+
+SubjectKind = Literal["product", "person", "object", "place"]
+"""全片设定里的主体类别：产品、人物、物品、场所。"""
 
 MIN_SLOW_SPEED = 0.8
 """「慢放加定格」最多慢到原速的 0.8 倍，再慢动作会明显发飘。"""
@@ -188,12 +195,95 @@ class PendingTask(_Model):
         return value
 
 
+class LookSubject(_Model):
+    """全片设定里的一个主体（产品、人物、物品、场所），各镜头用同一个代号指代它。"""
+
+    code: str
+    """代号，例如 P1、A；镜头提示词里用它指代这个主体，生成时自动带上外观描述。"""
+    name: str = ""
+    """简短名称，例如「便携咖啡机」「女主角」。"""
+    kind: SubjectKind = "object"
+    appearance: str = ""
+    """外观：颜色、材质、形状、尺寸、服装、发型等，越具体各镜头越一致。"""
+    reference: str | None = None
+    """对应主体库里的参考图（素材 id）；为空表示没有。"""
+
+    @field_validator("code")
+    @classmethod
+    def _check_code(cls, value: str) -> str:
+        if not _CODE_PATTERN.fullmatch(value):
+            raise ValueError("代号以字母开头，只能包含字母、数字、下划线和连字符，最长 12 个字符")
+        return value
+
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, value: str) -> str:
+        return value[:60]
+
+    @field_validator("appearance")
+    @classmethod
+    def _check_appearance(cls, value: str) -> str:
+        return value[:600]
+
+    @field_validator("reference")
+    @classmethod
+    def _check_reference(cls, value: str | None) -> str | None:
+        return None if value is None else validate_id(value)
+
+
+class Look(_Model):
+    """全片设定：写分镜时先定下来，生成每个镜头时自动拼进提示词，保证全片一致。"""
+
+    subjects: list[LookSubject] = Field(default_factory=list, max_length=12)
+    scene: str = ""
+    """场景：主要发生在哪里，时间、天气、环境特征。"""
+    style: str = ""
+    """视觉风格：画面质感、色调、光线、镜头语言。"""
+    avoid: str = ""
+    """禁止项：不要出现的内容。"""
+    style_ref: str | None = None
+    """风格参考图（素材 id）。预留，暂未使用。"""
+    grade: str = ""
+    """调色预设。预留，渲染时统一调色用。"""
+    brand: str | None = None
+    """品牌包。预留，v0.5 品牌包作为全片设定的预设。"""
+
+    @field_validator("scene", "style")
+    @classmethod
+    def _check_long(cls, value: str) -> str:
+        return value[:600]
+
+    @field_validator("avoid")
+    @classmethod
+    def _check_avoid(cls, value: str) -> str:
+        return value[:400]
+
+    @field_validator("style_ref")
+    @classmethod
+    def _check_style_ref(cls, value: str | None) -> str | None:
+        return None if value is None else validate_id(value)
+
+    @model_validator(mode="after")
+    def _unique_codes(self) -> Look:
+        codes = [subject.code for subject in self.subjects]
+        if len(codes) != len(set(codes)):
+            raise ValueError("全片设定里的代号不能重复")
+        return self
+
+    def is_empty(self) -> bool:
+        return not (self.subjects or self.scene.strip() or self.style.strip() or self.avoid.strip())
+
+
 class ShotVisual(_Model):
     mode: VisualMode = "stock"
     terms: list[str] = Field(default_factory=list)
     """stock 模式的检索词（建议英文）。"""
     prompt: str = ""
-    """ai / image 模式的提示词。"""
+    """ai / image 模式的画面描述（只写这个镜头本身；全片设定、运镜和衔接在生成时自动拼上）。"""
+    camera: CameraMove = "auto"
+    """镜头运动；auto 表示由画面描述决定。"""
+    link: str = ""
+    """衔接说明：开头怎样承接上一个镜头、结尾留给下一个镜头什么。"""
     provider: str | None = None
     """为空时使用配置里该类别的默认 Provider。"""
     candidates: list[str] = Field(default_factory=list)
@@ -225,6 +315,11 @@ class ShotVisual(_Model):
     @classmethod
     def _check_candidates(cls, value: list[str]) -> list[str]:
         return [validate_id(item) for item in value]
+
+    @field_validator("link")
+    @classmethod
+    def _check_link(cls, value: str) -> str:
+        return value[:400]
 
     @field_validator("selected", "first_frame", "edit_asset")
     @classmethod
@@ -370,6 +465,8 @@ class Project(_Model):
     """视频诉求：用户想要的内容。最多 4096 字节（UTF-8）。"""
     video_type: VideoType | None = None
     """视频类型；为空表示没选（旧项目或只按文案拆镜头）。"""
+    look: Look = Field(default_factory=Look)
+    """全片设定：主体代号与外观、场景、视觉风格、禁止项。"""
     language: str = "zh-CN"
     """视频内容的语言（BCP-47，例如 zh-CN、en-US），决定文案语言、默认配音和字幕字体。"""
     target_seconds: float | None = Field(None, gt=0, le=1800)

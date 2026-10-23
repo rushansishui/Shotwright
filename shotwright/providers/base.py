@@ -74,6 +74,8 @@ class ProviderSpec:
     """支持的参考图数量上限；0 表示不支持参考图。"""
     word_timestamps: bool = False
     """配音服务是否提供逐词时间戳（用于精确字幕对齐）。"""
+    prompt_languages: tuple[str, ...] = ("en",)
+    """生成模型能直接理解的提示词语言（zh / en）。项目语言不在其中时，提交前先用大模型翻译。"""
 
     def missing_fields(self, settings: dict[str, str]) -> list[str]:
         return [f.key for f in self.fields if f.required and not settings.get(f.key)]

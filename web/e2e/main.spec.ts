@@ -65,9 +65,9 @@ test.describe("Shotwright 主流程", () => {
     await expect(shots).toHaveCount(1);
   });
 
-  test("参考素材、文字与转场、语言版本区块都在", async ({ page }) => {
+  test("全片设定与主体库、文字与转场、语言版本区块都在", async ({ page }) => {
     await createProject(page, `区块${RUN_ID}，${TWO_SHOTS}`);
-    await expect(page.getByRole("heading", { name: /参考素材|Reference assets/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /全片设定与主体库|Look and references/ })).toBeVisible();
     await expect(page.getByRole("heading", { name: /文字与转场|Text & transitions/ })).toBeVisible();
     await expect(page.getByRole("heading", { name: /语言版本|Language versions/ })).toBeVisible();
   });
@@ -130,5 +130,18 @@ test.describe("Shotwright 主流程", () => {
     // 填入例子后不再提醒。
     await page.getByRole("button", { name: /填入例子|Fill in example/ }).click();
     await expect(page.getByRole("alert")).toHaveCount(0);
+  });
+
+  test("全片设定：添加主体并保存外观", async ({ page }) => {
+    await createProject(page, `全片设定${RUN_ID}。${TWO_SHOTS}`);
+    const look = page.locator(".look");
+    await look.getByRole("button", { name: /添加主体|Add subject/ }).click();
+    const appearance = look.getByRole("textbox", { name: /外观|Appearance/ }).first();
+    await appearance.fill("哑光白色圆柱形机身");
+    await appearance.blur();
+    await page.reload();
+    await expect(page.locator(".look").getByRole("textbox", { name: /外观|Appearance/ }).first()).toHaveValue(
+      "哑光白色圆柱形机身",
+    );
   });
 });

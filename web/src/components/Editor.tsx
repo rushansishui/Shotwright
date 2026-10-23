@@ -8,6 +8,7 @@ import { Versions } from "./Versions";
 import { ShotCard } from "./ShotCard";
 import { useEditor } from "./editor/useEditor";
 import { BgmSection } from "./editor/BgmSection";
+import { LookSection } from "./editor/LookSection";
 import { ReferencesSection } from "./editor/ReferencesSection";
 import { OverlaySection } from "./editor/OverlaySection";
 
@@ -193,7 +194,9 @@ export function Editor({ projectId }: { projectId: string }) {
           </div>
         </Section>
 
-        <Section step={2} title={t("references.title")}>
+        <Section step={2} title={t("look.section")}>
+          <LookSection project={project} run={run} />
+          <div className="divider" />
           <ReferencesSection project={project} run={run} setError={setError} />
         </Section>
 

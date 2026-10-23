@@ -374,6 +374,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 "title",
                 "subject",
                 "video_type",
+                "look",
                 "target_seconds",
                 "canvas",
                 "voice",
@@ -391,6 +392,9 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 project.loudness = body.loudness
             if project.bgm.asset_id and project.bgm.asset_id not in project.assets:
                 raise ValueError("背景音乐素材不存在")
+            for item in project.look.subjects:
+                if item.reference and item.reference not in project.assets:
+                    raise ValueError("全片设定引用的参考素材不存在")
             for ref in project.references:
                 asset = project.assets.get(ref.asset_id)
                 if asset is None:

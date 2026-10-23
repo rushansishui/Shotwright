@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { assetUrl, estimateSeconds } from "../api";
 import { providerName, useI18n } from "../i18n";
-import type { Asset, Project, ProviderInfo, Shot, VisualMode, VisualPatch } from "../types";
+import type { MessageKey } from "../messages";
+import type { Asset, CameraMove, Project, ProviderInfo, Shot, VisualMode, VisualPatch } from "../types";
 import { Icon, Segmented } from "./Controls";
 import { ShotEdit } from "./ShotEdit";
 
@@ -25,6 +26,7 @@ export function Thumb(props: { project: Project; assetId: string | null; color: 
 }
 
 const MODES: VisualMode[] = ["stock", "ai", "image", "upload", "color"];
+const CAMERAS: CameraMove[] = ["auto", "static", "push_in", "pull_out", "pan", "truck", "orbit", "crane", "handheld"];
 
 export function ShotCard(props: {
   project: Project;
@@ -53,12 +55,14 @@ export function ShotCard(props: {
   const [text, setText] = useState(shot.text);
   const [terms, setTerms] = useState(visual.terms.join(", "));
   const [prompt, setPrompt] = useState(visual.prompt);
+  const [link, setLink] = useState(visual.link ?? "");
   const fileInput = useRef<HTMLInputElement>(null);
   const { t, lang } = useI18n();
 
   useEffect(() => setText(shot.text), [shot.text]);
   useEffect(() => setTerms(visual.terms.join(", ")), [visual.terms]);
   useEffect(() => setPrompt(visual.prompt), [visual.prompt]);
+  useEffect(() => setLink(visual.link ?? ""), [visual.link]);
 
   const generator = visual.mode === "ai" ? props.aiVideo : visual.mode === "image" ? props.aiImage : null;
   const modeOf = (asset: Asset | undefined): VisualMode | undefined => {
@@ -223,9 +227,10 @@ export function ShotCard(props: {
         {(visual.mode === "ai" || visual.mode === "image") && (
           <div className="inline-field">
             <label htmlFor={`prompt-${shot.id}`}>{t("shot.prompt")}</label>
-            <input
+            <textarea
               id={`prompt-${shot.id}`}
-              className="input"
+              className="input prompt-area"
+              rows={3}
               value={prompt}
               placeholder={
                 visual.mode === "ai" ? t("shot.promptVideo") : t("shot.promptImage")
@@ -252,6 +257,37 @@ export function ShotCard(props: {
                 t("shot.generate")
               )}
             </button>
+          </div>
+        )}
+        {visual.mode === "ai" && (
+          <div className="inline-field shot-link">
+            <label htmlFor={`camera-${shot.id}`}>{t("shot.camera")}</label>
+            <select
+              id={`camera-${shot.id}`}
+              className="input camera"
+              value={visual.camera ?? "auto"}
+              disabled={visual.locked}
+              onChange={(e) => props.onUpdate({ visual: { camera: e.target.value as CameraMove } })}
+            >
+              {CAMERAS.map((camera) => (
+                <option key={camera} value={camera}>
+                  {t(`shot.camera.${camera}` as MessageKey)}
+                </option>
+              ))}
+            </select>
+            <label htmlFor={`link-${shot.id}`} className="sr-only">
+              {t("shot.link")}
+            </label>
+            <textarea
+              id={`link-${shot.id}`}
+              className="input"
+              rows={1}
+              value={link}
+              placeholder={`${t("shot.link")}：${t("shot.linkPlaceholder")}`}
+              disabled={visual.locked}
+              onChange={(e) => setLink(e.target.value)}
+              onBlur={() => link !== (visual.link ?? "") && props.onUpdate({ visual: { link } })}
+            />
           </div>
         )}
         {canModify && (

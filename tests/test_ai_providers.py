@@ -223,7 +223,7 @@ def test_generation_requires_confirmation(store, settings):
 def test_image_then_video_uses_first_frame(store, settings):
     project, shot = _shot_project(store, "image", provider="pixabay")
     [image_id] = visuals.refresh_candidates(store, settings, project, shot, confirm_charge=True)
-    assert project.assets[image_id].kind == "image" and FakeImageGen.calls == ["a cat"]
+    assert project.assets[image_id].kind == "image" and FakeImageGen.calls[0].startswith("a cat\n")
     assert shot.visual.selected == image_id
 
     visuals.switch_mode(project, shot, "ai")

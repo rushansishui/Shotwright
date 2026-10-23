@@ -1165,3 +1165,48 @@ input[type="color"] {
 .brief-check p {
   margin: 0;
 }
+
+/* ---- 全片设定 ---- */
+.look-subject {
+  display: grid;
+  gap: 6px;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--line);
+}
+
+.look-subject .input.code {
+  width: 6em;
+  flex: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.look-field {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.shot-link textarea,
+.prompt-area {
+  min-height: 4.5em;
+}
+
+.inline-field .input.camera {
+  flex: none;
+  width: auto;
+}
+
+.look-row {
+  display: grid;
+  grid-template-columns: 6em minmax(0, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.look-row .input {
+  width: 100%;
+}
+
+.look-row select.input {
+  width: auto;
+}

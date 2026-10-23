@@ -203,3 +203,87 @@ def test_prompt_size_counts_words_and_cjk():
 
     assert prompt_size("a white coffee maker") == 4
     assert prompt_size("白色咖啡机放在木桌上") == 5
+
+
+
+def test_compose_prompt_adds_look_camera_link_and_no_text():
+    from shotwright.core.models import Look, LookSubject
+    from shotwright.services import prompting
+
+    project = Project(
+        look=Look(
+            subjects=[
+                LookSubject(code="P1", name="咖啡机", kind="product", appearance="哑光白色圆柱形机身"),
+                LookSubject(code="A", name="女主", kind="person", appearance="黑色短发"),
+            ],
+            scene="城市公寓",
+            style="明亮干净",
+            avoid="其他品牌",
+        )
+    )
+    shot = Shot(
+        text="x", visual=ShotVisual(prompt="P1 放在桌上", camera="orbit", link="承接上一镜头的手部动作")
+    )
+    text = prompting.compose(project, shot)
+    assert text.startswith("P1 放在桌上")
+    assert "运镜：镜头绕主体缓慢环绕" in text and "衔接：承接上一镜头的手部动作" in text
+    assert "P1（咖啡机）：哑光白色圆柱形机身" in text and "黑色短发" not in text  # 只带上用到的主体
+    assert "场景：城市公寓" in text and "不要出现：其他品牌" in text and "不出现任何文字" in text
+
+    image = prompting.compose(project, shot, target="image")
+    assert "运镜" not in image and "静态画面" in image
+
+    project.language = "en-US"
+    assert "Camera: Slow orbit" in prompting.compose(project, shot)
+
+
+def test_prompt_is_translated_when_model_lacks_language(store, settings):
+    from shotwright.providers import registry
+    from shotwright.providers.base import ProviderSpec
+    from shotwright.services import prompting, visuals
+
+    class Translator:
+        def __init__(self, _settings):
+            pass
+
+        def complete(self, messages, *, json_mode=False):
+            return "TRANSLATED: " + messages[-1]["content"][:10]
+
+    registry.register(ProviderSpec(kind="llm", id="translator", name="T", offline=True), Translator)
+    settings.defaults["llm"] = "translator"
+    project = store.create(
+        Project(
+            voice=VoiceSettings(provider="silent"),
+            shots=[Shot(text="x", visual=ShotVisual(mode="image", prompt="一只猫"))],
+        )
+    )
+    prompting._cache.clear()
+    # 假的文生图只声明支持英文：中文项目提交前先翻译。
+    assert visuals.build_prompt(settings, project, project.shots[0], "image_gen", "fakeimg").startswith(
+        "TRANSLATED"
+    )
+    # Seedream 支持中文：原样提交。
+    assert visuals.build_prompt(settings, project, project.shots[0], "image_gen", "seedream").startswith(
+        "一只猫"
+    )
+
+
+def test_api_updates_look_and_shot_camera(client):
+    created = _create(client)
+    look = {
+        "subjects": [{"code": "P1", "name": "咖啡机", "kind": "product", "appearance": "白色"}],
+        "scene": "公寓",
+        "style": "",
+        "avoid": "",
+    }
+    patched = client.patch(f"/api/v2/projects/{created['id']}", json={"look": look}).json()
+    assert patched["look"]["subjects"][0]["code"] == "P1"
+    bad = {**look, "subjects": [look["subjects"][0], look["subjects"][0]]}
+    assert client.patch(f"/api/v2/projects/{created['id']}", json={"look": bad}).status_code == 422
+    shot_id = created["shots"][0]["id"]
+    shot = client.patch(
+        f"/api/v2/projects/{created['id']}/shots/{shot_id}",
+        json={"visual": {"camera": "crane", "link": "接上一镜"}},
+    ).json()
+    target = next(s for s in shot["shots"] if s["id"] == shot_id) if "shots" in shot else shot
+    assert target["visual"]["camera"] == "crane" and target["visual"]["link"] == "接上一镜"

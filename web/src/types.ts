@@ -29,10 +29,37 @@ export interface PendingTask {
 export type FitMode = "cover" | "contain" | "blur";
 export type FillMode = "slow_hold" | "hold" | "loop";
 
+/** 镜头运动：自动、固定、推、拉、摇、移（跟拍）、环绕、升降、手持。 */
+export type CameraMove = "auto" | "static" | "push_in" | "pull_out" | "pan" | "truck" | "orbit" | "crane" | "handheld";
+
+export type SubjectKind = "product" | "person" | "object" | "place";
+
+export interface LookSubject {
+  code: string;
+  name: string;
+  kind: SubjectKind;
+  appearance: string;
+  reference?: string | null;
+}
+
+/** 全片设定：主体代号与外观、场景、视觉风格、禁止项，生成每个镜头时自动拼进提示词。 */
+export interface Look {
+  subjects: LookSubject[];
+  scene: string;
+  style: string;
+  avoid: string;
+  style_ref?: string | null;
+  grade?: string;
+  brand?: string | null;
+}
+
 export interface ShotVisual {
   mode: VisualMode;
   terms: string[];
   prompt: string;
+  camera?: CameraMove;
+  /** 衔接说明：开头怎样承接上一个镜头，结尾留给下一个镜头什么。 */
+  link?: string;
   provider: string | null;
   candidates: string[];
   selected: string | null;
@@ -115,6 +142,7 @@ export interface Project {
   title: string;
   subject: string;
   video_type?: VideoType | null;
+  look?: Look;
   language: string;
   target_seconds: number | null;
   /** 目标总时长（秒）；成片以实际配音为准。 */

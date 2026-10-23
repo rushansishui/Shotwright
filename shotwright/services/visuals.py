@@ -23,6 +23,7 @@ from shotwright.providers.base import (
     StockProvider,
     VideoGenProvider,
 )
+from shotwright.services import prompting
 from shotwright.services.durations import estimated_shot_seconds
 
 log = logging.getLogger(__name__)
@@ -297,14 +298,6 @@ def _first_frame(store: ProjectStore, project: Project, shot: Shot) -> Path | No
     return store.asset_path(project, asset.id)
 
 
-_ROLE_HINTS = {
-    "product": "产品外观参考：保持商品形状、颜色、材质、logo 位置与参考图一致，不要重新设计商品",
-    "person": "人物参考：保持人物的五官、发型、肤色与参考图一致",
-    "logo": "Logo 参考：保持 Logo 的图形与颜色不变，清晰可辨",
-    "style": "风格参考：沿用参考图的色调、光线与画面质感",
-}
-
-
 def reference_assets(project: Project, *, roles: tuple[str, ...] | None = None) -> list:
     """项目里启用的参考素材（按角色过滤）。"""
     result = []
@@ -320,16 +313,17 @@ def reference_assets(project: Project, *, roles: tuple[str, ...] | None = None) 
     return result
 
 
-def _reference_prompt(project: Project) -> str:
-    """把启用的参考素材写成提示词前缀，让模型知道要参照什么。"""
-    lines = []
-    for ref, _asset in reference_assets(project):
-        hint = _ROLE_HINTS.get(ref.role, "")
-        if hint:
-            lines.append(f"- {hint}" + (f"（{ref.label}）" if ref.label else ""))
-    if not lines:
-        return ""
-    return "参考素材要求：\n" + "\n".join(lines) + "\n\n"
+def _spec(kind: str, provider_id: str | None):
+    return next((s for s in registry.specs(kind) if s.id == provider_id), None)  # type: ignore[arg-type]
+
+
+def build_prompt(settings: Settings, project: Project, shot: Shot, kind: str, provider_id: str | None) -> str:
+    """交给生成模型的完整提示词：全片设定、运镜、衔接拼好，再按模型支持的语言准备。"""
+    target = "image" if kind == "image_gen" else "video"
+    text = prompting.compose(project, shot, target=target)
+    spec = _spec(kind, provider_id)
+    languages = spec.prompt_languages if spec is not None else ("en",)
+    return prompting.for_provider(settings, project, text, languages)
 
 
 def _reference_first_frame(store: ProjectStore, project: Project) -> tuple[Path | None, str]:
@@ -370,8 +364,8 @@ def generate_ai_candidate(
     if first_frame is None and reference_video is None:
         # 没有显式首帧时，优先用产品/人物参考图，保证商品外观不走样。
         first_frame, frame_source = _reference_first_frame(store, project)
-    prompt = _reference_prompt(project) + shot.visual.prompt
-    meta = {"prompt": prompt[:500]}
+    prompt = build_prompt(settings, project, shot, "video_gen", provider_id)
+    meta = {"prompt": prompt[:1500]}
     if first_frame is not None:
         meta["first_frame"] = frame_source
     if reference_video is not None:
@@ -435,7 +429,7 @@ def generate_image_candidate(
     provider_id = _provider_id(settings, "image_gen", shot)
     provider: ImageGenProvider = registry.create("image_gen", provider_id, settings)  # type: ignore[assignment]
     require_charge_confirmation(settings, "image_gen", provider_id, confirm_charge)
-    prompt = _reference_prompt(project) + shot.visual.prompt
+    prompt = build_prompt(settings, project, shot, "image_gen", provider_id)
     with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
         path = provider.generate(prompt, aspect=project.canvas.aspect, output=Path(temp) / "gen")
         asset = _register_media(
@@ -444,7 +438,7 @@ def generate_image_candidate(
             path,
             source=provider_id or "image_gen",
             folder="ai-image",
-            meta={"prompt": prompt[:500]},
+            meta={"prompt": prompt[:1500]},
         )
     record_spend(store, settings, project, shot, "image_gen", provider_id or "")
     _attach(shot, [asset.id], select=True)
