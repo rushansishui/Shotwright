@@ -4,6 +4,7 @@ import { useI18n } from "../../i18n";
 import type { MessageKey } from "../../messages";
 import type { Look, LookSubject, Project, SubjectKind } from "../../types";
 
+const GRADES = ["", "natural", "warm", "cool", "vivid", "film", "bw"];
 const KINDS: SubjectKind[] = ["product", "person", "object", "place"];
 const EMPTY: Look = { subjects: [], scene: "", style: "", avoid: "" };
 const CODE = /^[A-Za-z][A-Za-z0-9_-]{0,11}$/;
@@ -112,6 +113,24 @@ export function LookSection({ project, run }: LookSectionProps) {
         {invalid && <span className="hint error small">{t("look.badCode")}</span>}
         {dirty && !invalid && <span className="muted small">{t("look.unsaved")}</span>}
       </div>
+      <label className="look-field">
+        <span className="label">{t("look.grade")}</span>
+        <select
+          className="input"
+          value={draft.grade ?? ""}
+          onChange={(e) => {
+            const next = { ...draft, grade: e.target.value };
+            setDraft(next);
+            save(next);
+          }}
+        >
+          {GRADES.map((grade) => (
+            <option key={grade} value={grade}>
+              {t(`look.grade.${grade || "none"}` as MessageKey)}
+            </option>
+          ))}
+        </select>
+      </label>
       <label className="check">
         <input
           type="checkbox"

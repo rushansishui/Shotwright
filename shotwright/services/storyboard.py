@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass, field
 
 from shotwright.core.models import VIDEO_TYPE_NAMES, Look, LookSubject, Shot, ShotVisual
+from shotwright.media.grades import GRADES
 from shotwright.providers.base import LLMProvider, ProviderError
 from shotwright.providers.tts.silent import estimate_seconds
 
@@ -56,6 +57,7 @@ SYSTEM_PROMPT = """你是短视频编导兼分镜师。根据视频类型和诉�
 一、全片设定（look）
 - subjects：视频里反复出现的产品、人物、物品、场所，每个给一个代号（产品用 P1、P2，人物用 A、B，物品用 O1、O2，场所用 S1），name 写简短名称，kind 取 product / person / object / place 之一，appearance 用{plang}写清外观：颜色、材质、形状、尺寸、服装、发型、年龄感等，具体到不同镜头生成出来是同一个东西、同一个人。诉求或主体库里已经写了外观的，以它为准，不要改动。
 - scene：主要场景、时间和环境特征；style：画面质感、色调、光线和整体镜头语言；avoid：不要出现的内容。都用{plang}写。
+- grade：统一调色，取 natural（自然）/ warm（暖色）/ cool（冷色）/ vivid（鲜艳）/ film（胶片）/ bw（黑白）之一，与风格一致。
 - 品牌名不写进外观和画面描述，改写成外观特征。
 
 二、文案
@@ -75,7 +77,7 @@ SYSTEM_PROMPT = """你是短视频编导兼分镜师。根据视频类型和诉�
 - 相邻镜头要接得上：同一主体始终用同一个代号，景别有变化，动作有延续。
 
 只输出 JSON，不要任何解释，格式：
-{{"title": "标题", "look": {{"subjects": [{{"code": "P1", "name": "名称", "kind": "product", "appearance": "外观"}}], "scene": "场景", "style": "风格", "avoid": "禁止项"}}, "shots": [{{"role": "hook", "text": "文案", "terms": ["..."], "prompt": "画面描述", "still": "静态画面", "camera": "push_in", "link": "衔接"}}]}}"""
+{{"title": "标题", "look": {{"subjects": [{{"code": "P1", "name": "名称", "kind": "product", "appearance": "外观"}}], "scene": "场景", "style": "风格", "avoid": "禁止项", "grade": "natural"}}, "shots": [{{"role": "hook", "text": "文案", "terms": ["..."], "prompt": "画面描述", "still": "静态画面", "camera": "push_in", "link": "衔接"}}]}}"""
 
 _PROMPT_LANG = {"zh": "中文", "en": "英文"}
 _PROMPT_LEN = {"zh": "约 120–200 字", "en": "60–120 个英文单词"}
@@ -235,11 +237,13 @@ def _parse_look(raw) -> Look:
         seen.add(code)
         if len(subjects) >= 12:
             break
+    grade = str(raw.get("grade") or "").strip().lower()
     return Look(
         subjects=subjects,
         scene=str(raw.get("scene") or ""),
         style=str(raw.get("style") or ""),
         avoid=str(raw.get("avoid") or ""),
+        grade=grade if grade in GRADES else "",  # type: ignore[arg-type]
     )
 
 

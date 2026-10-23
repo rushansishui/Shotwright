@@ -35,6 +35,7 @@ from shotwright.media.ffmpeg import (
     probe,
     run_ffmpeg,
 )
+from shotwright.media.grades import GRADE_VERSION, grade_filter
 from shotwright.providers.base import ProviderError
 from shotwright.services import speech, visuals
 
@@ -493,6 +494,7 @@ class Renderer:
             for o in image_overlays
             if o.image in project.assets and project.assets[o.image].kind == "image"
         ]
+        grade = grade_filter(project.look.grade)
         if (
             not cues
             and bgm_asset is None
@@ -500,6 +502,7 @@ class Renderer:
             and not image_overlays
             and not project.ai_badge
             and project.loudness is None
+            and not grade
         ):
             self.stages.append(StageRecord("final", "final", assembly_fp, True, 0.0))
             return assembly
@@ -520,6 +523,7 @@ class Renderer:
             project.bgm.model_dump(exclude={"candidates", "query"}) if bgm_asset else None,
             project.loudness,
             AUDIO_MIX,
+            (grade, GRADE_VERSION) if grade else None,
         )
         output = self.store.cache_dir(project.id, "final") / f"{fp}.mp4"
         info = probe(assembly)
@@ -533,6 +537,13 @@ class Renderer:
                 # 依次串起来的视频标签，每个叠加步骤接上一个。
                 video_in, video_out = "0:v", "v0"
                 step = 0
+
+                if grade:
+                    # 统一调色放在字幕和叠加文字之前，文字颜色不受影响。
+                    filters.append(f"[{video_in}]{grade}[{video_out}]")
+                    video_in = video_out
+                    step += 1
+                    video_out = f"v{step}"
 
                 if needs_ass and font is not None:
                     (work / "fonts").mkdir()

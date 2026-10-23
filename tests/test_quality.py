@@ -856,3 +856,32 @@ def test_marked_text_renders_pauses_and_clean_subtitles(store, settings):
     assert marked_voice > plain_voice + 0.9
     srt = (store.render_dir(project.id, result.render_id) / "subtitles.srt").read_text(encoding="utf-8")
     assert "[停顿" not in srt and "*" not in srt and "接上" in srt
+
+
+def test_grade_presets_render_and_change_fingerprint(store, settings):
+    from shotwright.media.ffmpeg import extract_frame
+    from shotwright.media.grades import GRADES
+    from shotwright.pipeline.render import Renderer
+
+    shots = [Shot(text="一句话。", visual=ShotVisual(mode="color", color="#808080"))]
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=shots, loudness=None))
+    project.subtitle.enabled = False
+    store.save(project)
+    plain = Renderer(store, settings).render(project.id)
+
+    project = store.load(project.id)
+    project.look.grade = "bw"
+    store.save(project)
+    graded = Renderer(store, settings).render(project.id)
+    assert {s.key for s in graded.stages if not s.reused} == {"final"}
+
+    for name in GRADES:  # 每个预设的滤镜都能被 ffmpeg 接受
+        project = store.load(project.id)
+        project.look.grade = name
+        store.save(project)
+        result = Renderer(store, settings).render(project.id)
+        frame = extract_frame(
+            store.render_dir(project.id, result.render_id) / result.video, store.root / f"{name}.jpg", at=0.5
+        )
+        assert frame.exists()
+    assert plain.render_id != graded.render_id

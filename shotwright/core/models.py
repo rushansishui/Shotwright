@@ -79,6 +79,9 @@ FillMode = Literal["slow_hold", "hold", "loop"]
 CameraMove = Literal["auto", "static", "push_in", "pull_out", "pan", "truck", "orbit", "crane", "handheld"]
 """镜头运动：自动（交给模型）、固定、推、拉、摇、移（跟拍）、环绕、升降、手持。"""
 
+GradePreset = Literal["", "natural", "warm", "cool", "vivid", "film", "bw"]
+"""统一调色预设（见 media/grades.py）。"""
+
 SubjectKind = Literal["product", "person", "object", "place"]
 """全片设定里的主体类别：产品、人物、物品、场所。"""
 
@@ -245,8 +248,8 @@ class Look(_Model):
     """禁止项：不要出现的内容。"""
     style_ref: str | None = None
     """风格参考图（素材 id）。预留，暂未使用。"""
-    grade: str = ""
-    """调色预设。预留，渲染时统一调色用。"""
+    grade: GradePreset = ""
+    """统一调色预设：自然、暖色、冷色、鲜艳、胶片、黑白；空字符串表示不调色。"""
     brand: str | None = None
     """品牌包。预留，v0.5 品牌包作为全片设定的预设。"""
 
