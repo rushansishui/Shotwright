@@ -1186,9 +1186,12 @@ input[type="color"] {
   margin-top: 8px;
 }
 
-.shot-link textarea,
 .prompt-area {
   min-height: 4.5em;
+}
+
+.shot-link textarea {
+  min-height: 2.6em;
 }
 
 .inline-field .input.camera {
@@ -1245,4 +1248,25 @@ input[type="color"] {
   justify-content: space-between;
   flex-wrap: wrap;
   margin-bottom: 12px;
+}
+
+/* ---- 渲染前体检 ---- */
+.checkup summary {
+  cursor: pointer;
+}
+
+.checkup ul {
+  margin: 6px 0 0;
+  padding-left: 0;
+  list-style: none;
+}
+
+.checkup li + li {
+  margin-top: 4px;
+}
+
+.checkup li .linkish {
+  display: inline;
+  text-align: left;
+  vertical-align: baseline;
 }

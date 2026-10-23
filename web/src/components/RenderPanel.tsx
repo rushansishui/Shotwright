@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { api, assetUrl, estimateSeconds, renderUrl } from "../api";
 import { useI18n } from "../i18n";
 import { Segmented } from "./Controls";
-import type { CostEstimate, Job, Project, RenderResult } from "../types";
+import type { MessageKey } from "../messages";
+import type { CheckIssue, CostEstimate, Job, Project, RenderResult } from "../types";
 
 function Preview({ project, shotIndex }: { project: Project; shotIndex: number }) {
   const { t } = useI18n();
@@ -58,6 +59,14 @@ export function RenderPanel(props: {
 }) {
   const { project } = props;
   const { t } = useI18n();
+  /** 体检问题按 code 本地化；没有对应文案时用后端的中文说明。 */
+  const checkupText = (issue: CheckIssue) => {
+    const key = `checkup.${issue.code}` as MessageKey;
+    const params = { ...(issue.params ?? {}) };
+    if (typeof params.position === "string") params.position = t(`checkup.position.${params.position}` as MessageKey);
+    const text = t(key, params);
+    return text === key ? issue.message : text;
+  };
   const [job, setJob] = useState<Job | null>(null);
   const [latest, setLatest] = useState<(RenderResult & { created_at: number }) | null>(null);
   const [error, setError] = useState("");
@@ -104,6 +113,14 @@ export function RenderPanel(props: {
   useEffect(() => setBudget(project.budget == null ? "" : String(project.budget)), [project.budget]);
   const running = job?.state === "queued" || job?.state === "running";
   const result = job?.state === "done" ? job.result : latest;
+  const [issues, setIssues] = useState<CheckIssue[]>([]);
+  useEffect(() => {
+    if (running) return;
+    api
+      .checkup(project.id, quality)
+      .then((data) => setIssues(data.issues))
+      .catch(() => setIssues([]));
+  }, [project.id, project.revision, quality, running]);
 
   // 有待生成的 AI 镜头时，自动拉取费用预估。
   useEffect(() => {
@@ -158,10 +175,26 @@ export function RenderPanel(props: {
       </section>
 
       <section className="card">
-        {missing > 0 && !running && (
-          <p className="hint">
-            {t("render.missing", { n: missing })}
-          </p>
+        {issues.length > 0 && !running ? (
+          <details className="hint warn checkup" open={issues.length <= 3}>
+            <summary>{t("checkup.title", { n: issues.length })}</summary>
+            <ul>
+              {issues.map((issue, index) => (
+                <li key={index}>
+                  {issue.shot ? (
+                    <button type="button" className="linkish" onClick={() => props.onShotIndex(issue.shot! - 1)}>
+                      {checkupText(issue)}
+                    </button>
+                  ) : (
+                    checkupText(issue)
+                  )}
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : (
+          missing > 0 &&
+          !running && <p className="hint">{t("render.missing", { n: missing })}</p>
         )}
         {pendingAi > 0 && props.paidAvailable && !running && (
           <label className="check">

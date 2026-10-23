@@ -49,8 +49,18 @@ from shotwright.media import ffmpeg
 from shotwright.providers import registry
 from shotwright.providers.base import ChargeConfirmationRequired, ProviderError
 from shotwright.providers.tts.edge import VOICES
+from shotwright.services import (
+    checkup,
+    editing,
+    footage,
+    localize,
+    music,
+    prompting,
+    rewrite,
+    storyboard,
+    visuals,
+)
 from shotwright.services import cost as cost_service
-from shotwright.services import editing, footage, localize, music, prompting, rewrite, storyboard, visuals
 
 log = logging.getLogger("shotwright.api")
 
@@ -820,6 +830,12 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         """估算渲染本项目的费用（元），不实际触发任何 AI 调用。草稿档按草稿分辨率估算。"""
         project = store.load(_id(project_id))
         return cost_service.estimate_render_cost(project, settings, quality).to_dict()
+
+    @api.get("/projects/{project_id}/checkup")
+    def get_checkup(project_id: str, quality: Literal["draft", "final"] = "final"):
+        """渲染前体检：列出缺画面、素材太短、分辨率不足、文字重叠、超出费用上限等问题。只读。"""
+        project = store.load(_id(project_id))
+        return {"issues": checkup.to_dicts(checkup.check_project(project, settings, quality=quality))}
 
     # ---- 渲染 ---------------------------------------------------------------
 

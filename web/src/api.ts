@@ -1,5 +1,6 @@
 import type {
   BgmCandidate,
+  CheckIssue,
   BgmSearchResult,
   CostEstimate,
   Job,
@@ -148,6 +149,8 @@ export const api = {
   },
   render: (id: string, confirmCharge = false, quality: "draft" | "final" = "final") =>
     request<Job>(`/projects/${id}/renders`, json("POST", { confirm_charge: confirmCharge, quality })),
+  checkup: (id: string, quality: "draft" | "final" = "final") =>
+    request<{ issues: CheckIssue[] }>(`/projects/${id}/checkup?quality=${quality}`),
   costEstimate: (id: string, quality: "draft" | "final" = "final") =>
     request<CostEstimate>(`/projects/${id}/cost-estimate?quality=${quality}`),
   job: (jobId: string) => request<Job>(`/renders/${jobId}`),

@@ -714,3 +714,48 @@ def test_budget_blocks_generation_over_limit(store, settings, client):
     created = _create(client)
     assert client.patch(f"/api/v2/projects/{created['id']}", json={"budget": 10}).json()["budget"] == 10
     assert client.patch(f"/api/v2/projects/{created['id']}", json={"budget": None}).json()["budget"] is None
+
+
+def test_checkup_lists_render_risks(store, settings, tmp_path, client):
+    from conftest import make_clip
+
+    from shotwright.core.models import Overlay
+    from shotwright.services import checkup
+
+    text = "这是一段比较长的旁白，需要好几秒才能读完，素材却只有一秒，会被定格补足很久。"
+    shots = [
+        Shot(text=text, visual=ShotVisual(mode="upload")),
+        Shot(text="第二句。", visual=ShotVisual(mode="ai", prompt="")),
+        Shot(text="第三句。", visual=ShotVisual(mode="ai", prompt="x")),
+    ]
+    project = store.create(
+        Project(
+            voice=VoiceSettings(provider="silent"),
+            shots=shots,
+            overlays=[
+                Overlay(text="限时优惠", position="bottom"),
+                Overlay(text="立即购买", position="top"),
+                Overlay(text="包邮", position="top"),
+            ],
+        )
+    )
+    clip = store.add_asset(
+        project,
+        make_clip(tmp_path / "c.mp4", seconds=1.0, size="320x240"),
+        kind="video",
+        source="upload",
+        width=320,
+        height=240,
+        duration=1.0,
+    )
+    project.shots[0].visual.selected = clip.id
+    project.shots[0].visual.candidates = [clip.id]
+    codes = [issue.code for issue in checkup.check_project(project, settings)]
+    assert codes.count("no_visual") == 2 and "no_prompt" in codes
+    assert "low_resolution" in codes and "short_footage" in codes
+    assert "overlay_subtitle" in codes and "overlay_overlap" in codes and "no_look" in codes
+
+    store.save(project)
+    data = client.get(f"/api/v2/projects/{project.id}/checkup").json()
+    first = next(item for item in data["issues"] if item["code"] == "short_footage")
+    assert first["shot"] == 1 and first["params"]["footage"] == 1.0

@@ -193,6 +193,15 @@ export interface Project {
   updated_at: number;
 }
 
+/** 渲染前体检发现的一个问题。 */
+export interface CheckIssue {
+  code: string;
+  message: string;
+  shot: number | null;
+  params: Record<string, string | number> | null;
+  level: string;
+}
+
 export interface ProjectSummary {
   id: string;
   title: string;
