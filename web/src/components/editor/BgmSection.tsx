@@ -201,6 +201,15 @@ export function BgmSection({ project, run, setError, draft, setDraft }: BgmSecti
       <label className="check">
         <input
           type="checkbox"
+          checked={!!project.bgm.beat_sync}
+          disabled={!project.bgm.asset_id}
+          onChange={(e) => run(() => api.updateProject(id, { bgm: { ...project.bgm, beat_sync: e.target.checked } }))}
+        />
+        {t("editor.bgmBeatSync")}
+      </label>
+      <label className="check">
+        <input
+          type="checkbox"
           checked={project.loudness !== null}
           onChange={(e) => run(() => api.updateProject(id, { loudness: e.target.checked ? -14 : null }))}
         />

@@ -25,7 +25,8 @@ from shotwright.config import Settings
 from shotwright.core.fingerprint import fingerprint
 from shotwright.core.ids import new_id
 from shotwright.core.models import Project, Shot
-from shotwright.core.store import ProjectStore, sha256_file, write_json
+from shotwright.core.store import ProjectStore, read_json, sha256_file, write_json
+from shotwright.media import beats
 from shotwright.media import subtitles as subs
 from shotwright.media.ffmpeg import (
     LOCAL_PROTOCOLS,
@@ -161,6 +162,7 @@ class Renderer:
             )
 
         durations, overlap = self._plan_durations(project, [voice[2] for voice in voices])
+        durations = self._snap_to_beats(project, durations, overlap)
         shot_files: list[tuple[str, Path]] = []
         timings: list[ShotTiming] = []
         cursor = 0.0
@@ -240,6 +242,28 @@ class Renderer:
             self.warnings.append("有镜头比转场时长还短，已改为硬切拼接")
             return plan(VOICE_PADDING), 0.0
         return durations, d
+
+    def _snap_to_beats(self, project: Project, durations: list[float], overlap: float) -> list[float]:
+        """打开了节拍对齐时，把镜头切换点就近挪到背景音乐的拍点上。手动设了时长的镜头不动。"""
+        bgm = project.assets.get(project.bgm.asset_id or "")
+        if not project.bgm.beat_sync or bgm is None or bgm.kind != "audio":
+            return durations
+        cache = self.store.cache_dir(project.id, "beats") / f"{bgm.sha256}.json"
+        data = read_json(cache)
+        if data is None:
+            try:
+                beats_list, bpm = beats.detect_beats(self.store.asset_path(project, bgm.id))
+            except MediaError as exc:
+                self.warnings.append(f"背景音乐节拍检测失败，没有对齐：{exc}")
+                return durations
+            data = {"beats": beats_list, "bpm": bpm}
+            write_json(cache, data)
+        return beats.snap_cuts(
+            durations,
+            overlap,
+            [float(b) for b in data.get("beats") or []],
+            fixed=[bool(shot.duration) for shot in project.shots],
+        )
 
     # ---- 画面 ---------------------------------------------------------------
 

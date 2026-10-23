@@ -183,6 +183,8 @@ export interface Project {
     duck?: boolean;
     fade_in?: number;
     fade_out?: number;
+    /** 镜头切换点就近对齐音乐拍点。 */
+    beat_sync?: boolean;
   };
   /** 导出响度（LUFS）；null 表示不处理。 */
   loudness?: number | null;

@@ -166,6 +166,8 @@ class BgmSettings(_Model):
     """开头淡入时长（秒），0 表示不淡入。"""
     fade_out: float = Field(2.0, ge=0.0, le=10.0)
     """结尾淡出时长（秒），0 表示不淡出。"""
+    beat_sync: bool = False
+    """镜头切换点就近挪到音乐的拍点上（只延长镜头，最多 0.35 秒）。"""
 
     @field_validator("asset_id")
     @classmethod

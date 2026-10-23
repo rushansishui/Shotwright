@@ -885,3 +885,53 @@ def test_grade_presets_render_and_change_fingerprint(store, settings):
         )
         assert frame.exists()
     assert plain.render_id != graded.render_id
+
+
+def test_beat_detection_finds_click_track_tempo(tmp_path):
+    from shotwright.media.beats import detect_beats
+
+    click = tmp_path / "click.wav"
+    run_ffmpeg(
+        ["-f", "lavfi", "-i", "aevalsrc='if(lt(mod(t,0.5),0.03),sin(2*PI*1000*t),0)':s=8000:d=20", str(click)]
+    )
+    found, bpm = detect_beats(click)
+    assert 115 <= bpm <= 125
+    assert all(abs(beat - round(beat * 2) / 2) < 0.06 for beat in found[:10])
+
+
+def test_snap_cuts_only_extends_and_respects_fixed():
+    from shotwright.media.beats import snap_cuts
+
+    beats = [0.5 * i for i in range(1, 40)]
+    assert snap_cuts([2.3, 3.1, 2.0], 0.0, beats) == [2.5, 3.1, 2.0]  # 2.3→2.5；第二个切点 5.6 离 6.0 太远
+    assert snap_cuts([2.3, 3.1, 2.0], 0.0, beats, fixed=[True, False, False]) == [2.3, 3.2, 2.0]
+    assert snap_cuts([2.1, 2.0], 0.0, [3.0]) == [2.1, 2.0]  # 超过 0.35 秒不挪
+
+
+def test_render_snaps_cuts_to_music_beats(store, settings, tmp_path):
+    from shotwright.pipeline.render import Renderer
+
+    click = tmp_path / "click.m4a"
+    run_ffmpeg(
+        [
+            "-f",
+            "lavfi",
+            "-i",
+            "aevalsrc='if(lt(mod(t,0.5),0.03),sin(2*PI*1000*t),0)':s=44100:d=20",
+            "-c:a",
+            "aac",
+            str(click),
+        ]
+    )
+    shots = [
+        Shot(text="第一句话说得稍微长一点。", visual=ShotVisual(mode="color")),
+        Shot(text="第二句。", visual=ShotVisual(mode="color")),
+    ]
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=shots, loudness=None))
+    music = store.add_asset(project, click, kind="audio", source="upload")
+    project.bgm.asset_id = music.id
+    project.bgm.beat_sync = True
+    store.save(project)
+    result = Renderer(store, settings).render(project.id)
+    cut = result.timings[1].start
+    assert abs(cut - round(cut * 2) / 2) < 0.06
