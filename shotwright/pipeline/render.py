@@ -12,116 +12,69 @@
 
 from __future__ import annotations
 
-import math
 import shutil
 import tempfile
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from pathlib import Path
+from typing import Literal
 
 from shotwright.config import Settings
 from shotwright.core.fingerprint import fingerprint
 from shotwright.core.ids import new_id
 from shotwright.core.models import Project, Shot
-from shotwright.core.store import ProjectStore, read_json, sha256_file, write_json
+from shotwright.core.store import ProjectStore, sha256_file, write_json
 from shotwright.media import subtitles as subs
 from shotwright.media.ffmpeg import LOCAL_PROTOCOLS, MediaCancelled, MediaError, probe, run_ffmpeg
-from shotwright.providers import registry
-from shotwright.providers.base import ProviderError, TTSProvider
+from shotwright.providers.base import ProviderError
 from shotwright.services import visuals
+
+from .metadata import tag_video
+from .render_types import (
+    AUDIO_ARGS,
+    VOICE_PADDING,
+    RenderCancelled,
+    RenderError,
+    RenderResult,
+    ShotTiming,
+    StageRecord,
+)
+from .shots import _video_args, render_shot
+from .voice import synthesize_shot
+
+# Re-export so existing importers keep working.
+__all__ = [
+    "RenderError",
+    "RenderCancelled",
+    "RenderResult",
+    "ShotTiming",
+    "StageRecord",
+    "Renderer",
+]
 
 Progress = Callable[[float, str], None]
 
-VOICE_PADDING = 0.25
-"""配音后留的空隙（秒），让镜头之间有呼吸感。"""
+Quality = Literal["draft", "final"]
 
 
-KEN_BURNS = "ken-burns-1"
-"""图片镜头的运动效果版本；改动滤镜参数时同步修改，让旧缓存失效。"""
+def _overlay_end(item) -> float:
+    """叠加图片的结束时间；不限时长时给一个足够大的数。"""
+    return item.start + item.duration if item.duration else 1e6
 
 
-def _fit_filter(width: int, height: int, fit: str) -> str:
-    if fit == "contain":
-        return (
-            f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black"
-        )
-    return f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
-
-
-def ken_burns_filter(width: int, height: int, fps: int, duration: float, fit: str) -> str:
-    """图片慢推：先按两倍画布适配（减少缩放抖动），再从 1.0 匀速放大到 1.1 倍。"""
-    frames = math.ceil(duration * fps) + 1
-    return (
-        f"{_fit_filter(width * 2, height * 2, fit)},"
-        f"zoompan=z='1+0.1*on/{frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-        f":d={frames}:s={width}x{height}:fps={fps},setsar=1,format=yuv420p"
-    )
-
-
-class RenderError(RuntimeError):
-    pass
-
-
-class RenderCancelled(RenderError):
-    pass
-
-
-@dataclass
-class StageRecord:
-    key: str
-    kind: str
-    fingerprint: str
-    reused: bool
-    seconds: float
-
-
-@dataclass
-class ShotTiming:
-    shot_id: str
-    start: float
-    voice_duration: float
-    duration: float
-    words: list[tuple[str, float, float]] = field(default_factory=list)
-    """配音服务的逐词时间戳（相对本镜头音频开头）；为空时字幕按字数估算。"""
-
-
-@dataclass
-class RenderResult:
-    render_id: str
-    project_id: str
-    revision: int
-    video: str
-    subtitles: str | None
-    duration: float
-    timings: list[ShotTiming]
-    stages: list[StageRecord]
-    warnings: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-
-def _video_args(fps: int) -> list[str]:
-    return [
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "20",
-        "-pix_fmt",
-        "yuv420p",
-        "-r",
-        str(fps),
-        "-g",
-        str(fps * 2),
-    ]
-
-
-AUDIO_ARGS = ["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"]
+def _overlay_position(item, project: Project) -> tuple[str, str]:
+    """图片叠加的位置表达式（ffmpeg overlay 的 x / y）。"""
+    margin = item.margin
+    x = "(W-w)/2"
+    if item.position == "top":
+        y = f"{margin}"
+    elif item.position == "bottom":
+        y = f"H-h-{margin}"
+    else:
+        y = "(H-h)/2"
+    return x, y
 
 
 class Renderer:
@@ -133,10 +86,13 @@ class Renderer:
         progress: Progress | None = None,
         cancel: threading.Event | None = None,
         allow_paid: bool = False,
+        quality: Quality = "final",
     ):
         self.store = store
         self.allow_paid = allow_paid
         """用户是否已确认本次渲染可以调用收费的 AI 生成。"""
+        self.quality = quality
+        """草稿档用快速编码参数，成片档用正常质量。"""
         self.settings = settings
         self._progress = progress or (lambda value, message: None)
         self._cancel = cancel or threading.Event()
@@ -163,7 +119,6 @@ class Renderer:
             build(temp)
             temp.replace(output)
         except MediaCancelled as exc:
-            # ffmpeg 被取消：转成渲染取消，让队列记为 cancelled 而不是 failed。
             raise RenderCancelled(str(exc)) from exc
         finally:
             temp.unlink(missing_ok=True)
@@ -184,8 +139,18 @@ class Renderer:
         voices: list[tuple[str, Path, float, list[tuple[str, float, float]]]] = []
         for index, shot in enumerate(project.shots):
             self._report(0.10 + 0.25 * index / total, f"配音 {index + 1}/{total}")
-            voices.append(self._voice(project, shot))
+            voices.append(
+                synthesize_shot(
+                    self.store,
+                    self.settings,
+                    project,
+                    shot,
+                    stages=self.stages,
+                    cancel=self._cancel,
+                )
+            )
 
+        durations, overlap = self._plan_durations(project, [voice[2] for voice in voices])
         shot_files: list[tuple[str, Path]] = []
         timings: list[ShotTiming] = []
         cursor = 0.0
@@ -193,14 +158,25 @@ class Renderer:
             zip(project.shots, voices, strict=True)
         ):
             self._report(0.35 + 0.45 * index / total, f"渲染镜头 {index + 1}/{total}")
-            duration = round(shot.duration or voice_duration + VOICE_PADDING, 3)
-            fp, path = self._shot(project, shot, voice_fp, voice_path, duration)
+            duration = durations[index]
+            fp, path = render_shot(
+                self.store,
+                project,
+                shot,
+                voice_fp,
+                voice_path,
+                duration,
+                stages=self.stages,
+                cancel=self._cancel,
+                quality=self.quality,
+            )
             shot_files.append((fp, path))
             timings.append(ShotTiming(shot.id, round(cursor, 3), voice_duration, duration, words))
-            cursor += duration
+            # 有转场时相邻镜头重叠 overlap 秒，下一个镜头要提前开始，字幕和配音才对得上。
+            cursor += duration - overlap if index < total - 1 else duration
 
         self._report(0.80, "拼接镜头")
-        assembly_fp, assembly = self._assemble(project, shot_files)
+        assembly_fp, assembly = self._assemble(project, shot_files, overlap)
 
         self._report(0.85, "合成字幕与背景音乐")
         cues = self._cues(project, timings)
@@ -209,6 +185,8 @@ class Renderer:
         output_dir = self.store.render_dir(project.id, render_id)
         video_path = output_dir / "video.mp4"
         shutil.copyfile(final, video_path)
+        self._report(0.95, "写入元数据")
+        tag_video(project, video_path)
         srt_path = None
         if cues:
             srt_path = output_dir / "subtitles.srt"
@@ -228,6 +206,30 @@ class Renderer:
         write_json(output_dir / "render.json", result.to_dict())
         self._report(1.0, "完成")
         return result
+
+    def _plan_durations(self, project: Project, voice_durations: list[float]) -> tuple[list[float], float]:
+        """算出每个镜头的时长和相邻镜头的重叠秒数（转场时长，硬切为 0）。
+
+        有转场时，前一个镜头的结尾会和后一个镜头的开头叠在一起。为了不让配音互相
+        压住，没有手动设时长的镜头尾部至少留出转场那么长的空白。任何一个镜头比转场
+        还短时整片改为硬切，时间轴和拼接用同一条规则，字幕不会错位。
+        """
+        transition = project.transition
+        d = transition.duration if transition.kind != "none" and len(project.shots) > 1 else 0.0
+
+        def plan(padding: float) -> list[float]:
+            return [
+                round(shot.duration or voice + padding, 3)
+                for shot, voice in zip(project.shots, voice_durations, strict=True)
+            ]
+
+        if d <= 0:
+            return plan(VOICE_PADDING), 0.0
+        durations = plan(max(VOICE_PADDING, d))
+        if any(duration <= d + 0.05 for duration in durations):
+            self.warnings.append("有镜头比转场时长还短，已改为硬切拼接")
+            return plan(VOICE_PADDING), 0.0
+        return durations, d
 
     # ---- 画面 ---------------------------------------------------------------
 
@@ -254,7 +256,6 @@ class Renderer:
                         self.store, self.settings, project, shot, confirm_charge=self.allow_paid
                     )
                 except ProviderError as exc:
-                    # AI 画面没生成时，有检索词就退回素材检索，而不是直接用纯色。
                     if visual.mode == "stock" or not visual.terms:
                         raise
                     visuals.fetch_stock_candidates(self.store, self.settings, project, shot)
@@ -264,7 +265,6 @@ class Renderer:
                 self.warnings.append(f"镜头 {index + 1} 没有拿到素材，已使用纯色画面：{exc}")
         if not changed:
             return
-        # 渲染期间用户可能在编辑：只把本次新增的素材合并进最新的项目文件。
         with self.store.lock(project.id):
             latest = self.store.load(project.id)
             for asset_id, asset in project.assets.items():
@@ -286,194 +286,111 @@ class Renderer:
             selected and selected in project.assets and project.assets[selected].kind in ("video", "image")
         )
 
-    # ---- 配音 ---------------------------------------------------------------
+    # ---- 整片 ---------------------------------------------------------------
 
-    def _voice(self, project: Project, shot: Shot) -> tuple[str, Path, float, list[tuple[str, float, float]]]:
-        voice = project.voice_for(shot)
-        text = shot.text.strip()
-        provider_id = voice.provider if text else "silence"
-        fp = fingerprint("voice", text, voice.model_dump(), shot.duration if not text else None)
-        cache = self.store.cache_dir(project.id, "voice")
-        meta_path = cache / f"{fp}.json"
-        meta = read_json(meta_path)
-        if meta and (cache / meta.get("file", "")).is_file():
-            self.stages.append(StageRecord(f"{shot.id}:voice", "voice", fp, True, 0.0))
-            words = [(str(w[0]), float(w[1]), float(w[2])) for w in meta.get("words") or [] if len(w) == 3]
-            return fp, cache / meta["file"], float(meta["duration"]), words
-
-        started = time.monotonic()
-        words: list[tuple[str, float, float]] = []
-        with tempfile.TemporaryDirectory(prefix="shotwright-voice-") as temp:
-            if not text:
-                seconds = shot.duration or 2.0
-                path = Path(temp) / "voice.m4a"
-                run_ffmpeg(
-                    [
-                        "-f",
-                        "lavfi",
-                        "-i",
-                        "anullsrc=channel_layout=stereo:sample_rate=48000",
-                        "-t",
-                        f"{seconds:.3f}",
-                        *AUDIO_ARGS,
-                        str(path),
-                    ],
-                    cancel=self._cancel,
-                )
-                duration = seconds
-            else:
-                try:
-                    tts: TTSProvider = registry.create("tts", provider_id, self.settings)  # type: ignore[assignment]
-                    speech = tts.synthesize(
-                        text,
-                        voice=voice.voice,
-                        rate=voice.rate,
-                        volume=voice.volume,
-                        output=Path(temp) / "voice",
-                    )
-                except ProviderError as exc:
-                    index = project.shots.index(shot) + 1
-                    raise RenderError(f"镜头 {index} 配音失败：{exc}") from exc
-                path, duration = speech.path, speech.duration
-                words = [(word.text, word.start, word.end) for word in speech.words]
-            filename = f"{fp}{path.suffix}"
-            shutil.move(str(path), cache / filename)
-        write_json(
-            meta_path,
-            {
-                "file": filename,
-                "duration": round(duration, 3),
-                "provider": provider_id,
-                "words": [list(word) for word in words],
-            },
-        )
-        self.stages.append(
-            StageRecord(f"{shot.id}:voice", "voice", fp, False, round(time.monotonic() - started, 3))
-        )
-        return fp, cache / filename, round(duration, 3), words
-
-    # ---- 镜头 ---------------------------------------------------------------
-
-    def _shot(
-        self, project: Project, shot: Shot, voice_fp: str, voice_path: Path, duration: float
+    def _assemble(
+        self, project: Project, shots: list[tuple[str, Path]], overlap: float
     ) -> tuple[str, Path]:
-        canvas = project.canvas
-        visual = shot.visual
-        asset = project.assets.get(visual.selected) if visual.selected and visual.mode != "color" else None
-        if asset is not None and asset.kind not in ("video", "image"):
-            asset = None
-        visual_key = asset.sha256 if asset else f"color:{visual.color}"
+        kind = project.transition.kind if overlap > 0 else "none"
         fp = fingerprint(
-            "shot",
-            voice_fp,
-            duration,
-            visual_key,
-            visual.fit,
-            KEN_BURNS if asset is not None and asset.kind == "image" else None,
-            canvas.model_dump(),
-            project.voice_for(shot).volume,
+            "assembly",
+            [item[0] for item in shots],
+            kind,
+            round(overlap, 3) if kind != "none" else None,
         )
-        output = self.store.cache_dir(project.id, "shots") / f"{fp}.mp4"
-        width, height, fps = canvas.width, canvas.height, canvas.fps
+        output = self.store.cache_dir(project.id, "assembly") / f"{fp}.mp4"
 
         def build(temp: Path) -> None:
-            if asset is None:
-                video_input = [
-                    "-f",
-                    "lavfi",
-                    "-i",
-                    f"color=c=0x{visual.color[1:]}:s={width}x{height}:r={fps}",
-                ]
-            elif asset.kind == "image":
-                # 单帧输入，由 zoompan 展开成整段慢推镜头。
-                video_input = [
-                    "-protocol_whitelist",
-                    LOCAL_PROTOCOLS,
-                    "-i",
-                    str(self.store.asset_path(project, asset.id)),
-                ]
+            if kind != "none":
+                self._assemble_xfade(project, shots, temp, kind, overlap)
             else:
-                video_input = [
-                    "-stream_loop",
-                    "-1",
-                    "-protocol_whitelist",
-                    LOCAL_PROTOCOLS,
-                    "-i",
-                    str(self.store.asset_path(project, asset.id)),
-                ]
-            if asset is not None and asset.kind == "image":
-                video_chain = ken_burns_filter(width, height, fps, duration, visual.fit)
-            else:
-                video_chain = f"{_fit_filter(width, height, visual.fit)},setsar=1,fps={fps},format=yuv420p"
-            graph = f"[0:v]{video_chain}[v];[1:a]aresample=48000,aformat=channel_layouts=stereo,apad[a]"
+                self._assemble_concat(shots, temp)
+
+        self._stage("assembly", "assembly", fp, output, build)
+        return fp, output
+
+    def _assemble_concat(self, shots: list[tuple[str, Path]], temp: Path) -> None:
+        """硬切拼接：各镜头编码参数一致，可以直接 -c copy。"""
+        listing = temp.with_suffix(".txt")
+        lines = []
+        for _, path in shots:
+            escaped = path.resolve().as_posix().replace("'", "'\\''")
+            lines.append(f"file '{escaped}'")
+        listing.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        try:
             run_ffmpeg(
                 [
-                    *video_input,
-                    "-protocol_whitelist",
-                    LOCAL_PROTOCOLS,
-                    "-i",
-                    str(voice_path),
-                    "-filter_complex",
-                    graph,
-                    "-map",
-                    "[v]",
-                    "-map",
-                    "[a]",
-                    "-t",
-                    f"{duration:.3f}",
-                    *_video_args(fps),
-                    *AUDIO_ARGS,
-                    "-movflags",
-                    "+faststart",
-                    "-f",
-                    "mp4",
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-protocol_whitelist", LOCAL_PROTOCOLS,
+                    "-i", str(listing),
+                    "-c", "copy",
+                    "-movflags", "+faststart",
+                    "-f", "mp4",
                     str(temp),
                 ],
                 cancel=self._cancel,
             )
+        finally:
+            listing.unlink(missing_ok=True)
 
-        self._stage(f"{shot.id}:shot", "shot", fp, output, build)
-        return fp, output
+    _XFADE = {"fade": "fade", "slide": "slideleft", "wipe": "wipeleft"}
 
-    # ---- 整片 ---------------------------------------------------------------
+    def _assemble_xfade(
+        self, project: Project, shots: list[tuple[str, Path]], temp: Path, kind: str, d: float
+    ) -> None:
+        """带转场的拼接：逐对叠加 xfade，必须重新编码（不能 -c copy）。
 
-    def _assemble(self, project: Project, shots: list[tuple[str, Path]]) -> tuple[str, Path]:
-        fp = fingerprint("assembly", [item[0] for item in shots])
-        output = self.store.cache_dir(project.id, "assembly") / f"{fp}.mp4"
-
-        def build(temp: Path) -> None:
-            listing = temp.with_suffix(".txt")
-            lines = []
-            for _, path in shots:
-                escaped = path.resolve().as_posix().replace("'", "'\\''")
-                lines.append(f"file '{escaped}'")
-            listing.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        是否用转场已在 ``_plan_durations`` 里决定，这里按同样的重叠秒数拼接。
+        音频不做交叉淡化：每个镜头的音轨按它在时间轴上的起点延迟后直接混合。
+        镜头尾部已留出至少 d 秒空白，配音不会叠在一起，也不会被淡出。
+        """
+        name = self._XFADE.get(kind, "fade")
+        widths: list[float] = []
+        for _, path in shots:
             try:
-                run_ffmpeg(
-                    [
-                        "-f",
-                        "concat",
-                        "-safe",
-                        "0",
-                        "-protocol_whitelist",
-                        LOCAL_PROTOCOLS,
-                        "-i",
-                        str(listing),
-                        "-c",
-                        "copy",
-                        "-movflags",
-                        "+faststart",
-                        "-f",
-                        "mp4",
-                        str(temp),
-                    ],
-                    cancel=self._cancel,
-                )
-            finally:
-                listing.unlink(missing_ok=True)
+                widths.append(probe(path).duration or 0.0)
+            except MediaError as exc:
+                raise RenderError(f"读取镜头时长失败：{exc}") from exc
 
-        self._stage("assembly", "assembly", fp, output, build)
-        return fp, output
+        args: list[str] = []
+        for _, path in shots:
+            args += ["-protocol_whitelist", LOCAL_PROTOCOLS, "-i", str(path)]
+        chain: list[str] = ["[0:v]format=yuv420p[s0]"]
+        audio_chain: list[str] = ["[0:a]aresample=48000,aformat=channel_layouts=stereo[a0]"]
+        start = 0.0
+        previous = "s0"
+        for index in range(1, len(shots)):
+            start += widths[index - 1] - d
+            label = f"s{index}"
+            chain.append(
+                f"[{previous}][{index}:v]xfade=transition={name}:duration={d:.3f}:offset={start:.3f},"
+                f"format=yuv420p[{label}]"
+            )
+            previous = label
+            delay = max(0, round(start * 1000))
+            audio_chain.append(
+                f"[{index}:a]aresample=48000,aformat=channel_layouts=stereo,"
+                f"adelay={delay}:all=1[a{index}]"
+            )
+        mix_inputs = "".join(f"[a{index}]" for index in range(len(shots)))
+        audio_chain.append(
+            f"{mix_inputs}amix=inputs={len(shots)}:duration=longest:normalize=0[aout]"
+        )
+        run_ffmpeg(
+            [
+                *args,
+                "-filter_complex", ";".join([*chain, *audio_chain]),
+                "-map", f"[{previous}]",
+                "-map", "[aout]",
+                *_video_args(project.canvas.fps, self.quality),
+                *AUDIO_ARGS,
+                "-movflags", "+faststart",
+                "-f", "mp4",
+                str(temp),
+            ],
+            cancel=self._cancel,
+        )
 
     def _font_path(self, project: Project) -> Path:
         """字幕字体；缺字时（例如中文字体显示韩文）自动换成能显示的内置字体并提示。"""
@@ -520,20 +437,35 @@ class Renderer:
 
     def _final(self, project: Project, assembly_fp: str, assembly: Path, cues: list[subs.Cue]) -> Path:
         style = project.subtitle
+        overlays = [o for o in project.overlays if o.enabled and (o.text.strip() or o.image)]
+        # 文字叠加走 ASS；图片叠加（Logo）ASS 渲染不了，用 ffmpeg overlay 滤镜。
+        text_overlays = [o for o in overlays if o.text.strip()]
+        image_overlays = [o for o in overlays if not o.text.strip() and o.image]
         bgm_asset = project.assets.get(project.bgm.asset_id) if project.bgm.asset_id else None
         if bgm_asset is not None and bgm_asset.kind != "audio":
             self.warnings.append("背景音乐不是音频文件，已忽略")
             bgm_asset = None
-        if not cues and bgm_asset is None:
+        # 图片叠加引用的素材可能已被删掉，过滤掉它们，避免渲染时找不到文件。
+        image_overlays = [
+            (o, project.assets[o.image])
+            for o in image_overlays
+            if o.image in project.assets and project.assets[o.image].kind == "image"
+        ]
+        if not cues and bgm_asset is None and not text_overlays and not image_overlays and not project.ai_badge:
             self.stages.append(StageRecord("final", "final", assembly_fp, True, 0.0))
             return assembly
 
-        font = self._font_path(project) if cues else None
+        needs_ass = bool(cues or text_overlays or project.ai_badge)
+        font = self._font_path(project) if needs_ass else None
         fp = fingerprint(
             "final",
             assembly_fp,
             [asdict(c) for c in cues],
             style.model_dump() if cues else None,
+            [o.model_dump() for o in text_overlays] if text_overlays else None,
+            [(o.model_dump(), asset.sha256) for o, asset in image_overlays] if image_overlays else None,
+            self.quality,
+            project.ai_badge,
             sha256_file(font) if font else None,
             bgm_asset.sha256 if bgm_asset else None,
             project.bgm.volume if bgm_asset else None,
@@ -546,11 +478,12 @@ class Renderer:
             with tempfile.TemporaryDirectory(prefix="shotwright-final-") as work_dir:
                 work = Path(work_dir)
                 args = ["-protocol_whitelist", LOCAL_PROTOCOLS, "-i", str(assembly)]
-                filters = []
-                video_map, audio_map = "0:v", "0:a"
-                if cues and font is not None:
-                    # 字幕文件和字体都放进工作目录、用相对路径引用，
-                    # 避免 Windows 盘符在滤镜参数里的转义问题。
+                filters: list[str] = []
+                # 依次串起来的视频标签，每个叠加步骤接上一个。
+                video_in, video_out = "0:v", "v0"
+                step = 0
+
+                if needs_ass and font is not None:
                     (work / "fonts").mkdir()
                     shutil.copyfile(font, work / "fonts" / font.name)
                     family = subs.font_family(font)
@@ -561,23 +494,58 @@ class Renderer:
                             width=project.canvas.width,
                             height=project.canvas.height,
                             family=family,
+                            overlays=text_overlays,
                         ),
                         encoding="utf-8",
                     )
-                    filters.append("[0:v]ass=subs.ass:fontsdir=fonts[v]")
-                    video_map = "[v]"
-                if bgm_asset is not None:
+                    filters.append(f"[{video_in}]ass=subs.ass:fontsdir=fonts[{video_out}]")
+                    video_in = video_out
+                    step += 1
+                    video_out = f"v{step}"
+                    if project.ai_badge:
+                        # 角标：右下角一行小字，提示这是 AI 生成内容。
+                        badge = "AI"
+                        filters.append(
+                            f"[{video_in}]drawtext=fontfile=fonts/{font.name}:text='{badge}':"
+                            f"fontcolor=white@0.75:fontsize="
+                            f"{max(16, project.canvas.height // 40)}:x=w-tw-24:y=h-th-24:"
+                            f"box=1:boxcolor=black@0.35:boxborderw=8[{video_out}]"
+                        )
+                        video_in = video_out
+                        step += 1
+                        video_out = f"v{step}"
+
+                # 图片叠加：按位置缩放到合适大小，在指定时间段内显示。
+                for index, (item, asset) in enumerate(image_overlays, start=1):
                     args += [
-                        "-stream_loop",
-                        "-1",
-                        "-protocol_whitelist",
-                        LOCAL_PROTOCOLS,
-                        "-i",
-                        str(self.store.asset_path(project, bgm_asset.id)),
+                        "-protocol_whitelist", LOCAL_PROTOCOLS,
+                        "-i", str(self.store.asset_path(project, asset.id)),
+                    ]
+                    height = max(24, item.size * 2)
+                    label_in = f"img{index}"
+                    filters.append(f"[{index}:v]scale=-2:{height}[{label_in}]")
+                    x, y = _overlay_position(item, project)
+                    enable = f":enable='between(t,{item.start:.2f},{_overlay_end(item):.2f})'" if item.duration else (
+                        f":enable='gte(t,{item.start:.2f})'"
+                    )
+                    filters.append(
+                        f"[{video_in}][{label_in}]overlay=x={x}:y={y}{enable}[{video_out}]"
+                    )
+                    video_in = video_out
+                    step += 1
+                    video_out = f"v{step}"
+
+                audio_map = "0:a"
+                if bgm_asset is not None:
+                    bgm_index = 1 + len(image_overlays)
+                    args += [
+                        "-stream_loop", "-1",
+                        "-protocol_whitelist", LOCAL_PROTOCOLS,
+                        "-i", str(self.store.asset_path(project, bgm_asset.id)),
                     ]
                     fade_start = max(duration - 2.0, 0.0)
                     filters.append(
-                        f"[1:a]aresample=48000,aformat=channel_layouts=stereo,"
+                        f"[{bgm_index}:a]aresample=48000,aformat=channel_layouts=stereo,"
                         f"volume={project.bgm.volume:.3f},afade=t=out:st={fade_start:.3f}:d=2[b];"
                         f"[0:a][b]amix=inputs=2:duration=first:normalize=0[a]"
                     )
@@ -585,16 +553,16 @@ class Renderer:
                 command = [*args]
                 if filters:
                     command += ["-filter_complex", ";".join(filters)]
+                # 视频没经过滤镜时直接引用输入流（0:v），不能写成 [0:v]——
+                # 方括号形式只在滤镜图里有同名的输出标签时才成立。
+                video_map = f"[{video_in}]" if video_in.startswith("v") else video_in
                 command += ["-map", video_map, "-map", audio_map]
-                command += _video_args(project.canvas.fps) if video_map != "0:v" else ["-c:v", "copy"]
+                command += _video_args(project.canvas.fps, self.quality) if video_in.startswith("v") else ["-c:v", "copy"]
                 command += AUDIO_ARGS if audio_map != "0:a" else ["-c:a", "copy"]
                 command += [
-                    "-t",
-                    f"{duration:.3f}",
-                    "-movflags",
-                    "+faststart",
-                    "-f",
-                    "mp4",
+                    "-t", f"{duration:.3f}",
+                    "-movflags", "+faststart",
+                    "-f", "mp4",
                     str(temp.resolve()),
                 ]
                 run_ffmpeg(command, cwd=work, cancel=self._cancel)

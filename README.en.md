@@ -6,14 +6,19 @@
 
 Shotwright is built around the *shot*. The script is split into shots, and each shot picks its own visual source (stock search, AI generation, or your own uploaded image or video). Any shot can be replaced, locked or redone by itself. Change one shot and only that shot is re-rendered, plus the final assembly.
 
-> Current version: v0.3.0. Next up is v0.4, "product ads": product references, importing raw footage, AI edits of existing clips, text overlays and ad localization. See the [roadmap](docs/ROADMAP.md).
+> Current version: v0.3.0. All v0.4 "product ads" features are built and being tested (editing a clip with a prompt needs Seedance 2.5 enabled on Volcengine Ark). See the [roadmap](docs/ROADMAP.md).
+
+![Demo: write a brief, edit the storyboard, trim a clip, preview the video](docs/images/demo-en.gif)
 
 ## Features
 
 - **Storyboard editing**: split a script into shots sentence by sentence, or write a video brief (audience, tone, key points; up to 4096 bytes), pick a length, and let an LLM write the script, decide how many shots it needs, and suggest search terms and visual prompts for each shot.
 - **Mixed visuals**: in one video, some shots can use Pixabay / Pexels / Coverr footage, some AI video (Seedance) or AI images (Seedream with a slow Ken Burns push-in), and some your own uploads. An AI image can also serve as the first frame of an AI video. Under each shot, a hint shows how many candidates the other sources have, with one click to switch, so switching sources never loses footage you already generated.
+- **Footage import and in-shot editing**: import footage shot on a phone and have it split into shots at scene changes; in each shot you can drag the in and out points, split it or merge it with the next. When a clip is shorter than its shot it is slowed down a little (to no less than 0.8×) and then holds its last frame, instead of jumping back to the start. The clip's own sound can be kept at an adjustable volume and is lowered automatically under the voice-over. When switching between portrait and landscape you can choose what part of the frame to keep, or keep the whole subject over a blurred fill.
+- **Product ads**: a project-level library of product shots, people, logos and style images used as references for generation; edit a clip with a prompt (video-to-video); overlay selling points, prices and logos separately from the subtitles, with transitions between shots; overlay text is translated along with the language versions.
 - **Charge confirmation**: every paid generation must be confirmed in the UI before it is submitted. If the result of a submission can't be confirmed, it is never retried automatically, so you are never charged twice.
-- **Incremental rendering**: each stage is fingerprinted by its inputs and cached, so unchanged shots are reused. Renders can be cancelled at any time.
+- **Incremental rendering**: each stage is fingerprinted by its inputs and cached, so unchanged shots are reused. Renders can be cancelled at any time. A draft quality renders faster for a first look; the estimated cost is shown before rendering and the project keeps a running total of generation spend.
+- **AI content labels**: the MP4 metadata of every render marks it as AI-generated and credits CC BY background music; an optional "AI" badge can be shown on screen.
 - **Voice-over**: free Edge online voices by default, with Azure, SiliconFlow, MiniMax and ElevenLabs available as alternatives you can switch between in the UI.
 - **Subtitles**: wrapped by real font width with balanced line lengths. Edge returns per-word timings, so subtitles follow the actual speech; for providers that return no timings, cues fall back to proportional time allocation.
 - **Background music**: upload your own, or find it in one click: an LLM turns the brief and the shots into music-style search terms, candidates come from Internet Archive (no key needed) and are filtered by licence, you can preview and switch them, and the track loops to the length of the video.
@@ -79,6 +84,15 @@ shotwright serve
 ```
 
 Then open <http://127.0.0.1:8000>. On Windows you can simply double-click `start.bat` to start and `restart.bat` to restart (it first stops the old server on port 8000). For frontend development, run `cd web && npm run dev` in another terminal and visit <http://localhost:5173>.
+
+### Docker
+
+```bash
+mkdir docker-data && cp config.example.toml docker-data/config.toml   # fill in keys as needed
+docker compose up -d --build
+```
+
+Then open <http://127.0.0.1:8000>. Projects and renders are kept in `docker-data/`. The server only accepts requests addressed to the local machine; to use it over your LAN, add the server's IP to `allowed_hosts` under `[app]` in `config.toml` and change the port mapping in `docker-compose.yml` to `"8000:8000"`.
 
 ### Command line
 

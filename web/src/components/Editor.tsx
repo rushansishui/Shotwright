@@ -1,125 +1,39 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { api, assetUrl } from "../api";
-import type { Aspect, LanguageInfo, Project, Providers, SubtitleStyle, VisualMode, VisualPatch, VoiceSettings } from "../types";
+import { useRef, useState } from "react";
+import { api } from "../api";
+import type { Aspect, SubtitleStyle, VisualMode, VisualPatch } from "../types";
 import { Section, Segmented, Slider } from "./Controls";
 import { providerName, useI18n } from "../i18n";
 import { RenderPanel } from "./RenderPanel";
 import { Versions } from "./Versions";
 import { ShotCard } from "./ShotCard";
+import { useEditor } from "./editor/useEditor";
+import { BgmSection } from "./editor/BgmSection";
+import { ReferencesSection } from "./editor/ReferencesSection";
+import { OverlaySection } from "./editor/OverlaySection";
 
 export function Editor({ projectId }: { projectId: string }) {
-  const [project, setProject] = useState<Project | null>(null);
-  const [error, setError] = useState("");
-  // 正在检索 / 生成 / 上传的镜头 → 开始时间（毫秒）。可以同时有多个镜头在生成。
-  const [busy, setBusy] = useState<Record<string, number>>({});
-  const [now, setNow] = useState(Date.now());
-  const inflight = useRef(new Set<string>());
-  const [activeIndex, setActiveIndex] = useState(0);
-  const [voices, setVoices] = useState<{ id: string; name: string }[]>([]);
-  const [languages, setLanguages] = useState<LanguageInfo[]>([]);
+  const {
+    project,
+    error,
+    setError,
+    busy,
+    now,
+    activeIndex,
+    setActiveIndex,
+    voices,
+    languages,
+    providers,
+    title,
+    setTitle,
+    draft,
+    setDraft,
+    load,
+    run,
+    updateVoice,
+  } = useEditor(projectId);
   const { t, lang } = useI18n();
-  const [providers, setProviders] = useState<Providers | null>(null);
-  const [title, setTitle] = useState("");
-  // 滑块拖动时只更新本地显示，松手后再保存。
-  const [draft, setDraft] = useState<{ rate?: number; volume?: number; bgm?: number; size?: number }>({});
-  const bgmInput = useRef<HTMLInputElement>(null);
-  const [bgmBusy, setBgmBusy] = useState(false);
-
-  const load = useCallback(() => {
-    api
-      .getProject(projectId)
-      .then((p) => {
-        setProject(p);
-        setTitle(p.title);
-      })
-      .catch((e) => setError((e as Error).message));
-  }, [projectId]);
-
-  const markBusy = useCallback((shotId: string, on: boolean, since = Date.now()) => {
-    setBusy((prev) => {
-      if (on === shotId in prev) return prev;
-      const next = { ...prev };
-      if (on) next[shotId] = since;
-      else delete next[shotId];
-      return next;
-    });
-  }, []);
-
-  // 刷新页面后，从服务器恢复仍在生成的镜头；生成期间每 2 秒同步一次，完成后自动刷新项目。
-  const busyCount = Object.keys(busy).length;
-  useEffect(() => {
-    let stopped = false;
-    const sync = async () => {
-      try {
-        const remote = await api.inProgress(projectId);
-        if (stopped) return;
-        let finished = false;
-        setBusy((prev) => {
-          const next = { ...prev };
-          for (const [shotId, info] of Object.entries(remote)) {
-            if (!(shotId in next)) next[shotId] = Date.now() - info.seconds * 1000;
-          }
-          for (const shotId of Object.keys(next)) {
-            if (!(shotId in remote) && !inflight.current.has(shotId)) {
-              delete next[shotId];
-              finished = true;
-            }
-          }
-          return next;
-        });
-        if (finished) load();
-      } catch {
-        /* 网络抖动时下次再试 */
-      }
-    };
-    sync();
-    if (busyCount === 0) return () => void (stopped = true);
-    const poll = window.setInterval(sync, 2000);
-    const tick = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => {
-      stopped = true;
-      window.clearInterval(poll);
-      window.clearInterval(tick);
-    };
-  }, [projectId, busyCount, load]);
-
-  useEffect(() => {
-    load();
-    api.providers().then(setProviders).catch(() => setProviders(null));
-    api.languages().then(setLanguages).catch(() => setLanguages([]));
-  }, [load]);
-
-  // 声音下拉框：Edge 按语言列，其他配音服务列自己的声音。
-  const projectLanguage = project?.language;
-  const voiceProvider = project?.voice.provider;
-  useEffect(() => {
-    if (!projectLanguage) return;
-    api
-      .voices(projectLanguage, voiceProvider)
-      .then(setVoices)
-      .catch(() => setVoices([]));
-  }, [projectLanguage, voiceProvider]);
-
-  async function run(action: () => Promise<Project>, shotId?: string) {
-    setError("");
-    if (shotId) {
-      inflight.current.add(shotId);
-      markBusy(shotId, true);
-    }
-    try {
-      const next = await action();
-      setProject(next);
-      return next;
-    } catch (e) {
-      setError((e as Error).message);
-      return null;
-    } finally {
-      if (shotId) {
-        inflight.current.delete(shotId);
-        markBusy(shotId, false);
-      }
-    }
-  }
+  const footageInput = useRef<HTMLInputElement>(null);
+  const [footageBusy, setFootageBusy] = useState(false);
 
   if (!project) {
     return <main className="page">{error ? <p className="hint error">{error}</p> : <p className="muted">{t("common.loading")}</p>}</main>;
@@ -131,7 +45,6 @@ export function Editor({ projectId }: { projectId: string }) {
     const found = (providers?.[kind] ?? []).find((p) => p.default);
     return found?.configured ? found : null;
   };
-  // 素材的 source（服务 id）→ 它属于哪种画面来源，用于按来源筛选候选素材。
   const sourceModes: Record<string, VisualMode> = { upload: "upload" };
   for (const [kind, mode] of [
     ["stock", "stock"],
@@ -142,14 +55,8 @@ export function Editor({ projectId }: { projectId: string }) {
   }
   const aiVideo = defaultProvider("video_gen");
   const aiImage = defaultProvider("image_gen");
-  const updateVoice = (patch: Partial<VoiceSettings>) => run(() => api.updateProject(id, { voice: { ...project.voice, ...patch } }));
   const updateSubtitle = (patch: Partial<SubtitleStyle>) =>
     run(() => api.updateProject(id, { subtitle: { ...project.subtitle, ...patch } }));
-  const bgmAsset = project.bgm.asset_id ? project.assets[project.bgm.asset_id] : undefined;
-  /** 自动检索到的背景音乐候选（上传的素材不在其中）。 */
-  const bgmCandidates = (project.bgm.candidates ?? [])
-    .map((assetId) => project.assets[assetId])
-    .filter((asset): asset is NonNullable<typeof asset> => asset?.kind === "audio");
 
   async function moveShot(index: number, delta: number) {
     const order = project!.shots.map((s) => s.id);
@@ -166,31 +73,20 @@ export function Editor({ projectId }: { projectId: string }) {
     }, shotId);
   }
 
-  async function uploadBgm(file: File) {
-    try {
-      const asset = await api.upload(id, file);
-      if (asset.kind !== "audio") throw new Error(t("editor.bgmNotAudio"));
-      await run(() => api.updateProject(id, { bgm: { ...project!.bgm, asset_id: asset.id } }));
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-
-  async function searchBgm() {
-    setBgmBusy(true);
+  async function importFootage(file: File) {
+    setFootageBusy(true);
     setError("");
     try {
-      const next = await api.bgmCandidates(id, project!.bgm.query || "");
-      setProject(next);
-      // 检索到之后自动选用第一首，省一次点击。
-      const first = next.bgm.candidates?.[0];
-      if (first && !next.bgm.asset_id) {
-        await run(() => api.updateProject(id, { bgm: { ...next.bgm, asset_id: first } }));
-      }
+      const replace = project!.shots.length > 0;
+      const result = await api.importFootage(id, file, replace);
+      // 切镜在后端完成，重新拉一次项目拿到新镜头；定位到第一个新镜头。
+      load();
+      setActiveIndex(0);
+      if (result.segments === 0) setError(t("footage.empty"));
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setBgmBusy(false);
+      setFootageBusy(false);
     }
   }
 
@@ -233,9 +129,25 @@ export function Editor({ projectId }: { projectId: string }) {
           step={1}
           title={t("editor.shots")}
           extra={
-            <button type="button" className="btn" onClick={() => run(() => api.addShot(id))}>
-              {t("editor.addShot")}
-            </button>
+            <div className="row">
+              <input
+                ref={footageInput}
+                type="file"
+                accept="video/*"
+                hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) importFootage(file);
+                  e.target.value = "";
+                }}
+              />
+              <button type="button" className="btn" disabled={footageBusy} onClick={() => footageInput.current?.click()}>
+                {footageBusy ? t("footage.importing") : t("footage.import")}
+              </button>
+              <button type="button" className="btn" onClick={() => run(() => api.addShot(id))}>
+                {t("editor.addShot")}
+              </button>
+            </div>
           }
         >
           {project.shots.length === 0 && <p className="muted">{t("editor.noShots")}</p>}
@@ -254,16 +166,22 @@ export function Editor({ projectId }: { projectId: string }) {
                 sourceModes={sourceModes}
                 onFocus={() => setActiveIndex(index)}
                 onUpdate={(body: { text?: string; visual?: VisualPatch }) => run(() => api.updateShot(id, shot.id, body))}
-                onCandidates={(confirmCharge, prompt) =>
+                onCandidates={(confirmCharge, prompt, editSelected) =>
                   run(async () => {
                     // 还没失焦保存的提示词先存好，再生成，避免用旧提示词花钱。
                     if (prompt !== undefined) await api.updateShot(id, shot.id, { visual: { prompt } });
-                    return api.candidates(id, shot.id, confirmCharge);
+                    return api.candidates(id, shot.id, confirmCharge, editSelected);
                   }, shot.id)
                 }
                 onUpload={(file) => uploadForShot(shot.id, file)}
                 onMove={(delta) => moveShot(index, delta)}
                 onInsert={() => run(() => api.addShot(id, shot.id))}
+                onSplit={(at) => run(() => api.splitShot(id, shot.id, at), shot.id)}
+                onMerge={() => {
+                  if (window.confirm(t("editor.mergeShot", { n: index + 1, m: index + 2 }))) {
+                    run(() => api.mergeShot(id, shot.id));
+                  }
+                }}
                 onDelete={() => {
                   if (window.confirm(t("editor.deleteShot", { n: index + 1 }))) {
                     run(() => api.deleteShot(id, shot.id));
@@ -275,7 +193,11 @@ export function Editor({ projectId }: { projectId: string }) {
           </div>
         </Section>
 
-        <Section step={2} title={t("editor.audio")}>
+        <Section step={2} title={t("references.title")}>
+          <ReferencesSection project={project} run={run} setError={setError} />
+        </Section>
+
+        <Section step={3} title={t("editor.audio")}>
           <div className="field">
             <div className="field-row">
               <label htmlFor="language">{t("editor.language")}</label>
@@ -347,82 +269,17 @@ export function Editor({ projectId }: { projectId: string }) {
             />
           </div>
           <div className="divider" />
-          <div className="grid-2">
-            <div className="field">
-              <span className="label">{t("editor.bgm")}</span>
-              <input
-                ref={bgmInput}
-                type="file"
-                accept="audio/*"
-                hidden
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) uploadBgm(file);
-                  e.target.value = "";
-                }}
-              />
-              <div className="row">
-                <button type="button" className="btn" onClick={() => bgmInput.current?.click()}>
-                  {bgmAsset ? t("editor.bgmReplace") : t("editor.bgmUpload")}
-                </button>
-                <button type="button" className="btn" disabled={bgmBusy} onClick={searchBgm}>
-                  {bgmBusy ? t("editor.bgmSearching") : t("editor.bgmSearch")}
-                </button>
-                {bgmAsset && (
-                  <>
-                    <span className="muted small ellipsis">{bgmAsset.meta.title ?? bgmAsset.meta.filename ?? t("editor.bgmUploaded")}</span>
-                    <button type="button" className="btn ghost" onClick={() => run(() => api.updateProject(id, { bgm: { ...project.bgm, asset_id: null } }))}>
-                      {t("editor.bgmRemove")}
-                    </button>
-                  </>
-                )}
-              </div>
-              {project.bgm.query && <p className="hint">{t("editor.bgmQuery", { query: project.bgm.query })}</p>}
-              {bgmCandidates.length > 0 && (
-                <div className="bgm-candidates" role="listbox" aria-label={t("editor.bgmCandidates")}>
-                  {bgmCandidates.map((asset) => (
-                    <button
-                      type="button"
-                      key={asset.id}
-                      role="option"
-                      aria-selected={project.bgm.asset_id === asset.id}
-                      className={`bgm-candidate ${project.bgm.asset_id === asset.id ? "on" : ""}`}
-                      onClick={() => run(() => api.updateProject(id, { bgm: { ...project.bgm, asset_id: asset.id } }))}
-                      title={asset.meta.author ? t("shot.author", { name: asset.meta.author }) : asset.meta.title}
-                    >
-                      <span className="bgm-candidate-title">{asset.meta.title ?? asset.id}</span>
-                      <span className="muted small">
-                        {asset.duration ? t("editor.bgmDuration", { n: Math.round(asset.duration) }) : ""}
-                        {asset.meta.author ? ` · ${asset.meta.author}` : ""}
-                        {asset.meta.license_kind === "unknown" ? ` · ${t("editor.bgmLicenseUnknown")}` : ""}
-                      </span>
-                      {asset.meta.license && (
-                        <span className="muted small ellipsis">{t("editor.bgmLicense", { license: asset.meta.license })}</span>
-                      )}
-                      <audio src={assetUrl(id, asset.id)} controls preload="none" onClick={(e) => e.stopPropagation()} />
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <Slider
-              id="bgm-volume"
-              label={t("editor.bgmVolume")}
-              value={draft.bgm ?? project.bgm.volume}
-              min={0}
-              max={1}
-              step={0.05}
-              format={(v) => `${Math.round(v * 100)}%`}
-              onInput={(bgm) => setDraft({ ...draft, bgm })}
-              onCommit={(volume) =>
-                run(() => api.updateProject(id, { bgm: { ...project.bgm, volume } })).then(() => setDraft({ ...draft, bgm: undefined }))
-              }
-            />
-          </div>
+          <BgmSection
+            project={project}
+            run={run}
+            setError={setError}
+            draft={draft}
+            setDraft={setDraft}
+          />
         </Section>
 
         <Section
-          step={3}
+          step={4}
           title={t("editor.subtitles")}
           extra={
             <label className="switch">
@@ -477,6 +334,8 @@ export function Editor({ projectId }: { projectId: string }) {
             </div>
           )}
         </Section>
+
+        <OverlaySection project={project} run={run} />
 
         <Versions project={project} languages={languages} />
       </div>

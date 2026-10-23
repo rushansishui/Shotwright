@@ -10,7 +10,7 @@ from pathlib import Path
 
 from shotwright.config import Settings
 from shotwright.core.fingerprint import fingerprint
-from shotwright.core.models import Asset, AssetFolder, Project, Shot
+from shotwright.core.models import Asset, AssetFolder, PendingTask, Project, Shot
 from shotwright.core.store import ProjectStore, read_json, write_json
 from shotwright.media.ffmpeg import MediaError, probe
 from shotwright.providers import registry
@@ -252,6 +252,48 @@ def _first_frame(store: ProjectStore, project: Project, shot: Shot) -> Path | No
     return store.asset_path(project, asset.id)
 
 
+_ROLE_HINTS = {
+    "product": "产品外观参考：保持商品形状、颜色、材质、logo 位置与参考图一致，不要重新设计商品",
+    "person": "人物参考：保持人物的五官、发型、肤色与参考图一致",
+    "logo": "Logo 参考：保持 Logo 的图形与颜色不变，清晰可辨",
+    "style": "风格参考：沿用参考图的色调、光线与画面质感",
+}
+
+
+def reference_assets(project: Project, *, roles: tuple[str, ...] | None = None) -> list:
+    """项目里启用的参考素材（按角色过滤）。"""
+    result = []
+    for ref in project.references:
+        if not ref.enabled:
+            continue
+        if roles is not None and ref.role not in roles:
+            continue
+        asset = project.assets.get(ref.asset_id)
+        if asset is None or asset.kind != "image":
+            continue
+        result.append((ref, asset))
+    return result
+
+
+def _reference_prompt(project: Project) -> str:
+    """把启用的参考素材写成提示词前缀，让模型知道要参照什么。"""
+    lines = []
+    for ref, _asset in reference_assets(project):
+        hint = _ROLE_HINTS.get(ref.role, "")
+        if hint:
+            lines.append(f"- {hint}" + (f"（{ref.label}）" if ref.label else ""))
+    if not lines:
+        return ""
+    return "参考素材要求：\n" + "\n".join(lines) + "\n\n"
+
+
+def _reference_first_frame(store: ProjectStore, project: Project) -> tuple[Path | None, str]:
+    """没有显式首帧时，用第一张产品/人物参考图作为首帧，保证商品外观不走样。"""
+    for _ref, asset in reference_assets(project, roles=("product", "person")):
+        return store.asset_path(project, asset.id), asset.id
+    return None, ""
+
+
 def generate_ai_candidate(
     store: ProjectStore,
     settings: Settings,
@@ -259,31 +301,79 @@ def generate_ai_candidate(
     shot: Shot,
     *,
     confirm_charge: bool = False,
+    edit_selected: bool = False,
 ) -> list[str]:
-    """AI 视频。已选中的画面是图片时，把它作为首帧（图生视频）。"""
+    """AI 视频。已选中的画面是图片时，把它作为首帧（图生视频）。
+
+    ``edit_selected`` 为真时是「改画面」：把当前选中的视频作为参考视频交给支持
+    视频转视频的模型，按提示词改写。只有用户明确点了「改画面」才会这样做，普通的
+    「生成」永远是文生 / 图生视频，避免悄悄换成另一种计费方式。
+
+    拿到远端任务 id 后立刻写进项目，进程重启后还能继续轮询，避免重复扣费。
+    """
     if not shot.visual.prompt.strip():
         raise ProviderError("这个镜头没有画面提示词")
     provider_id = _provider_id(settings, "video_gen", shot)
     # 先实例化（只检查配置，不发请求），未配置时报"缺少配置"而不是"需要确认"。
     provider: VideoGenProvider = registry.create("video_gen", provider_id, settings)  # type: ignore[assignment]
+    reference_video: Path | None = None
+    if edit_selected:
+        reference_video = _edit_source(store, project, shot, provider_id)
     require_charge_confirmation(settings, "video_gen", provider_id, confirm_charge)
-    first_frame = _first_frame(store, project, shot)
-    meta = {"prompt": shot.visual.prompt[:500]}
+    first_frame = None if reference_video is not None else _first_frame(store, project, shot)
+    frame_source = shot.visual.first_frame or ""
+    if first_frame is None and reference_video is None:
+        # 没有显式首帧时，优先用产品/人物参考图，保证商品外观不走样。
+        first_frame, frame_source = _reference_first_frame(store, project)
+    prompt = _reference_prompt(project) + shot.visual.prompt
+    meta = {"prompt": prompt[:500]}
     if first_frame is not None:
-        meta["first_frame"] = shot.visual.first_frame or ""
+        meta["first_frame"] = frame_source
+    if reference_video is not None:
+        meta["edited_from"] = shot.visual.selected or ""
+
+    def remember_task(task_id: str) -> None:
+        """任务 id 一拿到就落盘。这里直接用 store 的锁与最新项目，避免覆盖并发编辑。"""
+        with store.lock(project.id):
+            latest = store.load(project.id)
+            try:
+                target = latest.shot(shot.id)
+            except KeyError:
+                return
+            target.visual.pending = PendingTask(
+                provider=provider_id or "video_gen", task_id=task_id, kind="video_gen"
+            )
+            store.save(latest)
+            project.revision = latest.revision
+
     with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
         path = provider.generate(
-            shot.visual.prompt,
+            prompt,
             aspect=project.canvas.aspect,
             duration=estimated_shot_seconds(project, shot),
             output=Path(temp) / "gen",
             first_frame=first_frame,
+            reference_video=reference_video,
+            on_task=remember_task,
         )
         asset = _register_media(
             store, project, path, source=provider_id or "video_gen", folder="ai-video", meta=meta
         )
+    shot.visual.pending = None
+    record_spend(store, settings, project, shot, "video_gen", provider_id or "")
     _attach(shot, [asset.id], select=True)
     return [asset.id]
+
+
+def _edit_source(store: ProjectStore, project: Project, shot: Shot, provider_id: str | None) -> Path:
+    """「改画面」的参考视频：当前选中的视频素材，且生成服务必须支持视频转视频。"""
+    spec = next((s for s in registry.specs("video_gen") if s.id == provider_id), None)
+    if spec is None or not spec.video_to_video:
+        raise ProviderError("当前的 AI 视频服务不支持改画面")
+    asset = project.assets.get(shot.visual.selected or "")
+    if asset is None or asset.kind != "video":
+        raise ProviderError("改画面需要先选中一段视频")
+    return store.asset_path(project, asset.id)
 
 
 def generate_image_candidate(
@@ -300,16 +390,18 @@ def generate_image_candidate(
     provider_id = _provider_id(settings, "image_gen", shot)
     provider: ImageGenProvider = registry.create("image_gen", provider_id, settings)  # type: ignore[assignment]
     require_charge_confirmation(settings, "image_gen", provider_id, confirm_charge)
+    prompt = _reference_prompt(project) + shot.visual.prompt
     with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
-        path = provider.generate(shot.visual.prompt, aspect=project.canvas.aspect, output=Path(temp) / "gen")
+        path = provider.generate(prompt, aspect=project.canvas.aspect, output=Path(temp) / "gen")
         asset = _register_media(
             store,
             project,
             path,
             source=provider_id or "image_gen",
             folder="ai-image",
-            meta={"prompt": shot.visual.prompt[:500]},
+            meta={"prompt": prompt[:500]},
         )
+    record_spend(store, settings, project, shot, "image_gen", provider_id or "")
     _attach(shot, [asset.id], select=True)
     return [asset.id]
 
@@ -321,17 +413,23 @@ def refresh_candidates(
     shot: Shot,
     *,
     confirm_charge: bool = False,
+    edit_selected: bool = False,
 ) -> list[str]:
     index = next((i for i, s in enumerate(project.shots) if s.id == shot.id), -1) + 1
     log.info(
         "项目 %s 镜头 %d：开始%s（%s）",
         project.id,
         index,
-        _ACTIONS.get(shot.visual.mode, "处理"),
+        "改画面" if edit_selected else _ACTIONS.get(shot.visual.mode, "处理"),
         shot.visual.mode,
     )
     try:
-        added = _refresh(store, settings, project, shot, confirm_charge=confirm_charge)
+        if edit_selected:
+            added = generate_ai_candidate(
+                store, settings, project, shot, confirm_charge=confirm_charge, edit_selected=True
+            )
+        else:
+            added = _refresh(store, settings, project, shot, confirm_charge=confirm_charge)
     except ProviderError as exc:
         log.warning(
             "项目 %s 镜头 %d：%s失败：%s", project.id, index, _ACTIONS.get(shot.visual.mode, "处理"), exc
@@ -359,6 +457,52 @@ def _refresh(
     if shot.visual.mode == "image":
         return generate_image_candidate(store, settings, project, shot, confirm_charge=confirm_charge)
     raise ProviderError("这个镜头的画面来源不需要检索或生成")
+
+
+def resume_pending(store: ProjectStore, settings: Settings, project: Project, shot: Shot) -> list[str]:
+    """继续轮询一个已提交但没取回结果的 AI 视频任务（重启后恢复用）。
+
+    成功时把结果登记为素材并清掉 pending；失败时也清掉，让用户可以重新提交。
+    """
+    pending = shot.visual.pending
+    if pending is None:
+        return []
+    if pending.kind != "video_gen":
+        shot.visual.pending = None
+        return []
+    provider_id = pending.provider
+    provider: VideoGenProvider = registry.create("video_gen", provider_id, settings)  # type: ignore[assignment]
+    if not hasattr(provider, "resume"):
+        shot.visual.pending = None
+        return []
+    meta = {"prompt": shot.visual.prompt[:500], "resumed_from": pending.task_id}
+    with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
+        path = provider.resume(pending.task_id, output=Path(temp) / "gen")
+        asset = _register_media(
+            store, project, path, source=provider_id, folder="ai-video", meta=meta
+        )
+    shot.visual.pending = None
+    record_spend(store, settings, project, shot, "video_gen", provider_id)
+    _attach(shot, [asset.id], select=True)
+    return [asset.id]
+
+
+def record_spend(
+    store: ProjectStore, settings: Settings, project: Project, shot: Shot, kind: str, provider_id: str
+) -> None:
+    """收费生成成功后，把参考费用累加到项目（直接写盘，调用方之后的合并不会覆盖它）。"""
+    from shotwright.services import cost
+
+    amount = cost.generation_cost(settings, project, shot, kind, provider_id)
+    if amount <= 0:
+        return
+    with store.lock(project.id):
+        latest = store.load(project.id)
+        latest.cost_credits = round(latest.cost_credits + amount, 4)
+        store.save(latest)
+        project.cost_credits = latest.cost_credits
+        project.revision = latest.revision
+    log.info("项目 %s：本次生成参考费用 %.2f 元，累计 %.2f 元", project.id, amount, project.cost_credits)
 
 
 def _attach(shot: Shot, asset_ids: list[str], *, select: bool = False) -> None:
@@ -403,16 +547,19 @@ def add_upload(store: ProjectStore, project: Project, path: Path, *, filename: s
 
 
 def asset_folder(asset: Asset) -> AssetFolder:
-    """按来源推断素材应放的子目录，用于整理 v0.3 之前的项目。"""
+    """按来源推断素材应放的子目录，用于整理旧项目。"""
     if asset.source == "upload":
         return "upload"
-    ids = {kind: {spec.id for spec in registry.specs(kind)} for kind in ("stock", "video_gen", "image_gen")}
+    ids = {kind: {spec.id for spec in registry.specs(kind)} for kind in ("stock", "video_gen", "image_gen", "music")}
     if asset.source in ids["stock"]:
         return "stock"
     if asset.kind == "video" and (asset.source in ids["video_gen"] or asset.source == "video_gen"):
         return "ai-video"
     if asset.kind == "image" and (asset.source in ids["image_gen"] or asset.source == "image_gen"):
         return "ai-image"
+    # 旧项目里已检索的背景音乐可能落在 other/，按来源或类型归到 music/。
+    if asset.kind == "audio" and (asset.source in ids["music"] or asset.source == "music"):
+        return "music"
     return "other"
 
 

@@ -1,0 +1,6 @@
+[app]
+storage_dir = "storage/e2e-projects"
+auto_fetch_visuals = false
+
+[defaults]
+tts = "silent"

@@ -1,0 +1,13 @@
+services:
+  shotwright:
+    build: .
+    image: shotwright:latest
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      # 项目、素材、渲染结果都放在这里；建议先备份再升级。
+      - ./docker-data:/data
+    # 服务需要访问方舟、素材库等服务；代理按需打开。
+    # environment:
+    #   SHOTWRIGHT_PROXY: "http://host.docker.internal:7890"
+    restart: unless-stopped

@@ -1,4 +1,7 @@
 import type {
+  BgmCandidate,
+  BgmSearchResult,
+  CostEstimate,
   Job,
   LanguageInfo,
   Project,
@@ -75,11 +78,19 @@ export const api = {
   }) => request<Project>("/projects", json("POST", body)),
   updateProject: (
     id: string,
-    body: Partial<Pick<Project, "title" | "language" | "canvas" | "voice" | "subtitle" | "bgm">>,
+    body: Partial<
+      Pick<
+        Project,
+        "title" | "language" | "canvas" | "voice" | "subtitle" | "bgm" | "references" | "overlays" | "transition" | "ai_badge"
+      >
+    >,
   ) =>
     request<Project>(`/projects/${id}`, json("PATCH", body)),
   deleteProject: (id: string) => request<void>(`/projects/${id}`, json("DELETE")),
   addShot: (id: string, after?: string) => request<Project>(`/projects/${id}/shots`, json("POST", { text: "", after })),
+  splitShot: (id: string, shotId: string, at: number) =>
+    request<Project>(`/projects/${id}/shots/${shotId}/split`, json("POST", { at })),
+  mergeShot: (id: string, shotId: string) => request<Project>(`/projects/${id}/shots/${shotId}/merge`, json("POST", {})),
   reorder: (id: string, order: string[]) => request<Project>(`/projects/${id}/shots/order`, json("PUT", { order })),
   updateShot: (
     id: string,
@@ -88,20 +99,37 @@ export const api = {
   ) => request<Project>(`/projects/${id}/shots/${shotId}`, json("PATCH", body)),
   deleteShot: (id: string, shotId: string) => request<Project>(`/projects/${id}/shots/${shotId}`, json("DELETE")),
   /** 收费的 AI 生成必须传 confirmCharge=true（用户已确认），否则后端返回 402。 */
-  candidates: (id: string, shotId: string, confirmCharge = false) =>
-    request<Project>(`/projects/${id}/shots/${shotId}/candidates`, json("POST", { confirm_charge: confirmCharge })),
+  candidates: (id: string, shotId: string, confirmCharge = false, editSelected = false) =>
+    request<Project>(
+      `/projects/${id}/shots/${shotId}/candidates`,
+      json("POST", { confirm_charge: confirmCharge, edit_selected: editSelected }),
+    ),
   /** 服务器上正在检索或生成的镜头（页面刷新后用来恢复"生成中"状态）。 */
   inProgress: (id: string) => request<Record<string, { mode: string; seconds: number }>>(`/projects/${id}/in-progress`),
-  /** 检索背景音乐；query 留空时由服务端用大模型从诉求和镜头提示词提炼。 */
+  /** 检索背景音乐候选（只返回元数据+试听地址，不下载）；query 留空时由服务端用大模型提炼。 */
   bgmCandidates: (id: string, query = "") =>
-    request<Project>(`/projects/${id}/bgm/candidates`, json("POST", { query })),
+    request<BgmSearchResult>(`/projects/${id}/bgm/candidates`, json("POST", { query })),
+  /** 下载选中的候选，注册为素材并设为当前背景音乐，返回更新后的项目。 */
+  bgmDownload: (id: string, candidate: BgmCandidate) =>
+    request<Project>(`/projects/${id}/bgm/download`, json("POST", candidate)),
   upload: (id: string, file: File) => {
     const form = new FormData();
     form.append("file", file);
     return request<{ id: string; kind: string }>(`/projects/${id}/assets`, { method: "POST", body: form });
   },
-  render: (id: string, confirmCharge = false) =>
-    request<Job>(`/projects/${id}/renders`, json("POST", { confirm_charge: confirmCharge })),
+  /** 导入原片并按画面变化自动切成镜头。 */
+  importFootage: (id: string, file: File, replaceShots = false) => {
+    const form = new FormData();
+    form.append("file", file);
+    const query = replaceShots ? "?replace_shots=true" : "";
+    return request<{ source_asset: string; shots: string[]; segments: number }>(
+      `/projects/${id}/footage${query}`,
+      { method: "POST", body: form },
+    );
+  },
+  render: (id: string, confirmCharge = false, quality: "draft" | "final" = "final") =>
+    request<Job>(`/projects/${id}/renders`, json("POST", { confirm_charge: confirmCharge, quality })),
+  costEstimate: (id: string) => request<CostEstimate>(`/projects/${id}/cost-estimate`),
   job: (jobId: string) => request<Job>(`/renders/${jobId}`),
   cancel: (jobId: string) => request<{ ok: boolean }>(`/renders/${jobId}/cancel`, json("POST")),
   renders: (id: string) =>

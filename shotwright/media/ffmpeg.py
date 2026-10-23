@@ -170,3 +170,79 @@ def filter_path(path: Path) -> str:
     for char in ("\\", ":", "'", ",", "[", "]", ";"):
         text = text.replace(char, "\\" + char)
     return text
+
+
+def detect_scenes(path: Path, *, threshold: float = 0.35, timeout: float = 600) -> list[float]:
+    """按画面变化检测切镜点，返回每个镜头的起始秒数（第一个总是 0）。
+
+    用 ffmpeg 的 scene 分数：超过阈值的帧被选中，``showinfo`` 打印它的 ``pts_time``。
+    """
+    command = [
+        _tools.ffmpeg,
+        "-hide_banner",
+        "-nostdin",
+        "-protocol_whitelist",
+        LOCAL_PROTOCOLS,
+        "-i",
+        str(path),
+        "-filter:v",
+        f"select='gt(scene,{threshold:.2f})',showinfo",
+        "-an",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout
+        )
+    except FileNotFoundError as exc:
+        raise MediaError("找不到 ffmpeg，请先安装 FFmpeg") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise MediaError("切镜检测超时") from exc
+    if result.returncode != 0:
+        tail = "\n".join((result.stderr or "").strip().splitlines()[-5:])
+        raise MediaError(f"切镜检测失败：{tail}")
+    starts = [0.0]
+    for line in (result.stderr or "").splitlines():
+        marker = "pts_time:"
+        position = line.find(marker)
+        if position < 0:
+            continue
+        try:
+            seconds = float(line[position + len(marker) :].split()[0])
+        except (ValueError, IndexError):
+            continue
+        if seconds > 0:
+            starts.append(round(seconds, 3))
+    return sorted(set(starts))
+
+
+def cut_segment(source: Path, output: Path, *, start: float, duration: float) -> None:
+    """把源视频的一段重新编码成独立文件（只保留画面，声音另行配音）。"""
+    run_ffmpeg(
+        [
+            "-protocol_whitelist",
+            LOCAL_PROTOCOLS,
+            "-ss",
+            f"{max(0.0, start):.3f}",
+            "-i",
+            str(source),
+            "-t",
+            f"{max(0.05, duration):.3f}",
+            "-an",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "20",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            "-f",
+            "mp4",
+            str(output),
+        ]
+    )

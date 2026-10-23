@@ -9,7 +9,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from shotwright.core.models import (
     BgmSettings,
     Canvas,
+    FillMode,
+    FitMode,
+    Overlay,
+    ReferenceAsset,
     SubtitleStyle,
+    TransitionSettings,
     VisualMode,
     VoiceSettings,
     check_subject,
@@ -53,7 +58,14 @@ class UpdateProject(_Body):
     canvas: Canvas | None = None
     voice: VoiceSettings | None = None
     subtitle: SubtitleStyle | None = None
+    overlays: list[Overlay] | None = None
+    """叠加文字与图形；整体替换。"""
+    transition: TransitionSettings | None = None
+    ai_badge: bool | None = None
+    """画面上是否显示「AI 生成」角标。"""
     bgm: BgmSettings | None = None
+    references: list[ReferenceAsset] | None = None
+    """项目级参考素材库；整体替换。"""
 
     @field_validator("subject")
     @classmethod
@@ -71,7 +83,15 @@ class VisualPatch(_Body):
     clear_first_frame: bool = False
     """为真时取消首帧，改为纯文字生成视频。"""
     color: str | None = None
-    fit: Literal["cover", "contain"] | None = None
+    fit: FitMode | None = None
+    focus_x: float | None = Field(None, ge=0.0, le=1.0)
+    focus_y: float | None = Field(None, ge=0.0, le=1.0)
+    trim_start: float | None = Field(None, ge=0.0, le=36000)
+    trim_end: float | None = Field(None, gt=0.0, le=36000)
+    clear_trim_end: bool = False
+    """为真时出点回到素材结尾。"""
+    fill: FillMode | None = None
+    source_volume: float | None = Field(None, ge=0.0, le=2.0)
     locked: bool | None = None
 
 
@@ -90,6 +110,11 @@ class AddShot(_Body):
     """插在哪个镜头之后；为空时追加到末尾。"""
 
 
+class SplitShot(_Body):
+    at: float = Field(..., gt=0, le=36000)
+    """拆分点：从镜头片段开头算起的秒数。"""
+
+
 class ReorderShots(_Body):
     order: list[str]
 
@@ -97,6 +122,13 @@ class ReorderShots(_Body):
 class ChargeConsent(_Body):
     confirm_charge: bool = False
     """用户已确认这次操作可以调用收费服务（AI 视频、AI 图片）。"""
+    quality: Literal["draft", "final"] = "final"
+    """draft：快速低质量预览；final：正常成片。"""
+
+
+class CandidatesRequest(ChargeConsent):
+    edit_selected: bool = False
+    """改画面：把当前选中的视频交给支持视频转视频的 AI 服务按提示词改写。"""
 
 
 class CreateVersion(_Body):
@@ -107,3 +139,24 @@ class CreateVersion(_Body):
 class BgmSearch(_Body):
     query: str = Field("", max_length=200)
     """检索词；留空时由大模型从视频诉求和镜头提示词提炼。"""
+
+
+class ImportFootage(_Body):
+    threshold: float = Field(0.35, ge=0.05, le=1.0)
+    """画面变化阈值：越小切得越碎。"""
+    max_shots: int = Field(30, ge=1, le=60)
+    replace_shots: bool = False
+    """为真时替换现有镜头，否则追加到末尾。"""
+
+
+class BgmDownload(_Body):
+    provider: str
+    """候选所属的 Provider id，例如 "archive"。"""
+    remote_id: str = Field(..., max_length=400)
+    """候选的远端唯一标识，来自搜索结果的 remote_id。"""
+    url: str = Field(..., max_length=2000)
+    """下载地址，来自搜索结果的 url。"""
+    title: str = Field("", max_length=200)
+    author: str = Field("", max_length=200)
+    duration: float = Field(0.0, ge=0)
+    meta: dict[str, str] = Field(default_factory=dict)

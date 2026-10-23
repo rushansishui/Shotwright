@@ -286,8 +286,34 @@ def _ass_escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}").replace("\n", "\\N")
 
 
-def to_ass(cues: list[Cue], style: SubtitleStyle, *, width: int, height: int, family: str) -> str:
+def to_ass(
+    cues: list[Cue],
+    style: SubtitleStyle,
+    *,
+    width: int,
+    height: int,
+    family: str,
+    overlays: list | None = None,
+) -> str:
+    """生成 ASS。``overlays`` 是画面上方的文字叠加（卖点、价格、购买引导）。"""
     alignment = {"bottom": 2, "middle": 5, "top": 8}[style.position]
+    overlay_styles: list[str] = []
+    overlay_events: list[str] = []
+    for index, item in enumerate(overlays or []):
+        if not item.enabled or not item.text.strip():
+            continue
+        name = f"Overlay{index}"
+        position = {"bottom": 2, "middle": 5, "top": 8}[item.position]
+        overlay_styles.append(
+            f"Style: {name},{family},{item.size},{_ass_color(item.color)},&H000000FF,"
+            f"{_ass_color(item.outline_color)},&H64000000,1,0,0,0,100,100,0,0,1,3,0,"
+            f"{position},60,60,{item.margin},1"
+        )
+        end = "" if item.duration is None else _ass_time(item.start + item.duration)
+        overlay_events.append(
+            f"Dialogue: 1,{_ass_time(item.start)},{end or _ass_time(1e6)},{name},,0,0,0,,"
+            f"{_ass_escape(item.text.strip())}"
+        )
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {width}
@@ -298,7 +324,10 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Default,{family},{style.size},{_ass_color(style.color)},&H000000FF,{_ass_color(style.outline_color)},&H64000000,0,0,0,0,100,100,0,0,1,{style.outline:g},0,{alignment},60,60,{style.margin},1
-
+"""
+    if overlay_styles:
+        header += "\n".join(overlay_styles) + "\n"
+    header += """
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
@@ -306,7 +335,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         f"Dialogue: 0,{_ass_time(c.start)},{_ass_time(c.end)},Default,,0,0,0,,{_ass_escape(c.text)}"
         for c in cues
     ]
-    return header + "\n".join(lines) + "\n"
+    return header + "\n".join(overlay_events + lines) + "\n"
 
 
 def to_srt(cues: list[Cue]) -> str:

@@ -45,22 +45,31 @@ def apply_language(project: Project, code: str) -> None:
         project.subtitle = project.subtitle.model_copy(update={"font": lang.font})
 
 
-TRANSLATE_PROMPT = """你是短视频本地化编辑。把用户给的短视频口播文案翻译成 {target}。
+TRANSLATE_PROMPT = """你是短视频本地化编辑。把用户给的短视频文案翻译成 {target}。
 要求：
 - 口语化、适合配音朗读，符合 {target} 母语者的说法，不要逐字硬译。
 - 每个镜头的长度和原文接近（朗读时长相差不超过 20%），镜头数量和顺序不变。
 - 品牌、车型、人名等专有名词按 {target} 地区的通用写法；没有通用译名时保留原文。
 - 标题也一起翻译。
+- ``overlays`` 是画面上叠加的文字（卖点、价格、购买引导）：要译得短、有冲击力，
+  适合大字排版，同样保持条数和 id 不变；纯价格或纯符号（如 "¥99"）可以原样保留。
 - 只输出 JSON，不要任何解释，格式和输入相同：
-{{"title": "...", "shots": [{{"id": "...", "text": "..."}}]}}"""
+{{"title": "...", "shots": [{{"id": "...", "text": "..."}}], "overlays": [{{"id": "...", "text": "..."}}]}}"""
 
 
-def translate_texts(llm: LLMProvider, project: Project, target: str) -> tuple[str, dict[str, str]]:
-    """调用大模型翻译标题和所有镜头文案，返回 (标题, {镜头 id: 译文})。"""
+def translate_texts(
+    llm: LLMProvider, project: Project, target: str
+) -> tuple[str, dict[str, str], dict[str, str]]:
+    """调用大模型翻译标题、镜头文案和叠加文字。
+
+    返回 (标题, {镜头 id: 译文}, {叠加文字 id: 译文})。
+    """
     lang = languages.get(target)
+    overlays = [item for item in project.overlays if item.enabled and item.text.strip()]
     payload = {
         "title": project.title,
         "shots": [{"id": shot.id, "text": shot.text} for shot in project.shots if shot.text.strip()],
+        "overlays": [{"id": item.id, "text": item.text} for item in overlays],
     }
     messages = [
         {"role": "system", "content": TRANSLATE_PROMPT.format(target=lang.prompt_name)},
@@ -75,8 +84,12 @@ def translate_texts(llm: LLMProvider, project: Project, target: str) -> tuple[st
     missing = expected - set(texts)
     if missing:
         raise ProviderError(f"大模型漏翻了 {len(missing)} 个镜头，请重试")
+    overlay_texts: dict[str, str] = {}
+    for item in data.get("overlays") or []:
+        if isinstance(item, dict) and item.get("id") and str(item.get("text") or "").strip():
+            overlay_texts[str(item["id"])] = str(item["text"]).strip()[:200]
     title = str(data.get("title") or project.title).strip()[:120]
-    return title, texts
+    return title, texts, overlay_texts
 
 
 def _copy_file(source: str, target: str) -> None:
@@ -100,7 +113,7 @@ def create_language_version(
     for other in store.list():
         if (other.group or other.id) == group and languages.normalize(other.language) == code:
             raise ProviderError(f"已经有{languages.get(code).name_zh}版本了：{other.title}")
-    title, texts = translate_texts(llm, project, code)
+    title, texts, overlay_texts = translate_texts(llm, project, code)
 
     version = project.model_copy(deep=True)
     version.id = new_id()
@@ -111,6 +124,11 @@ def create_language_version(
         if shot.id in texts:
             shot.text = texts[shot.id]
         shot.status, shot.error = "draft", None
+    # 叠加文字（卖点、价格、购买引导）跟着一起翻译，否则多语言版本里还留着原文。
+    if overlay_texts:
+        for item in version.overlays:
+            if item.id in overlay_texts:
+                item.text = overlay_texts[item.id]
     apply_language(version, code)
     version.created_at = version.updated_at = time.time()
 

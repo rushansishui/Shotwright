@@ -64,6 +64,16 @@ class ProviderSpec:
     """自己的 api_key 为空时，依次借用这些 (类别, id) 的 api_key（例如方舟的同一把 Key）。"""
     voices: tuple[tuple[str, str], ...] = ()
     """配音服务的可选声音 (id, 说明)。为空表示用语言目录里的 Edge 声音。"""
+    max_duration: float | None = None
+    """视频生成的最长时长（秒）；None 表示不限或不适用。"""
+    has_audio: bool = False
+    """生成的视频是否含有声轨（用于判断是否需要混音）。"""
+    video_to_video: bool = False
+    """是否支持视频转视频（改画面）。"""
+    max_ref_images: int = 0
+    """支持的参考图数量上限；0 表示不支持参考图。"""
+    word_timestamps: bool = False
+    """配音服务是否提供逐词时间戳（用于精确字幕对齐）。"""
 
     def missing_fields(self, settings: dict[str, str]) -> list[str]:
         return [f.key for f in self.fields if f.required and not settings.get(f.key)]
@@ -131,12 +141,21 @@ class VideoGenProvider(Protocol):
         duration: float,
         output: Path,
         first_frame: Path | None = None,
+        reference_video: Path | None = None,
+        on_task: Callable[[str], None] | None = None,
     ) -> Path:
         """生成视频并保存到 ``output``（可改扩展名），返回实际路径。
 
-        ``first_frame`` 为本地图片时走图生视频。提交收费任务后若无法确认结果，
-        必须抛 :class:`UnconfirmedTaskError`，不得自动重新提交。
+        ``first_frame`` 为本地图片时走图生视频；``reference_video`` 为本地视频时
+        走视频转视频（改画面：换手、换背景、重新打光），结果是一段新视频。
+        ``on_task`` 在拿到远端任务 id 后立即回调，调用方据此把 id 写进项目，
+        进程重启后还能继续轮询。提交收费任务后若无法确认结果，必须抛
+        :class:`UnconfirmedTaskError`，不得自动重新提交。
         """
+        ...
+
+    def resume(self, task_id: str, *, output: Path) -> Path:
+        """轮询一个已提交的任务并下载结果（重启后恢复用）。"""
         ...
 
 

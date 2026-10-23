@@ -175,12 +175,18 @@ h2 {
   gap: 16px;
   position: sticky;
   top: 16px;
+  /* 侧栏比窗口高时自己滚动，否则下面的「成片」要等主栏滚到底才看得到。 */
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 @media (max-width: 1000px) {
   .side {
     position: static;
     max-width: none;
+    max-height: none;
+    overflow: visible;
   }
 }
 
@@ -977,4 +983,164 @@ input[type="color"] {
 .row > select.input {
   flex: 1;
   min-width: 0;
+}
+
+/* ---- 镜头内剪辑 ------------------------------------------------------ */
+
+.warn-text {
+  color: var(--warn);
+}
+
+.btn.small {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.shot-edit {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--field);
+}
+
+.shot-edit > summary {
+  cursor: pointer;
+  padding: 8px 12px;
+  font-weight: 600;
+  list-style-position: inside;
+}
+
+.shot-edit-body {
+  display: grid;
+  grid-template-columns: minmax(140px, 220px) 1fr;
+  gap: 14px;
+  padding: 0 12px 12px;
+}
+
+.shot-edit-media .edit-video {
+  width: 100%;
+  max-height: 320px;
+  border-radius: 8px;
+  background: #000;
+  object-fit: contain;
+}
+
+.shot-edit-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.trim {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 两个滑块叠在同一条轨道上：轨道本身不响应点击，只有两个把手能拖。 */
+.trim-track {
+  position: relative;
+  height: 28px;
+}
+
+.trim-track::before,
+.trim-track::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  height: 4px;
+  border-radius: 2px;
+}
+
+.trim-track::before {
+  left: 0;
+  right: 0;
+  background: var(--line);
+}
+
+.trim-track::after {
+  left: var(--a);
+  right: calc(100% - var(--b));
+  background: var(--accent);
+}
+
+.trim-track input[type="range"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  margin: 0;
+  background: none;
+  pointer-events: none;
+  appearance: none;
+  -webkit-appearance: none;
+  z-index: 1;
+}
+
+.trim-track input[type="range"]::-webkit-slider-runnable-track {
+  background: transparent;
+}
+
+.trim-track input[type="range"]::-moz-range-track {
+  background: transparent;
+}
+
+.trim-track input[type="range"]::-webkit-slider-thumb {
+  pointer-events: auto;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 22px;
+  margin-top: 3px;
+  border-radius: 4px;
+  border: 2px solid var(--accent);
+  background: #fff;
+  cursor: ew-resize;
+}
+
+.trim-track input[type="range"]::-moz-range-thumb {
+  pointer-events: auto;
+  width: 10px;
+  height: 18px;
+  border-radius: 4px;
+  border: 2px solid var(--accent);
+  background: #fff;
+  cursor: ew-resize;
+}
+
+.trim-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.focus-picker {
+  position: relative;
+  width: min(100%, 260px);
+  max-height: 240px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #000;
+  cursor: crosshair;
+}
+
+.focus-picker video,
+.focus-picker img {
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  display: block;
+  pointer-events: none;
+}
+
+.focus-box {
+  position: absolute;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 9999px rgb(0 0 0 / 45%);
+  pointer-events: none;
+}
+
+@media (max-width: 720px) {
+  .shot-edit-body {
+    grid-template-columns: 1fr;
+  }
 }

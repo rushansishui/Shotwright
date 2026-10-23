@@ -36,10 +36,36 @@ _HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
 Aspect = Literal["9:16", "16:9", "1:1"]
 VisualMode = Literal["stock", "ai", "image", "upload", "color"]
 AssetKind = Literal["video", "image", "audio"]
-AssetFolder = Literal["ai-video", "ai-image", "stock", "upload", "music", "other"]
-"""素材在 ``assets/`` 下的子目录：AI 视频、AI 图片、素材库下载、用户上传、背景音乐、其他。"""
-ASSET_FOLDERS: tuple[str, ...] = ("ai-video", "ai-image", "stock", "upload", "music", "other")
+AssetFolder = Literal["ai-video", "ai-image", "stock", "upload", "music", "reference", "other"]
+"""素材在 ``assets/`` 下的子目录：AI 视频、AI 图片、素材库下载、用户上传、背景音乐、参考素材、其他。"""
+ASSET_FOLDERS: tuple[str, ...] = (
+    "ai-video",
+    "ai-image",
+    "stock",
+    "upload",
+    "music",
+    "reference",
+    "other",
+)
 ShotStatus = Literal["draft", "ready", "rendering", "done", "failed"]
+
+ReferenceRole = Literal["product", "person", "logo", "style"]
+"""参考素材的角色：产品外观、人物形象、品牌 Logo、整体风格。"""
+
+OverlayPosition = Literal["top", "middle", "bottom"]
+"""叠加文字的位置：画面顶部、居中、底部。"""
+
+TransitionKind = Literal["none", "fade", "slide", "wipe"]
+"""镜头之间的转场：无、淡入淡出、滑动、擦除。"""
+
+FitMode = Literal["cover", "contain", "blur"]
+"""画面适配画布：铺满裁切、完整显示加黑边、完整显示加模糊背景（横竖屏互转时不裁主体）。"""
+
+FillMode = Literal["slow_hold", "hold", "loop"]
+"""视频素材比镜头短时怎么补足：适度慢放再定格最后一帧、直接定格、循环播放。"""
+
+MIN_SLOW_SPEED = 0.8
+"""「慢放加定格」最多慢到原速的 0.8 倍，再慢动作会明显发飘。"""
 
 _RESOLUTIONS: dict[str, tuple[int, int]] = {
     "9:16": (1080, 1920),
@@ -125,6 +151,28 @@ class BgmSettings(_Model):
         return [validate_id(item) for item in value]
 
 
+class PendingTask(_Model):
+    """已提交但尚未取回结果的收费任务。
+
+    进程重启后据此继续轮询，避免重复提交、重复扣费。
+    """
+
+    provider: str
+    """提交任务的服务 id，例如 seedance。"""
+    task_id: str
+    """远端任务 id。"""
+    kind: Literal["video_gen", "image_gen"] = "video_gen"
+    since: float = Field(default_factory=time.time)
+    """提交时间（Unix 秒），用于判断任务是否已经过久。"""
+
+    @field_validator("provider", "task_id")
+    @classmethod
+    def _check_plain(cls, value: str) -> str:
+        if not value or len(value) > 400:
+            raise ValueError("任务标识长度不合法")
+        return value
+
+
 class ShotVisual(_Model):
     mode: VisualMode = "stock"
     terms: list[str] = Field(default_factory=list)
@@ -140,16 +188,30 @@ class ShotVisual(_Model):
     """ai 模式的首帧图片（图生视频）；为空时纯文字生成。"""
     color: str = "#1F2937"
     """color 模式或没有可用素材时的纯色画面。"""
-    fit: Literal["cover", "contain"] = "cover"
+    fit: FitMode = "cover"
+    focus_x: float = Field(0.5, ge=0.0, le=1.0)
+    focus_y: float = Field(0.5, ge=0.0, le=1.0)
+    """铺满裁切时的取景中心（0 = 最左 / 最上，1 = 最右 / 最下）。"""
+    trim_start: float = Field(0.0, ge=0.0, le=36000)
+    trim_end: float | None = Field(None, gt=0.0, le=36000)
+    """视频素材的入点和出点（秒）；出点为空表示到素材结尾。"""
+    edit_asset: str | None = None
+    """入出点和取景是针对哪个素材设的。换了素材后这些设置不再生效，按默认处理。"""
+    fill: FillMode = "slow_hold"
+    """所选片段比镜头短时的补足方式。"""
+    source_volume: float = Field(0.0, ge=0.0, le=2.0)
+    """视频素材原声的音量，0 表示不用原声。有配音时原声自动压低。"""
     locked: bool = False
     """锁定后，自动补素材和\"全部重新生成\"都不会改动这个镜头的画面。"""
+    pending: PendingTask | None = None
+    """已提交、尚未取回结果的收费任务；重启后据此继续轮询。"""
 
     @field_validator("candidates")
     @classmethod
     def _check_candidates(cls, value: list[str]) -> list[str]:
         return [validate_id(item) for item in value]
 
-    @field_validator("selected", "first_frame")
+    @field_validator("selected", "first_frame", "edit_asset")
     @classmethod
     def _check_selected(cls, value: str | None) -> str | None:
         return None if value is None else validate_id(value)
@@ -160,6 +222,18 @@ class ShotVisual(_Model):
         if not _HEX_COLOR.fullmatch(value):
             raise ValueError("颜色必须是 #RRGGBB 格式")
         return value.upper()
+
+    @model_validator(mode="after")
+    def _check_trim(self) -> ShotVisual:
+        if self.trim_end is not None and self.trim_end <= self.trim_start + 0.05:
+            raise ValueError("出点必须晚于入点")
+        return self
+
+    def effective_edit(self) -> ShotVisual:
+        """当前选中素材实际生效的剪辑设置：入出点和取景属于别的素材时恢复默认。"""
+        if self.edit_asset is not None and self.edit_asset == self.selected:
+            return self
+        return self.model_copy(update={"trim_start": 0.0, "trim_end": None, "focus_x": 0.5, "focus_y": 0.5})
 
 
 class Shot(_Model):
@@ -207,6 +281,72 @@ class Asset(_Model):
         return value
 
 
+class ReferenceAsset(_Model):
+    """项目级参考素材：生成画面时作为产品外观、人物形象、Logo 或风格参考。"""
+
+    asset_id: str
+    role: ReferenceRole = "product"
+    label: str = ""
+    """界面上的简短说明，例如「正面包装」「模特 A」。"""
+    enabled: bool = True
+    """关闭后不参与生成，但保留在库里。"""
+
+    @field_validator("asset_id")
+    @classmethod
+    def _check_asset(cls, value: str) -> str:
+        return validate_id(value)
+
+    @field_validator("label")
+    @classmethod
+    def _check_label(cls, value: str) -> str:
+        return value[:100]
+
+
+class TransitionSettings(_Model):
+    """镜头之间的转场。"""
+
+    kind: TransitionKind = "none"
+    duration: float = Field(0.4, ge=0.1, le=2.0)
+    """转场时长（秒）；相邻两个镜头在交界处重叠这么长，整片相应变短。"""
+
+
+class Overlay(_Model):
+    """画面上叠加的文字或图形（卖点、价格、Logo、购买引导），与字幕分开。"""
+
+    id: str = Field(default_factory=new_id)
+    text: str = ""
+    """文字内容；为空时用 image 素材做图形叠加。"""
+    image: str | None = None
+    """叠加的图片素材 id（通常是 Logo）。"""
+    start: float = Field(0.0, ge=0.0)
+    """出现时间（整片时间轴，秒）。"""
+    duration: float | None = Field(None, gt=0, le=1800)
+    """持续时长；为空表示一直显示到片尾。"""
+    position: OverlayPosition = "top"
+    size: int = Field(52, ge=12, le=200)
+    color: str = "#FFFFFF"
+    outline_color: str = "#000000"
+    margin: int = Field(120, ge=0, le=1000)
+    enabled: bool = True
+
+    @field_validator("id")
+    @classmethod
+    def _check_id(cls, value: str) -> str:
+        return validate_id(value)
+
+    @field_validator("image")
+    @classmethod
+    def _check_image(cls, value: str | None) -> str | None:
+        return None if value is None else validate_id(value)
+
+    @field_validator("color", "outline_color")
+    @classmethod
+    def _check_color(cls, value: str) -> str:
+        if not _HEX_COLOR.fullmatch(value):
+            raise ValueError("颜色必须是 #RRGGBB 格式")
+        return value.upper()
+
+
 class Project(_Model):
     schema_version: int = SCHEMA_VERSION
     id: str = Field(default_factory=new_id)
@@ -222,9 +362,18 @@ class Project(_Model):
     canvas: Canvas = Field(default_factory=Canvas)
     voice: VoiceSettings = Field(default_factory=VoiceSettings)
     subtitle: SubtitleStyle = Field(default_factory=SubtitleStyle)
+    overlays: list[Overlay] = Field(default_factory=list)
+    """叠加在画面上的文字与图形（卖点、价格、Logo），与字幕分开。"""
+    transition: TransitionSettings = Field(default_factory=TransitionSettings)
+    ai_badge: bool = False
+    """在画面上显示「AI 生成」角标（元数据标识始终写入，不受此开关影响）。"""
     bgm: BgmSettings = Field(default_factory=BgmSettings)
+    references: list[ReferenceAsset] = Field(default_factory=list)
+    """项目级参考素材库：产品图、人物设定、Logo、风格图。镜头生成时作为参考。"""
     shots: list[Shot] = Field(default_factory=list)
     assets: dict[str, Asset] = Field(default_factory=dict)
+    cost_credits: float = Field(0.0, ge=0.0)
+    """项目累计花费的估算金额（元）：每次收费生成成功后按参考单价累加，供界面显示。"""
     revision: int = 0
     created_at: float = Field(default_factory=time.time)
     updated_at: float = Field(default_factory=time.time)

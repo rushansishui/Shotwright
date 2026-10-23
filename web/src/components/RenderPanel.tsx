@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api, assetUrl, estimateSeconds, renderUrl } from "../api";
 import { useI18n } from "../i18n";
-import type { Job, Project, RenderResult } from "../types";
+import { Segmented } from "./Controls";
+import type { CostEstimate, Job, Project, RenderResult } from "../types";
 
 function Preview({ project, shotIndex }: { project: Project; shotIndex: number }) {
   const { t } = useI18n();
@@ -96,15 +97,23 @@ export function RenderPanel(props: {
     (s) => (s.visual.mode === "ai" || s.visual.mode === "image") && !s.visual.locked && !s.visual.selected,
   ).length;
   const [allowPaid, setAllowPaid] = useState(false);
+  const [quality, setQuality] = useState<"draft" | "final">("final");
+  const [costEstimate, setCostEstimate] = useState<CostEstimate | null>(null);
   const running = job?.state === "queued" || job?.state === "running";
   const result = job?.state === "done" ? job.result : latest;
+
+  // 有待生成的 AI 镜头时，自动拉取费用预估。
+  useEffect(() => {
+    if (!pendingAi || running) { setCostEstimate(null); return; }
+    api.costEstimate(project.id).then(setCostEstimate).catch(() => setCostEstimate(null));
+  }, [project.id, project.revision, pendingAi, running]);
 
   async function start() {
     setError("");
     const paid = allowPaid && pendingAi > 0 && props.paidAvailable;
     if (paid && !window.confirm(t("render.confirmPaid", { n: pendingAi }))) return;
     try {
-      setJob(await api.render(project.id, paid));
+      setJob(await api.render(project.id, paid, quality));
     } catch (e) {
       setError((e as Error).message);
     }
@@ -156,6 +165,30 @@ export function RenderPanel(props: {
             <input type="checkbox" checked={allowPaid} onChange={(e) => setAllowPaid(e.target.checked)} />
             {t("render.allowPaid", { n: pendingAi })}
           </label>
+        )}
+        {!running && (
+          <div className="field">
+            <span className="label">{t("render.quality")}</span>
+            <Segmented
+              label={t("render.quality")}
+              value={quality}
+              options={[
+                { value: "draft", label: t("render.quality.draft"), title: t("render.quality.draftHint") },
+                { value: "final", label: t("render.quality.final") },
+              ]}
+              onChange={setQuality}
+            />
+          </div>
+        )}
+        {costEstimate && costEstimate.total > 0 && !running && (
+          <p className="hint">
+            {t("render.costEstimate", { total: costEstimate.total.toFixed(3), currency: costEstimate.currency })}
+            {costEstimate.total_visual > 0 && ` (${t("render.costVisual")}: ¥${costEstimate.total_visual.toFixed(3)})`}
+            {costEstimate.total_tts > 0 && ` (${t("render.costTts")}: ¥${costEstimate.total_tts.toFixed(3)})`}
+          </p>
+        )}
+        {project.cost_credits > 0 && (
+          <p className="muted small">{t("render.spent", { total: project.cost_credits.toFixed(2) })}</p>
         )}
         {running ? (
           <div className="progress-block">

@@ -2,6 +2,11 @@
 
 检索词由大模型从视频诉求和镜头提示词里提炼（例如 "calm cinematic ambient"）；
 大模型不可用时退回用视频诉求的前半段。
+
+检索分两阶段：
+1. search_bgm  — 只检索元数据，把候选以 BgmPreview 列表返回给调用方，不下载文件。
+   界面可用 preview_url 直接播放试听，无等待。
+2. download_bgm — 用户选中某首后，下载整首并注册为 Asset，更新项目。
 """
 
 from __future__ import annotations
@@ -82,6 +87,102 @@ def _register_audio(
     )
 
 
+def _meta(candidate: MusicCandidate, query: str) -> dict[str, str]:
+    meta = {
+        "title": candidate.title,
+        "author": candidate.author,
+        "license": candidate.meta.get("license", ""),
+        "source_url": candidate.meta.get("source_url", ""),
+        # 导出时据此判断是否需要在视频元数据里写 CC BY 署名（见 pipeline/metadata.py）。
+        "license_kind": candidate.meta.get("license_kind", ""),
+        "query": query,
+    }
+    return {key: value for key, value in meta.items() if value}
+
+
+# ---- 阶段一：只检索，不下载 --------------------------------------------------
+
+
+def search_bgm_candidates(
+    settings: Settings,
+    project: Project,
+    *,
+    query: str | None = None,
+    limit: int = MAX_CANDIDATES,
+) -> tuple[list[MusicCandidate], str]:
+    """检索背景音乐元数据，返回 (候选列表, 实际使用的检索词)。
+
+    不下载任何文件；候选带有 ``preview_url``，可直接用于浏览器试听。
+    """
+    provider_id = settings.default_provider("music")
+    provider: MusicProvider = registry.create("music", provider_id, settings)  # type: ignore[assignment]
+
+    chosen_query = (query or "").strip()
+    if not chosen_query:
+        try:
+            llm = registry.create("llm", None, settings)
+            queries = suggest_queries(llm, project)  # type: ignore[arg-type]
+        except ProviderError:
+            queries = [build_default_query(project)]
+    else:
+        queries = [chosen_query]
+
+    target_duration = project.target_seconds or 60.0
+    min_duration = min(MIN_DURATION, target_duration)
+    max_duration = max(MAX_DURATION, target_duration)
+
+    results: list[MusicCandidate] = []
+    seen_ids: set[str] = set()
+    used_query = queries[0]
+
+    for term in queries:
+        if len(results) >= limit:
+            break
+        found = provider.search(term, min_duration=min_duration, max_duration=max_duration, limit=limit)
+        for candidate in found:
+            if len(results) >= limit:
+                break
+            if candidate.remote_id in seen_ids:
+                continue
+            seen_ids.add(candidate.remote_id)
+            results.append(candidate)
+            if len(results) == 1:
+                used_query = term
+
+    if not results:
+        raise ProviderError("没有找到合适的背景音乐，试试换个检索词")
+    log.info("项目 %s：检索到 %d 首背景音乐候选（检索词 %s）", project.id, len(results), used_query)
+    return results, used_query
+
+
+# ---- 阶段二：下载选中的曲目 --------------------------------------------------
+
+
+def download_candidate(
+    store: ProjectStore,
+    settings: Settings,
+    project: Project,
+    candidate: MusicCandidate,
+) -> Asset:
+    """下载指定候选曲目并注册为项目素材，返回 Asset。
+
+    如果项目中已有内容相同的素材（SHA-256 相同），直接返回已有记录。
+    """
+    provider_id = settings.default_provider("music")
+    provider: MusicProvider = registry.create("music", provider_id, settings)  # type: ignore[assignment]
+
+    with tempfile.TemporaryDirectory(prefix="shotwright-bgm-") as temp:
+        path = provider.download(candidate, Path(temp) / "bgm")
+        asset = _register_audio(
+            store, project, path, source=candidate.provider, meta=_meta(candidate, "")
+        )
+    log.info("项目 %s：下载背景音乐 %s → asset %s", project.id, candidate.remote_id, asset.id)
+    return asset
+
+
+# ---- 兼容旧路径（一次性检索+下载）------------------------------------------
+
+
 def search_bgm(
     store: ProjectStore,
     settings: Settings,
@@ -90,7 +191,10 @@ def search_bgm(
     query: str | None = None,
     limit: int = MAX_CANDIDATES,
 ) -> tuple[list[str], str]:
-    """检索背景音乐并登记到项目。返回 (新增素材 id, 实际使用的检索词)。"""
+    """检索背景音乐并直接下载，登记到项目。返回 (新增素材 id 列表, 实际使用的检索词)。
+
+    保留此接口供渲染时的自动配乐使用；界面侧改用 search_bgm_candidates + download_candidate。
+    """
     provider_id = settings.default_provider("music")
     provider: MusicProvider = registry.create("music", provider_id, settings)  # type: ignore[assignment]
 
@@ -119,7 +223,6 @@ def search_bgm(
             for position, candidate in enumerate(found):
                 if len(added) >= limit:
                     break
-                # 同一首曲子可能被多个检索词命中，按远端 id 跳过已经收录的。
                 if candidate.remote_id in seen:
                     continue
                 path = provider.download(candidate, Path(temp) / f"bgm{index}-{position}")
@@ -130,21 +233,9 @@ def search_bgm(
                 if asset.id not in added:
                     added.append(asset.id)
                     if len(added) == 1:
-                        # 记下真正搜到第一首的检索词，界面上回填它。
                         used_query = term
 
     if not added:
         raise ProviderError("没有找到合适的背景音乐，试试换个检索词")
     log.info("项目 %s：检索到 %d 首背景音乐（检索词 %s）", project.id, len(added), used_query)
     return added, used_query
-
-
-def _meta(candidate: MusicCandidate, query: str) -> dict[str, str]:
-    meta = {
-        "title": candidate.title,
-        "author": candidate.author,
-        "license": candidate.meta.get("license", ""),
-        "source_url": candidate.meta.get("source_url", ""),
-        "query": query,
-    }
-    return {key: value for key, value in meta.items() if value}

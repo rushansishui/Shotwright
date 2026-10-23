@@ -18,6 +18,7 @@ from fastapi import APIRouter, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from shotwright import __version__
@@ -25,11 +26,14 @@ from shotwright.api import errors
 from shotwright.api.jobs import JobManager
 from shotwright.api.schemas import (
     AddShot,
+    BgmDownload,
     BgmSearch,
+    CandidatesRequest,
     ChargeConsent,
     CreateProject,
     CreateVersion,
     ReorderShots,
+    SplitShot,
     UpdateProject,
     UpdateShot,
 )
@@ -42,7 +46,8 @@ from shotwright.media import ffmpeg
 from shotwright.providers import registry
 from shotwright.providers.base import ChargeConfirmationRequired, ProviderError
 from shotwright.providers.tts.edge import VOICES
-from shotwright.services import localize, music, storyboard, visuals
+from shotwright.services import cost as cost_service
+from shotwright.services import editing, footage, localize, music, storyboard, visuals
 
 log = logging.getLogger("shotwright.api")
 
@@ -50,6 +55,50 @@ MAX_UPLOAD = 500 * 1024 * 1024
 WEB_DIST = ROOT_DIR / "web" / "dist"
 BGM_KEY = "__bgm__"
 """in_progress 里用这个伪镜头 id 表示「背景音乐检索中」。"""
+
+
+def _host_allowed(host_header: str, settings: Settings) -> bool:
+    """校验 Host 头，阻止 DNS rebinding。
+
+    只接受本机地址；``allowed_hosts`` 配置里可以额外放行（例如局域网部署时填的 IP）。
+    没有 Host 头的请求（命令行工具、测试客户端）直接放行。
+    """
+    if not host_header:
+        return True
+    value = host_header.strip()
+    if value.startswith("["):
+        # [::1]:8000 或 [::1]
+        hostname = value[1 : value.index("]")] if "]" in value else value.strip("[]")
+    elif value.count(":") > 1:
+        # 裸 IPv6（RFC 上 Host 头应当加方括号，这里宽容处理）
+        hostname = value
+    else:
+        hostname = value.rsplit(":", 1)[0]
+    allowed = {"localhost", "127.0.0.1", "::1"}
+    allowed.update(item.lower() for item in settings.allowed_hosts)
+    return hostname.lower() in allowed
+
+
+def _origin_allowed(request: Request, settings: Settings) -> bool:
+    """校验 Origin 头，挡住来自其他网页的跨站写请求。
+
+    只读请求（GET / HEAD / OPTIONS）不检查：同源页面加载资源时不一定带 Origin。
+    没有 Origin 头时放行（命令行、原生客户端、同源导航都不会带）。
+    """
+    origin = request.headers.get("origin", "")
+    if not origin:
+        return True
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return True
+    from urllib.parse import urlsplit
+
+    host = (urlsplit(origin).hostname or "").lower()
+    if not host:
+        # "null"（沙箱 iframe、file://）这类来源一律拒绝写操作。
+        return False
+    allowed = {"localhost", "127.0.0.1", "::1"}
+    allowed.update(item.lower() for item in settings.allowed_hosts)
+    return host in allowed
 
 
 def create_app(settings: Settings | None = None, *, job_manager: JobManager | None = None) -> FastAPI:
@@ -63,8 +112,57 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # 启动后把上次没取回结果的收费任务捞回来，避免用户以为白花了钱。
+        threading.Thread(target=_resume_all, name="shotwright-resume", daemon=True).start()
         yield
         jobs.shutdown()
+
+    def _resume_all() -> None:
+        """扫描所有项目里带 pending 的镜头，逐个继续轮询。
+
+        恢复成功的素材要一并写回项目，否则登记到内存里的结果会随进程丢失。
+        失败时只清掉 pending，让用户可以重新提交。
+        """
+        for project in store.list():
+            pending_shots = [s for s in project.shots if s.visual.pending is not None]
+            if not pending_shots:
+                continue
+            for shot in pending_shots:
+                task_id = shot.visual.pending.task_id if shot.visual.pending else ""
+                recovered: list[str] = []
+                try:
+                    recovered = visuals.resume_pending(store, settings, project, shot)
+                except ProviderError as exc:
+                    log.warning(
+                        "项目 %s 镜头 %s 的收费任务 %s 恢复失败：%s",
+                        project.id,
+                        shot.id,
+                        task_id,
+                        exc,
+                    )
+                except Exception as exc:  # noqa: BLE001 - 后台线程不能因单个镜头崩掉
+                    log.exception("恢复收费任务时出错：%s", exc)
+                try:
+                    with store.lock(project.id):
+                        latest = store.load(project.id)
+                        try:
+                            target = latest.shot(shot.id)
+                        except KeyError:
+                            continue
+                        for asset_id in recovered:
+                            if asset_id in project.assets:
+                                latest.assets.setdefault(asset_id, project.assets[asset_id])
+                        if recovered:
+                            merged = [*target.visual.candidates]
+                            for asset_id in recovered:
+                                if asset_id not in merged:
+                                    merged.append(asset_id)
+                            target.visual.candidates = merged[-visuals.MAX_CANDIDATES :]
+                            target.visual.selected = recovered[0]
+                        target.visual.pending = None
+                        store.save(latest)
+                except OSError as exc:
+                    log.warning("保存恢复结果失败：%s", exc)
 
     app = FastAPI(title="Shotwright", version=__version__, lifespan=lifespan)
     app.state.settings, app.state.store, app.state.jobs = settings, store, jobs
@@ -74,6 +172,25 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # 本地服务只监听本机，但要防 DNS rebinding：浏览器访问恶意域名时，域名会
+    # 解析到 127.0.0.1，随后以该域名作为 Host 发请求。校验 Host / Origin 阻止这种访问。
+    @app.middleware("http")
+    async def _check_host(request: Request, call_next):
+        if not _host_allowed(request.headers.get("host", ""), settings):
+            log.warning("拒绝来自 Host=%s 的请求", request.headers.get("host", ""))
+            return JSONResponse(
+                status_code=403, content={"detail": errors.translate("不允许的访问来源", request)}
+            )
+        # Origin 只在跨域写请求里出现；校验它可以挡住来自恶意网页的 CSRF。
+        if not _origin_allowed(request, settings):
+            log.warning(
+                "拒绝来自 Origin=%s 的 %s 请求", request.headers.get("origin", ""), request.method
+            )
+            return JSONResponse(
+                status_code=403, content={"detail": errors.translate("不允许的访问来源", request)}
+            )
+        return await call_next(request)
 
     @app.exception_handler(ProjectNotFound)
     async def _not_found(request: Request, exc: ProjectNotFound):
@@ -144,6 +261,12 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                         {"key": f.key, "label": f.label, "required": f.required, "secret": f.secret}
                         for f in spec.fields
                     ],
+                    "capabilities": sorted(spec.capabilities),
+                    "max_duration": spec.max_duration,
+                    "has_audio": spec.has_audio,
+                    "video_to_video": spec.video_to_video,
+                    "max_ref_images": spec.max_ref_images,
+                    "word_timestamps": spec.word_timestamps,
                 }
             )
         return result
@@ -244,12 +367,30 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 if body.language not in languages.LANGUAGES:
                     raise ValueError("不支持的语言")
                 localize.apply_language(project, body.language)
-            for name in ("title", "subject", "target_seconds", "canvas", "voice", "subtitle", "bgm"):
+            for name in (
+                "title",
+                "subject",
+                "target_seconds",
+                "canvas",
+                "voice",
+                "subtitle",
+                "overlays",
+                "transition",
+                "bgm",
+                "references",
+                "ai_badge",
+            ):
                 value = getattr(body, name)
                 if value is not None:
                     setattr(project, name, value)
             if project.bgm.asset_id and project.bgm.asset_id not in project.assets:
                 raise ValueError("背景音乐素材不存在")
+            for ref in project.references:
+                asset = project.assets.get(ref.asset_id)
+                if asset is None:
+                    raise ValueError("参考素材不存在")
+                if asset.kind != "image":
+                    raise ValueError("参考素材必须是图片")
 
         return _mutate(project_id, change)
 
@@ -309,6 +450,24 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
         return _mutate(project_id, change)
 
+    @api.post("/projects/{project_id}/shots/{shot_id}/split")
+    def split_shot(project_id: str, shot_id: str, body: SplitShot):
+        """在镜头片段的第 ``at`` 秒处拆成两个镜头（只适用于视频镜头）。"""
+
+        def change(project: Project) -> None:
+            editing.split_shot(project, _id(shot_id), body.at)
+
+        return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/shots/{shot_id}/merge")
+    def merge_shot(project_id: str, shot_id: str):
+        """把镜头和后一个镜头合并；同一段视频里相邻的片段会连成一段。"""
+
+        def change(project: Project) -> None:
+            editing.merge_with_next(project, _id(shot_id))
+
+        return _mutate(project_id, change)
+
     @api.patch("/projects/{project_id}/shots/{shot_id}")
     def update_shot(project_id: str, shot_id: str, body: UpdateShot):
         def change(project: Project) -> None:
@@ -338,12 +497,27 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     patch["candidates"] = [*shot.visual.candidates, patch["selected"]][
                         -visuals.MAX_CANDIDATES :
                     ]
+                if patch.pop("clear_trim_end", False):
+                    patch["trim_end"] = None
                 mode = patch.pop("mode", None)
                 if mode is not None:
                     # 切换来源时自动选中该来源的素材（显式传了 selected 时以它为准）。
                     visuals.switch_mode(project, shot, mode)
-                shot.visual = shot.visual.model_copy(update=patch)
-                ShotVisual.model_validate(shot.visual.model_dump())
+                edit_fields = {"trim_start", "trim_end", "focus_x", "focus_y"} & patch.keys()
+                if edit_fields:
+                    # 入出点和取景记在当前选中的素材名下；之前针对别的素材的设置先清掉。
+                    target = patch.get("selected", shot.visual.selected)
+                    if target is None:
+                        raise ValueError("请先选中素材再设置入出点或取景")
+                    if shot.visual.edit_asset != target:
+                        patch = {"trim_start": 0.0, "trim_end": None, "focus_x": 0.5, "focus_y": 0.5, **patch}
+                    patch["edit_asset"] = target
+                try:
+                    shot.visual = ShotVisual.model_validate({**shot.visual.model_dump(), **patch})
+                except ValidationError as exc:
+                    # 只把第一条原因（例如「出点必须晚于入点」）返回给界面，便于翻译。
+                    message = str(exc.errors()[0].get("msg", exc))
+                    raise ValueError(message.removeprefix("Value error, ")) from None
             shot.status, shot.error = "draft", None
 
         return _mutate(project_id, change)
@@ -363,15 +537,31 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
     def shots_in_progress(project_id: str):
         _id(project_id)
         now = time.time()
+        result: dict[str, dict] = {}
+        # 进程重启后正在恢复的收费任务：项目里带 pending 的镜头同样算"生成中"。
+        try:
+            project = store.load(project_id)
+        except ProjectNotFound:
+            project = None
+        if project is not None:
+            for shot in project.shots:
+                pending = shot.visual.pending
+                if pending is not None:
+                    result[shot.id] = {
+                        "mode": "resume",
+                        "seconds": round(max(0.0, now - pending.since), 1),
+                    }
         with in_progress_lock:
-            return {
-                shot_id: {"mode": info["mode"], "seconds": round(now - info["since"], 1)}
-                for (pid, shot_id), info in in_progress.items()
-                if pid == project_id
-            }
+            for (pid, shot_id), info in in_progress.items():
+                if pid == project_id:
+                    result[shot_id] = {
+                        "mode": info["mode"],
+                        "seconds": round(now - info["since"], 1),
+                    }
+        return result
 
     @api.post("/projects/{project_id}/shots/{shot_id}/candidates")
-    def refresh_candidates(project_id: str, shot_id: str, body: ChargeConsent | None = None):
+    def refresh_candidates(project_id: str, shot_id: str, body: CandidatesRequest | None = None):
         """检索（stock）或生成（ai / image）新的候选素材。可能耗时较长。
 
         收费的生成必须带 ``confirm_charge: true``，否则返回 402。
@@ -384,25 +574,31 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         if shot.visual.locked:
             raise HTTPException(409, "镜头已锁定，请先解锁")
         confirmed = bool(body and body.confirm_charge)
+        edit = bool(body and body.edit_selected)
         key = (project_id, shot_id)
         with in_progress_lock:
             if key in in_progress:
                 # 同一个镜头不允许重复提交，避免连点造成重复扣费。
                 raise HTTPException(409, "这个镜头正在生成，请等它完成")
-            in_progress[key] = {"mode": shot.visual.mode, "since": time.time()}
-        generated = shot.visual.mode in ("ai", "image")
+            in_progress[key] = {"mode": "ai" if edit else shot.visual.mode, "since": time.time()}
+        generated = edit or shot.visual.mode in ("ai", "image")
 
         def change(latest: Project) -> None:
             for asset_id, asset in project.assets.items():
                 latest.assets.setdefault(asset_id, asset)
             target = latest.shot(shot_id)
             target.visual.candidates = shot.visual.candidates
+            if edit:
+                # 改画面的结果是 AI 视频，切到 AI 视频来源，新画面才会出现在候选里。
+                target.visual.mode = "ai"
             if generated or target.visual.selected is None or target.visual.selected not in latest.assets:
                 # 刚生成的画面花了钱，直接选中它。
                 target.visual.selected = shot.visual.selected
 
         try:
-            visuals.refresh_candidates(store, settings, project, shot, confirm_charge=confirmed)
+            visuals.refresh_candidates(
+                store, settings, project, shot, confirm_charge=confirmed, edit_selected=edit
+            )
             return _mutate(project_id, change)
         finally:
             # 保存之后再移除，页面看到"完成"时就能读到新素材。
@@ -441,36 +637,104 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         return FileResponse(path, media_type=media_type)
 
+    @api.post("/projects/{project_id}/footage", status_code=201)
+    def import_footage(project_id: str, file: UploadFile = File(...), replace_shots: bool = False):
+        """导入一段原片，按画面变化自动切成镜头。"""
+        _id(project_id)
+        if not store.exists(project_id):
+            raise ProjectNotFound(project_id)
+        filename = Path(file.filename or "footage").name
+        with tempfile.TemporaryDirectory(prefix="shotwright-footage-") as temp:
+            path = Path(temp) / ("footage" + Path(filename).suffix.lower()[:8])
+            size = 0
+            with path.open("wb") as handle:
+                while chunk := file.file.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > MAX_UPLOAD:
+                        raise HTTPException(413, "文件超过 500MB")
+                    handle.write(chunk)
+            with store.lock(project_id):
+                project = store.load(project_id)
+                result = footage.import_footage(
+                    store, settings, project, path, filename=filename, replace_shots=replace_shots
+                )
+                store.save(project)
+        return {
+            "source_asset": result.source_asset,
+            "shots": result.shot_ids,
+            "segments": result.segments,
+        }
+
     # ---- 背景音乐 -----------------------------------------------------------
 
     @api.post("/projects/{project_id}/bgm/candidates")
     def search_bgm(project_id: str, body: BgmSearch | None = None):
-        """检索背景音乐并登记为候选。``query`` 留空时由大模型提炼检索词。"""
+        """检索背景音乐候选（只返回元数据+试听地址，不下载文件）。"""
         _id(project_id)
         project = store.load(project_id)
-        # 一次检索要几十秒，连点会各自下载一遍。用和镜头生成相同的锁挡住。
+        # 一次检索要几十秒，连点会各自查一遍。用和镜头生成相同的锁挡住。
         key = (project_id, BGM_KEY)
         with in_progress_lock:
             if key in in_progress:
                 raise HTTPException(409, "背景音乐正在检索，请等它完成")
             in_progress[key] = {"mode": "music", "since": time.time()}
         try:
-            added, query = music.search_bgm(store, settings, project, query=(body.query if body else ""))
-
-            def change(latest: Project) -> None:
-                for asset_id, asset in project.assets.items():
-                    latest.assets.setdefault(asset_id, asset)
-                merged = [*latest.bgm.candidates]
-                for asset_id in added:
-                    if asset_id not in merged:
-                        merged.append(asset_id)
-                latest.bgm.candidates = merged[-music.MAX_CANDIDATES :]
-                latest.bgm.query = query
-
-            return _mutate(project_id, change)
+            candidates, query = music.search_bgm_candidates(
+                settings, project, query=(body.query if body else "")
+            )
+            return {
+                "query": query,
+                "candidates": [
+                    {
+                        "provider": c.provider,
+                        "remote_id": c.remote_id,
+                        "url": c.url,
+                        "preview_url": c.preview_url,
+                        "title": c.title,
+                        "duration": c.duration,
+                        "author": c.author,
+                        "meta": c.meta,
+                    }
+                    for c in candidates
+                ],
+            }
         finally:
             with in_progress_lock:
                 in_progress.pop(key, None)
+
+    @api.post("/projects/{project_id}/bgm/download")
+    def download_bgm(project_id: str, body: BgmDownload):
+        """下载选中的背景音乐候选并注册为素材，设为当前背景音乐，返回更新后的项目。"""
+        _id(project_id)
+        project = store.load(project_id)
+        from shotwright.providers.base import MusicCandidate
+
+        candidate = MusicCandidate(
+            provider=body.provider,
+            remote_id=body.remote_id,
+            url=body.url,
+            title=body.title,
+            duration=body.duration,
+            author=body.author,
+            meta=body.meta,
+        )
+        asset = music.download_candidate(store, settings, project, candidate)
+
+        def change(latest: Project) -> None:
+            latest.assets.setdefault(asset.id, asset)
+            latest.bgm.asset_id = asset.id
+            if asset.id not in (latest.bgm.candidates or []):
+                latest.bgm.candidates = [*(latest.bgm.candidates or []), asset.id]
+
+        return _mutate(project_id, change)
+
+    # ---- 费用预估 ------------------------------------------------------------
+
+    @api.get("/projects/{project_id}/cost-estimate")
+    def get_cost_estimate(project_id: str):
+        """估算渲染本项目的费用（元），不实际触发任何 AI 调用。"""
+        project = store.load(_id(project_id))
+        return cost_service.estimate_render_cost(project, settings).to_dict()
 
     # ---- 渲染 ---------------------------------------------------------------
 
@@ -479,7 +743,11 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         """``confirm_charge: true`` 时，没有画面的 AI 镜头会提交收费生成；否则改用素材检索。"""
         if not store.exists(_id(project_id)):
             raise ProjectNotFound(project_id)
-        return jobs.submit(project_id, allow_paid=bool(body and body.confirm_charge)).to_dict()
+        return jobs.submit(
+            project_id,
+            allow_paid=bool(body and body.confirm_charge),
+            quality=body.quality if body else "final",
+        ).to_dict()
 
     @api.get("/projects/{project_id}/renders")
     def list_renders(project_id: str):
