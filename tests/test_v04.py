@@ -200,13 +200,22 @@ def test_rejects_unknown_host_and_cross_site_origin(settings):
 
 
 def test_footage_import_splits_into_shots(settings, store, tmp_path):
-    first = make_clip(tmp_path / "a.mp4", seconds=2.0, pattern="testsrc2")
-    second = make_clip(tmp_path / "b.mp4", seconds=2.0, pattern="smptebars")
+    """原片按画面变化切成镜头，每个镜头用入出点引用同一段原片。
+
+    用单遍编码造一段"两段画面硬切在一起"的 4 秒视频——和手机原片一样是
+    一次编码的连续文件。不要用 `-f concat -c copy` 拼接：那样得到的文件
+    时间戳虽然正常，但 scene 滤镜的分数会塌到接近 0，切点检测不出来。
+    """
     joined = tmp_path / "joined.mp4"
-    listing = tmp_path / "list.txt"
-    listing.write_text(f"file '{first.as_posix()}'\nfile '{second.as_posix()}'\n", encoding="utf-8")
     subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(listing), "-c", "copy", str(joined)],
+        [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-f", "lavfi", "-i", "testsrc2=size=720x1280:rate=30:duration=2",
+            "-f", "lavfi", "-i", "smptebars=size=720x1280:rate=30:duration=2",
+            "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+            "-map", "[v]", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+            str(joined),
+        ],
         check=True,
     )
     project = _project(store)

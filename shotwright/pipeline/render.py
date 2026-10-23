@@ -553,8 +553,11 @@ class Renderer:
                 command = [*args]
                 if filters:
                     command += ["-filter_complex", ";".join(filters)]
-                command += ["-map", f"[{video_in}]", "-map", audio_map]
-                command += _video_args(project.canvas.fps, self.quality) if video_in != "0:v" else ["-c:v", "copy"]
+                # 视频没经过滤镜时直接引用输入流（0:v），不能写成 [0:v]——
+                # 方括号形式只在滤镜图里有同名的输出标签时才成立。
+                video_map = f"[{video_in}]" if video_in.startswith("v") else video_in
+                command += ["-map", video_map, "-map", audio_map]
+                command += _video_args(project.canvas.fps, self.quality) if video_in.startswith("v") else ["-c:v", "copy"]
                 command += AUDIO_ARGS if audio_map != "0:a" else ["-c:a", "copy"]
                 command += [
                     "-t", f"{duration:.3f}",
