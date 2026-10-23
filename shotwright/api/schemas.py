@@ -64,6 +64,8 @@ class UpdateProject(_Body):
     ai_badge: bool | None = None
     """画面上是否显示「AI 生成」角标。"""
     bgm: BgmSettings | None = None
+    loudness: float | None = Field(None, ge=-30.0, le=-5.0)
+    """导出响度（LUFS）；显式传 null 表示不做响度处理，不传则不改。"""
     references: list[ReferenceAsset] | None = None
     """项目级参考素材库；整体替换。"""
 

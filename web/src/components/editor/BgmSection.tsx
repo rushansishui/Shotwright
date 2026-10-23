@@ -190,6 +190,23 @@ export function BgmSection({ project, run, setError, draft, setDraft }: BgmSecti
           )
         }
       />
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={project.bgm.duck ?? true}
+          onChange={(e) => run(() => api.updateProject(id, { bgm: { ...project.bgm, duck: e.target.checked } }))}
+        />
+        {t("editor.bgmDuck")}
+      </label>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={project.loudness !== null}
+          onChange={(e) => run(() => api.updateProject(id, { loudness: e.target.checked ? -14 : null }))}
+        />
+        {t("editor.loudness")}
+      </label>
+      <p className="muted small">{t("editor.loudnessHint")}</p>
     </div>
   );
 }

@@ -81,7 +81,7 @@ export const api = {
     body: Partial<
       Pick<
         Project,
-        "title" | "language" | "canvas" | "voice" | "subtitle" | "bgm" | "references" | "overlays" | "transition" | "ai_badge"
+        "title" | "language" | "canvas" | "voice" | "subtitle" | "bgm" | "loudness" | "references" | "overlays" | "transition" | "ai_badge"
       >
     >,
   ) =>

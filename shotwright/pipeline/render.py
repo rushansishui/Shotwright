@@ -27,13 +27,22 @@ from shotwright.core.ids import new_id
 from shotwright.core.models import Project, Shot
 from shotwright.core.store import ProjectStore, sha256_file, write_json
 from shotwright.media import subtitles as subs
-from shotwright.media.ffmpeg import LOCAL_PROTOCOLS, MediaCancelled, MediaError, probe, run_ffmpeg
+from shotwright.media.ffmpeg import (
+    LOCAL_PROTOCOLS,
+    MediaCancelled,
+    MediaError,
+    loudnorm_stats,
+    probe,
+    run_ffmpeg,
+)
 from shotwright.providers.base import ProviderError
 from shotwright.services import visuals
 
 from .metadata import tag_video
 from .render_types import (
     AUDIO_ARGS,
+    AUDIO_MIX,
+    TRUE_PEAK,
     VOICE_PADDING,
     RenderCancelled,
     RenderError,
@@ -435,6 +444,38 @@ class Renderer:
             )
         return cues
 
+    def _normalize(self, project: Project, source: Path, output: Path) -> None:
+        """两遍 loudnorm 把整片响度统一到项目设定值：先测量，再按测量值线性调整。
+
+        线性模式只整体调音量、不做动态压缩，配音和音乐的起伏保持原样；
+        真峰值超出上限时 loudnorm 会自动退回动态模式压住峰值。静音的片子不处理。
+        """
+        stats = None
+        if project.loudness is not None:
+            stats = loudnorm_stats(source, target=project.loudness, true_peak=TRUE_PEAK)
+        if stats is None:
+            shutil.copyfile(source, output)
+            return
+        measured = ":".join(f"measured_{key[6:]}={value}" for key, value in stats.items() if key.startswith("input_"))
+        audio = (
+            f"loudnorm=I={project.loudness:g}:TP={TRUE_PEAK:g}:LRA=11:{measured}:"
+            f"offset={stats['target_offset']}:linear=true,aresample=48000"
+        )
+        run_ffmpeg(
+            [
+                "-protocol_whitelist", LOCAL_PROTOCOLS,
+                "-i", str(source),
+                "-map", "0:v", "-map", "0:a",
+                "-c:v", "copy",
+                "-af", audio,
+                *AUDIO_ARGS,
+                "-movflags", "+faststart",
+                "-f", "mp4",
+                str(output.resolve()),
+            ],
+            cancel=self._cancel,
+        )
+
     def _final(self, project: Project, assembly_fp: str, assembly: Path, cues: list[subs.Cue]) -> Path:
         style = project.subtitle
         overlays = [o for o in project.overlays if o.enabled and (o.text.strip() or o.image)]
@@ -451,7 +492,14 @@ class Renderer:
             for o in image_overlays
             if o.image in project.assets and project.assets[o.image].kind == "image"
         ]
-        if not cues and bgm_asset is None and not text_overlays and not image_overlays and not project.ai_badge:
+        if (
+            not cues
+            and bgm_asset is None
+            and not text_overlays
+            and not image_overlays
+            and not project.ai_badge
+            and project.loudness is None
+        ):
             self.stages.append(StageRecord("final", "final", assembly_fp, True, 0.0))
             return assembly
 
@@ -468,7 +516,9 @@ class Renderer:
             project.ai_badge,
             sha256_file(font) if font else None,
             bgm_asset.sha256 if bgm_asset else None,
-            project.bgm.volume if bgm_asset else None,
+            project.bgm.model_dump(exclude={"candidates", "query"}) if bgm_asset else None,
+            project.loudness,
+            AUDIO_MIX,
         )
         output = self.store.cache_dir(project.id, "final") / f"{fp}.mp4"
         info = probe(assembly)
@@ -536,6 +586,7 @@ class Renderer:
                     video_out = f"v{step}"
 
                 audio_map = "0:a"
+                bgm_index = None
                 if bgm_asset is not None:
                     bgm_index = 1 + len(image_overlays)
                     args += [
@@ -543,12 +594,9 @@ class Renderer:
                         "-protocol_whitelist", LOCAL_PROTOCOLS,
                         "-i", str(self.store.asset_path(project, bgm_asset.id)),
                     ]
-                    fade_start = max(duration - 2.0, 0.0)
-                    filters.append(
-                        f"[{bgm_index}:a]aresample=48000,aformat=channel_layouts=stereo,"
-                        f"volume={project.bgm.volume:.3f},afade=t=out:st={fade_start:.3f}:d=2[b];"
-                        f"[0:a][b]amix=inputs=2:duration=first:normalize=0[a]"
-                    )
+                audio_graph = audio_filter(project, bgm_index, duration)
+                if audio_graph:
+                    filters.append(audio_graph)
                     audio_map = "[a]"
                 command = [*args]
                 if filters:
@@ -559,13 +607,18 @@ class Renderer:
                 command += ["-map", video_map, "-map", audio_map]
                 command += _video_args(project.canvas.fps, self.quality) if video_in.startswith("v") else ["-c:v", "copy"]
                 command += AUDIO_ARGS if audio_map != "0:a" else ["-c:a", "copy"]
+                mixed = work / "mixed.mp4"
                 command += [
                     "-t", f"{duration:.3f}",
                     "-movflags", "+faststart",
                     "-f", "mp4",
-                    str(temp.resolve()),
+                    str(mixed.resolve()),
                 ]
-                run_ffmpeg(command, cwd=work, cancel=self._cancel)
+                if filters:
+                    run_ffmpeg(command, cwd=work, cancel=self._cancel)
+                else:
+                    shutil.copyfile(assembly, mixed)
+                self._normalize(project, mixed, temp)
 
         try:
             self._stage("final", "final", fp, output, build)
@@ -574,3 +627,36 @@ class Renderer:
         except MediaError as exc:
             raise RenderError(f"合成字幕与背景音乐失败：{exc}") from exc
         return output
+
+
+def audio_filter(project: Project, bgm_index: int | None, duration: float) -> str:
+    """背景音乐的滤镜图：闪避与淡入淡出，输出标签为 ``[a]``；没有背景音乐时返回空字符串。
+
+    闪避：配音（含原声）作为侧链压缩背景音乐，说话时音乐自动压低，停顿时恢复。
+    响度统一在混音之后单独做（见 :meth:`Renderer._normalize`）。
+    """
+    parts: list[str] = []
+    current = "[0:a]"
+    if bgm_index is not None:
+        bgm = project.bgm
+        main = "[0:a]"
+        if bgm.duck:
+            parts.append("[0:a]asplit=2[main][side]")
+            main = "[main]"
+        chain = f"[{bgm_index}:a]aresample=48000,aformat=channel_layouts=stereo,volume={bgm.volume:.3f}"
+        if bgm.fade_in > 0:
+            chain += f",afade=t=in:st=0:d={bgm.fade_in:.2f}"
+        if bgm.fade_out > 0:
+            fade = min(bgm.fade_out, duration)
+            chain += f",afade=t=out:st={max(duration - fade, 0.0):.3f}:d={fade:.2f}"
+        if bgm.duck:
+            parts.append(chain + "[bgm]")
+            # 说话时把音乐再压低约 10 dB；释放时间长一些，句子之间不会忽高忽低。
+            parts.append("[bgm][side]sidechaincompress=threshold=0.02:ratio=8:attack=30:release=600[b]")
+        else:
+            parts.append(chain + "[b]")
+        parts.append(f"{main}[b]amix=inputs=2:duration=first:normalize=0[mix]")
+        current = "[mix]"
+    if current != "[0:a]":
+        parts.append(f"{current}anull[a]")
+    return ";".join(parts)

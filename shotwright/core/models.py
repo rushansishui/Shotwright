@@ -139,6 +139,12 @@ class BgmSettings(_Model):
     query: str = ""
     """上次检索用的词，界面上回填。"""
     volume: float = Field(0.2, ge=0.0, le=1.0)
+    duck: bool = True
+    """有配音时自动压低背景音乐，配音停下再恢复。"""
+    fade_in: float = Field(1.0, ge=0.0, le=10.0)
+    """开头淡入时长（秒），0 表示不淡入。"""
+    fade_out: float = Field(2.0, ge=0.0, le=10.0)
+    """结尾淡出时长（秒），0 表示不淡出。"""
 
     @field_validator("asset_id")
     @classmethod
@@ -368,6 +374,8 @@ class Project(_Model):
     ai_badge: bool = False
     """在画面上显示「AI 生成」角标（元数据标识始终写入，不受此开关影响）。"""
     bgm: BgmSettings = Field(default_factory=BgmSettings)
+    loudness: float | None = Field(-14.0, ge=-30.0, le=-5.0)
+    """导出时把整片响度统一到这个值（LUFS），短视频平台常用 -14；为空时不处理。"""
     references: list[ReferenceAsset] = Field(default_factory=list)
     """项目级参考素材库：产品图、人物设定、Logo、风格图。镜头生成时作为参考。"""
     shots: list[Shot] = Field(default_factory=list)

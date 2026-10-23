@@ -1,8 +1,12 @@
 import shutil
+from concurrent.futures import Executor, Future
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
+from shotwright.api.app import create_app
+from shotwright.api.jobs import JobManager
 from shotwright.config import Settings
 from shotwright.core.store import ProjectStore
 from shotwright.media.ffmpeg import run_ffmpeg
@@ -112,3 +116,20 @@ def settings(tmp_path) -> Settings:
 @pytest.fixture
 def store(settings) -> ProjectStore:
     return ProjectStore(settings.storage_dir)
+
+
+class InlineExecutor(Executor):
+    """测试里同步执行渲染任务。"""
+
+    def submit(self, fn, *args, **kwargs):
+        future: Future = Future()
+        future.set_result(fn(*args, **kwargs))
+        return future
+
+
+@pytest.fixture
+def client(settings):
+    store = ProjectStore(settings.storage_dir)
+    app = create_app(settings, job_manager=JobManager(store, settings, executor=InlineExecutor()))
+    with TestClient(app) as test_client:
+        yield test_client

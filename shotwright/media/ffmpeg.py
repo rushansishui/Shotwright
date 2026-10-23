@@ -246,3 +246,82 @@ def cut_segment(source: Path, output: Path, *, start: float, duration: float) ->
             str(output),
         ]
     )
+
+
+def measure_loudness(path: Path, *, timeout: float = 600) -> float | None:
+    """测量音频的整体响度（LUFS，EBU R128）。没有音轨或测不出时返回 None。"""
+    command = [
+        _tools.ffmpeg,
+        "-hide_banner",
+        "-nostdin",
+        "-protocol_whitelist",
+        LOCAL_PROTOCOLS,
+        "-i",
+        str(path),
+        "-vn",
+        "-af",
+        "ebur128=framelog=quiet",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout
+        )
+    except FileNotFoundError as exc:
+        raise MediaError("找不到 ffmpeg，请先安装 FFmpeg") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise MediaError("响度测量超时") from exc
+    if result.returncode != 0:
+        return None
+    value = None
+    for line in (result.stderr or "").splitlines():
+        text = line.strip()
+        if text.startswith("I:") and text.endswith("LUFS"):
+            try:
+                value = float(text[2:-4].strip())
+            except ValueError:
+                continue
+    if value is None or value <= -70:
+        return None
+    return value
+
+
+def loudnorm_stats(path: Path, *, target: float, true_peak: float, timeout: float = 600) -> dict[str, str] | None:
+    """loudnorm 第一遍测量，返回第二遍需要的 measured_* 参数。没有声音（静音）时返回 None。"""
+    command = [
+        _tools.ffmpeg,
+        "-hide_banner",
+        "-nostdin",
+        "-protocol_whitelist",
+        LOCAL_PROTOCOLS,
+        "-i",
+        str(path),
+        "-vn",
+        "-af",
+        f"loudnorm=I={target:g}:TP={true_peak:g}:LRA=11:print_format=json",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout
+        )
+    except FileNotFoundError as exc:
+        raise MediaError("找不到 ffmpeg，请先安装 FFmpeg") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise MediaError("响度测量超时") from exc
+    stderr = result.stderr or ""
+    start, end = stderr.rfind("{"), stderr.rfind("}")
+    if result.returncode != 0 or start < 0 or end <= start:
+        return None
+    try:
+        data = json.loads(stderr[start : end + 1])
+        measured = float(data["input_i"])
+    except (ValueError, KeyError, TypeError):
+        return None
+    if measured <= -70 or measured != measured:  # 静音或 NaN
+        return None
+    return {key: str(data[key]) for key in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")}

@@ -121,7 +121,18 @@ export interface Project {
   overlays: Overlay[];
   transition: TransitionSettings;
   ai_badge: boolean;
-  bgm: { asset_id: string | null; candidates?: string[]; query?: string; volume: number };
+  bgm: {
+    asset_id: string | null;
+    candidates?: string[];
+    query?: string;
+    volume: number;
+    /** 有配音时自动压低背景音乐。 */
+    duck?: boolean;
+    fade_in?: number;
+    fade_out?: number;
+  };
+  /** 导出响度（LUFS）；null 表示不处理。 */
+  loudness?: number | null;
   references: ReferenceAsset[];
   shots: Shot[];
   assets: Record<string, Asset>;
