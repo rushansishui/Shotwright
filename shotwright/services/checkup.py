@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass
 from shotwright.config import Settings
 from shotwright.core import platforms
 from shotwright.core.models import MIN_SLOW_SPEED, Project
+from shotwright.pipeline.shots import shot_assets, usable_length
 from shotwright.services.durations import estimated_shot_seconds
 
 LOW_RESOLUTION = 0.6
@@ -52,19 +53,22 @@ def check_project(project: Project, settings: Settings, *, quality: str = "final
                 )
             )
             continue
-        if asset.width and asset.height and min(asset.width, asset.height) < short_side * LOW_RESOLUTION:
+        chosen = shot_assets(project, shot)
+        low = next(
+            (a for a in chosen if a.width and a.height and min(a.width, a.height) < short_side * LOW_RESOLUTION), None
+        )
+        if low is not None:
             issues.append(
                 CheckIssue(
                     "low_resolution",
-                    f"镜头 {index} 的素材只有 {asset.width}×{asset.height}，放大到画布后会发虚",
+                    f"镜头 {index} 的素材只有 {low.width}×{low.height}，放大到画布后会发虚",
                     index,
-                    {"n": index, "size": f"{asset.width}×{asset.height}"},
+                    {"n": index, "size": f"{low.width}×{low.height}"},
                 )
             )
-        if asset.kind == "video" and asset.duration:
-            edit = visual.effective_edit()
-            end = min(edit.trim_end or asset.duration, asset.duration)
-            length = max(end - edit.trim_start, 0.0)
+        if all(a.kind == "video" and a.duration for a in chosen):
+            # 多选时几段素材依次播放，可用长度相加。
+            length = sum(usable_length(visual, a, i == 0) for i, a in enumerate(chosen))
             needed = estimated_shot_seconds(project, shot)
             gap = needed - length / (MIN_SLOW_SPEED if visual.fill == "slow_hold" else 1.0)
             if gap > SHORT_FOOTAGE:

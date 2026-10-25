@@ -1289,3 +1289,38 @@ input[type="color"] {
   border-radius: 4px;
   pointer-events: none;
 }
+
+/* ---- 多选素材 ---- */
+.candidate-wrap {
+  position: relative;
+  flex: none;
+}
+
+.candidate.also {
+  border-color: var(--accent-soft, #f3c4c4);
+}
+
+.candidate-wrap .pick {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 11px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 12px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.candidate-wrap .pick.on {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.candidate-wrap .pick:disabled {
+  cursor: default;
+}

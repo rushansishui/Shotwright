@@ -79,6 +79,8 @@ export interface ShotVisual {
   provider: string | null;
   candidates: string[];
   selected: string | null;
+  /** 多选：在选中的素材之后依次播放的其他素材。 */
+  sequence?: string[];
   first_frame: string | null;
   color: string;
   fit: FitMode;

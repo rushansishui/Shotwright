@@ -357,6 +357,8 @@ class ShotVisual(_Model):
     candidates: list[str] = Field(default_factory=list)
     """所有来源的候选素材；界面按当前画面来源筛选显示。"""
     selected: str | None = None
+    sequence: list[str] = Field(default_factory=list)
+    """多选：在选中的素材之后依次播放的其他素材（按选择顺序）；为空时只播放选中的素材。"""
     first_frame: str | None = None
     """ai 模式的首帧图片（图生视频）；为空时纯文字生成。"""
     color: str = "#1F2937"
@@ -381,7 +383,7 @@ class ShotVisual(_Model):
     takes: list[Take] = Field(default_factory=list)
     """生成版本记录（按时间先后），与候选素材对应；候选被挤掉时一并清理。"""
 
-    @field_validator("candidates")
+    @field_validator("candidates", "sequence")
     @classmethod
     def _check_candidates(cls, value: list[str]) -> list[str]:
         return [validate_id(item) for item in value]

@@ -388,6 +388,8 @@ def switch_mode(project: Project, shot: Shot, mode: str) -> None:
     if mode == "ai" and current is not None and current.kind == "image" and visual.first_frame is None:
         visual.first_frame = current.id
     visual.mode = mode  # type: ignore[assignment]
+    # 多选只在同一个画面来源里有意义，换来源时取消。
+    visual.sequence = []
     if mode == "color":
         return
     if current is not None and asset_mode(current) == mode:

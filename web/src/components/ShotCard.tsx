@@ -113,6 +113,23 @@ export function ShotCard(props: {
         ? { prompt }
         : undefined;
 
+  /** 镜头要播放的素材：选中的在前，多选的按顺序跟在后面。 */
+  const chosen = visual.selected ? [visual.selected, ...(visual.sequence ?? []).filter((id) => id !== visual.selected)] : [];
+  const toggleChosen = (id: string) => {
+    if (!visual.selected) {
+      props.onUpdate({ visual: { selected: id, sequence: [] } });
+      return;
+    }
+    const rest = chosen.filter((item) => item !== id);
+    if (rest.length === chosen.length) {
+      props.onUpdate({ visual: { sequence: [...chosen.slice(1), id] } });
+    } else if (id === visual.selected) {
+      // 取消第一段：后面一段补上来成为选中的素材。
+      props.onUpdate({ visual: { selected: rest[0], sequence: rest.slice(1) } });
+    } else {
+      props.onUpdate({ visual: { sequence: rest.slice(1) } });
+    }
+  };
   const generator = visual.mode === "ai" ? props.aiVideo : visual.mode === "image" ? props.aiImage : null;
   const modeOf = (asset: Asset | undefined): VisualMode | undefined => {
     if (!asset) return undefined;
@@ -527,24 +544,39 @@ export function ShotCard(props: {
           <p className="muted small">{emptyHint[visual.mode]}</p>
         )}
         {shown.length > 0 && (
-          <div className="candidates" role="listbox" aria-label={t("shot.candidates")}>
-            {shown.map((id) => (
-              <button
-                type="button"
-                key={id}
-                role="option"
-                aria-selected={visual.selected === id}
-                className={`candidate ${visual.selected === id ? "on" : ""}`}
-                disabled={visual.locked}
-                onClick={() => props.onUpdate({ visual: { selected: id } })}
-                title={project.assets[id]?.meta.author ? t("shot.author", { name: project.assets[id].meta.author }) : ""}
-              >
-                <Thumb project={project} assetId={id} color={visual.color} className="candidate-media" />
-                <TakeBadge takes={visual.takes ?? []} assetId={id} asset={project.assets[id]} />
-              </button>
-            ))}
+          <div className="candidates" role="listbox" aria-label={t("shot.candidates")} aria-multiselectable="true">
+            {shown.map((id) => {
+              const order = chosen.indexOf(id);
+              return (
+                <div className="candidate-wrap" key={id}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={order >= 0}
+                    className={`candidate ${visual.selected === id ? "on" : order > 0 ? "also" : ""}`}
+                    disabled={visual.locked}
+                    onClick={() => props.onUpdate({ visual: { selected: id } })}
+                    title={project.assets[id]?.meta.author ? t("shot.author", { name: project.assets[id].meta.author }) : ""}
+                  >
+                    <Thumb project={project} assetId={id} color={visual.color} className="candidate-media" />
+                    <TakeBadge takes={visual.takes ?? []} assetId={id} asset={project.assets[id]} />
+                  </button>
+                  <button
+                    type="button"
+                    className={`pick ${order >= 0 ? "on" : ""}`}
+                    disabled={visual.locked || (order === 0 && chosen.length === 1)}
+                    aria-label={order >= 0 ? t("shot.multiRemove") : t("shot.multiAdd")}
+                    title={order >= 0 ? t("shot.multiRemove") : t("shot.multiAdd")}
+                    onClick={() => toggleChosen(id)}
+                  >
+                    {order >= 0 ? order + 1 : "+"}
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
+        {shown.length > 1 && <p className="muted small">{chosen.length > 1 ? t("shot.multiOn", { n: chosen.length }) : t("shot.multiHint")}</p>}
         {(() => {
           const take = visual.takes?.find((item) => item.asset_id === visual.selected);
           return take?.issue ? (

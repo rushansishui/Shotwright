@@ -144,4 +144,30 @@ test.describe("Shotwright 主流程", () => {
       "哑光白色圆柱形机身",
     );
   });
+
+  test("分镜多选：一个镜头选两段素材，依次播放", async ({ page }) => {
+    const dir = mkdtempSync(join(tmpdir(), "shotwright-multi-"));
+    const clips = ["testsrc2", "smptebars"].map((pattern, index) => {
+      const file = join(dir, `clip${index}.mp4`);
+      execFileSync("ffmpeg", [
+        "-y", "-loglevel", "error", "-f", "lavfi", "-i", `${pattern}=size=320x568:rate=24`, "-t", "1.5",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", file,
+      ]);
+      return file;
+    });
+    await createProject(page, `多选${RUN_ID}。${TWO_SHOTS}`);
+    const first = page.locator("article.shot").first();
+    await first.getByRole("radio", { name: /上传|Upload/ }).click();
+    const input = first.locator('input[type="file"][accept="video/*,image/*"]');
+    for (const clip of clips) {
+      await input.setInputFiles(clip);
+      await expect(first.locator(".candidate-wrap")).toHaveCount(clips.indexOf(clip) + 1);
+    }
+    await expect(first.getByText(/多选几段素材|pick several clips/)).toBeVisible();
+    const notPicked = first.locator(".candidate-wrap .pick:not(.on)");
+    await notPicked.first().click();
+    await expect(first.getByText(/已选 2 段素材|2 clips picked/)).toBeVisible();
+    // 后上传的那段是选中的（第 1 段），刚加的排第 2。
+    await expect(first.locator(".candidate-wrap .pick.on")).toHaveText(["2", "1"]);
+  });
 });

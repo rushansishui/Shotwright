@@ -120,6 +120,62 @@ def _video_args(fps: int, quality: str = "final") -> list[str]:
     ]
 
 
+MAX_SEQUENCE = 6
+"""一个镜头里最多依次播放几段素材。"""
+IMAGE_SHARE = 3.0
+"""多选时图片按 3 秒素材参与时长分配。"""
+
+
+def shot_assets(project: Project, shot: Shot) -> list:
+    """镜头要播放的素材：选中的素材在前，多选的其他素材按顺序跟在后面（纯色模式为空）。"""
+    visual = shot.visual
+    if visual.mode == "color" or not visual.selected:
+        return []
+    result = []
+    for asset_id in [visual.selected, *visual.sequence]:
+        asset = project.assets.get(asset_id)
+        if asset is not None and asset.kind in ("video", "image") and asset not in result:
+            result.append(asset)
+    return result[:MAX_SEQUENCE]
+
+
+def usable_length(visual: ShotVisual, asset, primary: bool) -> float:
+    """素材可用的长度：选中的视频按入出点算，其他视频用整段，图片按 3 秒算。"""
+    if asset.kind != "video":
+        return IMAGE_SHARE
+    total = asset.duration or IMAGE_SHARE
+    if not primary:
+        return total
+    edit = visual.effective_edit()
+    end = min(edit.trim_end or total, total)
+    return max(end - edit.trim_start, 0.1)
+
+
+def split_duration(lengths: list[float], duration: float) -> list[float]:
+    """按各段素材的可用长度分配镜头时长：长的多分，短的少分，尽量少慢放、少定格。"""
+    total = sum(lengths) or 1.0
+    shares = [round(duration * length / total, 3) for length in lengths]
+    shares[-1] = round(duration - sum(shares[:-1]), 3)
+    return shares
+
+
+def _segment_visual(visual: ShotVisual, asset_id: str, primary: bool) -> ShotVisual:
+    """多选时每段素材的剪辑设置：选中的素材沿用入出点和取景，其他素材用整段、居中取景、不用原声。"""
+    if primary:
+        return visual.effective_edit()
+    return visual.model_copy(
+        update={
+            "selected": asset_id,
+            "edit_asset": None,
+            "trim_start": 0.0,
+            "trim_end": None,
+            "focus_x": 0.5,
+            "focus_y": 0.5,
+            "source_volume": 0.0,
+        }
+    )
+
+
 def render_shot(
     store: ProjectStore,
     project: Project,
@@ -132,8 +188,16 @@ def render_shot(
     cancel: threading.Event,
     quality: str = "final",
 ) -> tuple[str, Path]:
-    """将单个镜头的画面与配音合成为 MP4，返回 (指纹, 输出路径)。"""
+    """将单个镜头的画面与配音合成为 MP4，返回 (指纹, 输出路径)。
+
+    多选了几段素材时，按各段的可用长度分配时长，依次播放（见 :func:`shot_assets`）。
+    """
     canvas = project.canvas
+    assets = shot_assets(project, shot)
+    if len(assets) > 1:
+        return _render_sequence(
+            store, project, shot, assets, voice_fp, voice_path, duration, stages=stages, cancel=cancel, quality=quality
+        )
     visual = shot.visual.effective_edit()
     asset = project.assets.get(visual.selected) if visual.selected and visual.mode != "color" else None
     if asset is not None and asset.kind not in ("video", "image"):
@@ -263,6 +327,150 @@ def render_shot(
         raise RenderCancelled(str(exc)) from exc
     finally:
         temp.unlink(missing_ok=True)
+    stages.append(StageRecord(f"{shot.id}:shot", "shot", fp, False, round(time.monotonic() - started, 3)))
+    return fp, output
+
+def _render_sequence(
+    store: ProjectStore,
+    project: Project,
+    shot: Shot,
+    assets: list,
+    voice_fp: str,
+    voice_path: Path,
+    duration: float,
+    *,
+    stages: list[StageRecord],
+    cancel: threading.Event,
+    quality: str,
+) -> tuple[str, Path]:
+    """多段素材依次播放：每段先单独渲染成无声画面，再拼起来混入配音。
+
+    选中的那段保留入出点、取景和原声设置，其他段用整段素材；多选时不混原声。
+    """
+    canvas = project.canvas
+    visual = shot.visual
+    lengths = [usable_length(visual, asset, index == 0) for index, asset in enumerate(assets)]
+    shares = split_duration(lengths, duration)
+    plans = []
+    for index, (asset, share) in enumerate(zip(assets, shares, strict=True)):
+        segment = _segment_visual(visual, asset.id, index == 0)
+        clip = None
+        if asset.kind == "video":
+            source_duration = asset.duration or probe(store.asset_path(project, asset.id)).duration or share
+            clip = plan_clip(segment.model_copy(update={"source_volume": 0.0}), source_duration, share, False)
+        plans.append((asset, segment, clip, share))
+    fp = fingerprint(
+        "shot-sequence",
+        voice_fp,
+        duration,
+        [
+            (
+                asset.sha256,
+                share,
+                (segment.fit, round(segment.focus_x, 3), round(segment.focus_y, 3)),
+                clip.key() if clip else KEN_BURNS,
+            )
+            for asset, segment, clip, share in plans
+        ],
+        CLIP_VERSION,
+        canvas.model_dump(),
+        project.voice_for(shot).volume,
+        quality,
+    )
+    output = store.cache_dir(project.id, "shots") / f"{fp}.mp4"
+    if output.is_file() and output.stat().st_size > 0:
+        stages.append(StageRecord(f"{shot.id}:shot", "shot", fp, True, 0.0))
+        return fp, output
+    started = time.monotonic()
+    width, height, fps = canvas.width, canvas.height, canvas.fps
+    temp = output.with_name(f".tmp-{new_id(6)}{output.suffix}")
+    pieces: list[Path] = []
+    try:
+        for index, (asset, segment, clip, share) in enumerate(plans):
+            piece = output.with_name(f".tmp-{new_id(6)}-{index}.mp4")
+            pieces.append(piece)
+            source = store.asset_path(project, asset.id)
+            scratch = None
+            if asset.kind == "image":
+                video_input = ["-protocol_whitelist", LOCAL_PROTOCOLS, "-i", str(source)]
+                graph = ken_burns_graph(
+                    "0:v", "v", width, height, fps, share, segment.fit, segment.focus_x, segment.focus_y
+                )
+            else:
+                assert clip is not None
+                if clip.loop and not clip.whole:
+                    scratch = piece.with_name(piece.stem + "-clip.mp4")
+                    _cut_clip(source, scratch, clip, fps, cancel)
+                    source = scratch
+                if clip.loop:
+                    video_input = ["-stream_loop", "-1", "-protocol_whitelist", LOCAL_PROTOCOLS, "-i", str(source)]
+                else:
+                    video_input = [
+                        "-ss", f"{clip.start:.3f}",
+                        "-t", f"{clip.length:.3f}",
+                        "-protocol_whitelist", LOCAL_PROTOCOLS,
+                        "-i", str(source),
+                    ]  # fmt: skip
+                pre = f"[0:v]setpts=(PTS-STARTPTS)/{clip.speed:.4f}," if clip.speed < 1.0 else "[0:v]setpts=PTS-STARTPTS,"
+                tail = f"fps={fps}"
+                if clip.hold > 0:
+                    tail += f",tpad=stop_mode=clone:stop_duration={clip.hold + 0.5:.3f}"
+                graph = ";".join(
+                    [
+                        f"{pre}null[raw]",
+                        fit_graph("raw", "fit", width, height, segment.fit, segment.focus_x, segment.focus_y),
+                        f"[fit]{tail},format=yuv420p[v]",
+                    ]
+                )
+            try:
+                run_ffmpeg(
+                    [
+                        *video_input,
+                        "-filter_complex", graph,
+                        "-map", "[v]",
+                        "-an",
+                        "-t", f"{share:.3f}",
+                        *_video_args(fps, quality),
+                        "-f", "mp4",
+                        str(piece),
+                    ],
+                    cancel=cancel,
+                )  # fmt: skip
+            finally:
+                if scratch is not None:
+                    scratch.unlink(missing_ok=True)
+        inputs: list[str] = []
+        for piece in pieces:
+            inputs += ["-protocol_whitelist", LOCAL_PROTOCOLS, "-i", str(piece)]
+        labels = "".join(f"[{index}:v]" for index in range(len(pieces)))
+        graph = (
+            f"{labels}concat=n={len(pieces)}:v=1:a=0,fps={fps},format=yuv420p[v];"
+            f"[{len(pieces)}:a]aresample=48000,aformat=channel_layouts=stereo,apad[a]"
+        )
+        run_ffmpeg(
+            [
+                *inputs,
+                "-protocol_whitelist", LOCAL_PROTOCOLS,
+                "-i", str(voice_path),
+                "-filter_complex", graph,
+                "-map", "[v]",
+                "-map", "[a]",
+                "-t", f"{duration:.3f}",
+                *_video_args(fps, quality),
+                *AUDIO_ARGS,
+                "-movflags", "+faststart",
+                "-f", "mp4",
+                str(temp),
+            ],
+            cancel=cancel,
+        )  # fmt: skip
+        temp.replace(output)
+    except MediaCancelled as exc:
+        raise RenderCancelled(str(exc)) from exc
+    finally:
+        temp.unlink(missing_ok=True)
+        for piece in pieces:
+            piece.unlink(missing_ok=True)
     stages.append(StageRecord(f"{shot.id}:shot", "shot", fp, False, round(time.monotonic() - started, 3)))
     return fp, output
 

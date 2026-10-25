@@ -103,6 +103,8 @@ class VisualPatch(_Body):
     link: str | None = Field(None, max_length=400)
     provider: str | None = None
     selected: str | None = None
+    sequence: list[str] | None = Field(None, max_length=10)
+    """多选：在选中的素材之后依次播放的其他素材（按顺序）；传空列表取消多选。"""
     first_frame: str | None = None
     clear_first_frame: bool = False
     """为真时取消首帧，改为纯文字生成视频。"""

@@ -48,6 +48,7 @@ from shotwright.core.models import Project, Shot, ShotVisual, VoiceSettings, val
 from shotwright.core.store import ProjectNotFound, ProjectStore, read_json
 from shotwright.logs import setup_logging
 from shotwright.media import ffmpeg
+from shotwright.pipeline.shots import MAX_SEQUENCE
 from shotwright.providers import registry
 from shotwright.providers.base import ChargeConfirmationRequired, ProviderError
 from shotwright.providers.tts.edge import VOICES
@@ -538,14 +539,24 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 for field in ("selected", "first_frame"):
                     if patch.get(field) and patch[field] not in project.assets:
                         raise ValueError("所选素材不存在")
+                if "sequence" in patch:
+                    sequence = list(dict.fromkeys(patch["sequence"] or []))
+                    if any(item not in project.assets for item in sequence):
+                        raise ValueError("所选素材不存在")
+                    if any(project.assets[item].kind not in ("video", "image") for item in sequence):
+                        raise ValueError("只能多选图片或视频素材")
+                    current = patch.get("candidates", shot.visual.candidates)
+                    missing = [item for item in sequence if item not in current]
+                    if missing:
+                        patch["candidates"] = [*current, *missing][-visuals.MAX_CANDIDATES :]
+                    patch["sequence"] = sequence
                 if patch.get("first_frame") and project.assets[patch["first_frame"]].kind != "image":
                     raise ValueError("首帧必须是图片")
                 if "terms" in patch:
                     patch["terms"] = [t.strip()[:80] for t in patch["terms"] if t.strip()]
-                if patch.get("selected") and patch["selected"] not in shot.visual.candidates:
-                    patch["candidates"] = [*shot.visual.candidates, patch["selected"]][
-                        -visuals.MAX_CANDIDATES :
-                    ]
+                current = patch.get("candidates", shot.visual.candidates)
+                if patch.get("selected") and patch["selected"] not in current:
+                    patch["candidates"] = [*current, patch["selected"]][-visuals.MAX_CANDIDATES :]
                 if patch.pop("clear_trim_end", False):
                     patch["trim_end"] = None
                 mode = patch.pop("mode", None)
@@ -561,8 +572,15 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     if shot.visual.edit_asset != target:
                         patch = {"trim_start": 0.0, "trim_end": None, "focus_x": 0.5, "focus_y": 0.5, **patch}
                     patch["edit_asset"] = target
+                merged = {**shot.visual.model_dump(), **patch}
+                # 选中的素材不重复出现在多选列表里；多选最多 MAX_SEQUENCE 段（含选中的那段）。
+                merged["sequence"] = [
+                    item for item in merged.get("sequence") or [] if item != merged.get("selected")
+                ][: MAX_SEQUENCE - 1]
+                if not merged.get("selected"):
+                    merged["sequence"] = []
                 try:
-                    shot.visual = ShotVisual.model_validate({**shot.visual.model_dump(), **patch})
+                    shot.visual = ShotVisual.model_validate(merged)
                 except ValidationError as exc:
                     # 只把第一条原因（例如「出点必须晚于入点」）返回给界面，便于翻译。
                     message = str(exc.errors()[0].get("msg", exc))
