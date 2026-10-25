@@ -13,6 +13,7 @@ Pixabay 只对图片和视频开放 API，音乐栏目没有对应接口；Inter
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 
@@ -188,12 +189,15 @@ class ArchiveMusic:
         creator = meta.get("creator")
         if isinstance(creator, list):
             creator = creator[0] if creator else ""
+        url = f"{DOWNLOAD_URL}/{identifier}/{name}"
         return MusicCandidate(
             provider="archive",
             remote_id=f"{identifier}/{name}",
-            url=f"{DOWNLOAD_URL}/{identifier}/{name}",
-            # /stream/ 端点可直接在浏览器 <audio> 中播放，无需先下载整首。
-            preview_url=f"https://archive.org/stream/{identifier}/{name}",
+            url=url,
+            # 用 download 地址直接试听：/stream/ 返回的是 M3U 播放列表
+            # （audio/x-mpegurl），浏览器的 <audio> 解码不了，会显示 0:00 且无法播放。
+            # download 地址支持 Range 请求，浏览器可以边下边播。
+            preview_url=quote(url, safe=":/?&=%"),
             title=str(meta.get("title") or doc.get("title") or name)[:200],
             duration=parse_length(chosen.get("length")) or 0.0,
             author=str(creator or "")[:200],

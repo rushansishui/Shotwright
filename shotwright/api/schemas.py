@@ -202,6 +202,8 @@ class BgmDownload(_Body):
     """候选的远端唯一标识，来自搜索结果的 remote_id。"""
     url: str = Field(..., max_length=2000)
     """下载地址，来自搜索结果的 url。"""
+    preview_url: str = Field("", max_length=2000)
+    """试听地址；界面会把整条候选原样发回来，这里接受但不用。"""
     title: str = Field("", max_length=200)
     author: str = Field("", max_length=200)
     duration: float = Field(0.0, ge=0)
