@@ -692,6 +692,22 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
         return _mutate(project_id, change)
 
+    @api.delete("/projects/{project_id}/shots/{shot_id}/candidates/{asset_id}")
+    def remove_candidate(project_id: str, shot_id: str, asset_id: str):
+        """从镜头的候选素材里删掉一个；删的是选中的素材时自动换成下一个。"""
+
+        def change(project: Project) -> None:
+            shot = project.shot(_id(shot_id))
+            if shot.visual.locked:
+                raise HTTPException(409, "镜头已锁定，请先解锁")
+            try:
+                visuals.remove_candidate(project, shot, _id(asset_id))
+            except KeyError:
+                raise HTTPException(404, "候选素材不存在") from None
+            shot.status, shot.error = "draft", None
+
+        return _mutate(project_id, change)
+
     # 正在检索或生成的镜头：页面刷新后仍能显示"生成中"，并拒绝重复提交。
     in_progress: dict[tuple[str, str], dict] = {}
     in_progress_lock = threading.Lock()

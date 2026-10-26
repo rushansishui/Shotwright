@@ -102,6 +102,9 @@ export const api = {
   /** AI 生成标题：候选大标题、片头副标题、镜头小标题（已有的不覆盖）。 */
   suggestTitles: (id: string, options: { shot_titles?: boolean; apply_headline?: boolean } = {}) =>
     request<Project>(`/projects/${id}/titles/suggest`, json("POST", options)),
+  /** 从镜头的候选素材里删掉一个。 */
+  removeCandidate: (id: string, shotId: string, assetId: string) =>
+    request<Project>(`/projects/${id}/shots/${shotId}/candidates/${assetId}`, json("DELETE")),
   /** AI 从文案里挑字幕高亮关键词（替换 subtitle.keywords）。 */
   suggestKeywords: (id: string) => request<Project>(`/projects/${id}/subtitle/keywords`, json("POST", {})),
   /** 复制成新项目继续编辑（素材、设置、镜头和渲染缓存一起复制）。 */

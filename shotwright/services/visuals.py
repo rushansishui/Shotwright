@@ -398,6 +398,33 @@ def switch_mode(project: Project, shot: Shot, mode: str) -> None:
     visual.selected = matching[-1] if matching else None
 
 
+def remove_candidate(project: Project, shot: Shot, asset_id: str) -> None:
+    """从镜头的候选素材里删掉一个（素材文件仍留在项目里，别处引用不受影响）。
+
+    删的是选中的素材时，多选里的下一段顶上；没有多选就选同一来源最近的候选，
+    都没有则清空（渲染时再自动检索或生成）。首帧、入出点和生成记录一并清理。
+    """
+    visual = shot.visual
+    if asset_id not in visual.candidates and asset_id not in (visual.selected, visual.first_frame):
+        raise KeyError("候选素材不存在")
+    visual.candidates = [item for item in visual.candidates if item != asset_id]
+    visual.takes = [item for item in visual.takes if item.asset_id != asset_id]
+    if visual.first_frame == asset_id:
+        visual.first_frame = None
+    if visual.edit_asset == asset_id:
+        visual.edit_asset = None
+    visual.sequence = [item for item in visual.sequence if item != asset_id]
+    if visual.selected == asset_id:
+        if visual.sequence:
+            visual.selected = visual.sequence.pop(0)
+        else:
+            mode = visual.mode if visual.mode != "color" else None
+            matching = candidates_for_mode(project, shot, mode) if mode else []
+            visual.selected = matching[-1] if matching else None
+    if visual.selected is None:
+        visual.sequence = []
+
+
 def _first_frame(store: ProjectStore, project: Project, shot: Shot) -> Path | None:
     first = shot.visual.first_frame
     asset = project.assets.get(first) if first else None

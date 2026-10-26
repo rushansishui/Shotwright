@@ -216,6 +216,7 @@ export function Editor({ projectId }: { projectId: string }) {
                 canRewrite={!!llm}
                 onRewrite={(instruction) => run(() => api.rewriteShot(id, shot.id, instruction), shot.id)}
                 onUpload={(file) => uploadForShot(shot.id, file)}
+                onRemoveCandidate={(assetId) => run(() => api.removeCandidate(id, shot.id, assetId), shot.id)}
                 onMove={(delta) => moveShot(index, delta)}
                 onInsert={() => run(() => api.addShot(id, shot.id))}
                 onSplit={(at) => run(() => api.splitShot(id, shot.id, at), shot.id)}

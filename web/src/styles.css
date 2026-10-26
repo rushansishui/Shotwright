@@ -1325,6 +1325,31 @@ input[type="color"] {
   cursor: default;
 }
 
+.candidate-wrap .remove {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 11px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 15px;
+  line-height: 19px;
+  cursor: pointer;
+}
+
+.candidate-wrap .remove:hover:not(:disabled) {
+  border-color: #e5484d;
+  background: #e5484d;
+}
+
+.candidate-wrap .remove:disabled {
+  display: none;
+}
+
 .project-row {
   display: flex;
   align-items: center;

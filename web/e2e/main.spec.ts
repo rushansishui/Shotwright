@@ -169,6 +169,11 @@ test.describe("Shotwright 主流程", () => {
     await expect(first.getByText(/已选 2 段素材|2 clips picked/)).toBeVisible();
     // 后上传的那段是选中的（第 1 段），刚加的排第 2。
     await expect(first.locator(".candidate-wrap .pick.on")).toHaveText(["2", "1"]);
+    // 删除选中的那段：多选里的下一段顶上，只剩一段素材。
+    page.once("dialog", (dialog) => dialog.accept());
+    await first.locator(".candidate-wrap").nth(1).getByRole("button", { name: /删除这个素材|Remove this clip/ }).click();
+    await expect(first.locator(".candidate-wrap")).toHaveCount(1);
+    await expect(first.locator(".candidate.on")).toHaveCount(1);
   });
 
   test("复制为新项目：副本可以单独编辑", async ({ page }) => {

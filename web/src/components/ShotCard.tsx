@@ -81,6 +81,8 @@ export function ShotCard(props: {
   onSplit: (at: number) => void;
   onMerge: () => void;
   onDelete: () => void;
+  /** 从候选素材里删掉一个。 */
+  onRemoveCandidate: (assetId: string) => void;
 }) {
   const { project, shot, index } = props;
   const visual = shot.visual;
@@ -581,6 +583,20 @@ export function ShotCard(props: {
                     onClick={() => toggleChosen(id)}
                   >
                     {order >= 0 ? order + 1 : "+"}
+                  </button>
+                  <button
+                    type="button"
+                    className="remove"
+                    disabled={visual.locked || props.busy}
+                    aria-label={t("shot.removeCandidate")}
+                    title={t("shot.removeCandidate")}
+                    onClick={() => {
+                      const paid = visual.mode === "ai" || visual.mode === "image";
+                      const question = t("shot.removeCandidateConfirm", { n: index + 1 }) + (paid ? t("shot.removeCandidatePaid") : "");
+                      if (window.confirm(question)) props.onRemoveCandidate(id);
+                    }}
+                  >
+                    ×
                   </button>
                 </div>
               );

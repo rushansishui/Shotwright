@@ -22,6 +22,7 @@ EN: dict[str, str] = {
     "任务已结束或不存在": "Job has already finished or does not exist",
     "文件不存在": "File not found",
     "无效的 id": "Invalid id",
+    "候选素材不存在": "Candidate not found",
     "路径越界": "Path escapes the project directory",
     "项目路径越界": "Project path escapes the storage directory",
     # 字体
