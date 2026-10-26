@@ -14,6 +14,11 @@ auto_fetch_visuals = true
 # 服务只接受发给本机地址（localhost / 127.0.0.1）的请求，防止被其他网页借道访问。
 # 在局域网或 Docker 里给别的电脑用时，把服务器的 IP 或域名加到这里，例如 ["192.168.1.20"]
 # allowed_hosts = []
+# 允许跨域访问的来源。只有前端跑在别的端口（例如 npm run dev 的 5173）时才需要，
+# 默认允许本地开发端口；正式部署时留空即可。
+# cors_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+# 用户导入字体的存放目录；留空时用内置的 resources/fonts
+# fonts_dir = "storage/fonts"
 
 # 各类别默认使用的 Provider
 [defaults]
