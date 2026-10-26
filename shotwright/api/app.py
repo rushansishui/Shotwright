@@ -35,6 +35,7 @@ from shotwright.api.schemas import (
     ChargeConsent,
     CreateProject,
     CreateVersion,
+    DuplicateProject,
     ExpandRequest,
     ReorderShots,
     RewriteShot,
@@ -64,6 +65,7 @@ from shotwright.services import (
     visuals,
 )
 from shotwright.services import cost as cost_service
+from shotwright.services.duplicate import duplicate_project
 
 log = logging.getLogger("shotwright.api")
 
@@ -441,6 +443,13 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     raise ValueError("参考素材必须是图片")
 
         return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/duplicate", status_code=201)
+    def duplicate(project_id: str, body: DuplicateProject | None = None):
+        """把已有项目复制成新项目（素材、设置、镜头和渲染缓存一起复制），返回新项目。"""
+        with store.lock(_id(project_id)):
+            project = store.load(project_id)
+            return duplicate_project(store, project, title=body.title if body else None)
 
     @api.get("/projects/{project_id}/versions")
     def list_versions(project_id: str):

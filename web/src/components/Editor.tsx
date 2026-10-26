@@ -113,6 +113,17 @@ export function Editor({ projectId }: { projectId: string }) {
             onChange={(e) => setTitle(e.target.value)}
             onBlur={() => title !== project.title && run(() => api.updateProject(id, { title }))}
           />
+          <button
+            type="button"
+            className="btn"
+            title={t("editor.duplicateHint")}
+            onClick={async () => {
+              const copy = await run(() => api.duplicateProject(id));
+              if (copy) window.location.hash = `#/p/${copy.id}`;
+            }}
+          >
+            {t("editor.duplicate")}
+          </button>
           <Segmented
             label={t("editor.aspect")}
             value={project.canvas.aspect}

@@ -98,6 +98,8 @@ export const api = {
     >,
   ) =>
     request<Project>(`/projects/${id}`, json("PATCH", body)),
+  /** 复制成新项目继续编辑（素材、设置、镜头和渲染缓存一起复制）。 */
+  duplicateProject: (id: string, title = "") => request<Project>(`/projects/${id}/duplicate`, json("POST", { title })),
   deleteProject: (id: string) => request<void>(`/projects/${id}`, json("DELETE")),
   addShot: (id: string, after?: string) => request<Project>(`/projects/${id}/shots`, json("POST", { text: "", after })),
   splitShot: (id: string, shotId: string, at: number) =>

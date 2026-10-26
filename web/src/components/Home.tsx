@@ -245,7 +245,7 @@ export function Home() {
         ) : (
           <ul className="project-list">
             {projects.map((p) => (
-              <li key={p.id}>
+              <li key={p.id} className="project-row">
                 <a href={`#/p/${p.id}`}>
                   <span className="project-title">{p.title}</span>
                   <span className="muted">
@@ -257,6 +257,21 @@ export function Home() {
                     })}
                   </span>
                 </a>
+                <button
+                  type="button"
+                  className="btn small ghost"
+                  title={t("editor.duplicateHint")}
+                  onClick={async () => {
+                    try {
+                      const copy = await api.duplicateProject(p.id);
+                      window.location.hash = `#/p/${copy.id}`;
+                    } catch (e) {
+                      setError((e as Error).message);
+                    }
+                  }}
+                >
+                  {t("editor.duplicate")}
+                </button>
               </li>
             ))}
           </ul>

@@ -248,6 +248,7 @@ Base URL 误填成完整的 `/chat/completions` 地址时会自动纠正。
 | GET / POST | `/projects/{id}/versions` | 同一视频的语言版本；POST `{"language": "en-US"}` 翻译出新版本 |
 | GET / POST | `/projects` | 列出、创建项目（`mode`：`llm` / `split` / `empty`） |
 | GET / PATCH / DELETE | `/projects/{id}` | 读取、修改设置、删除（渲染进行中需 `?force=true`） |
+| POST | `/projects/{id}/duplicate` | 复制成新项目继续编辑（素材、设置、镜头和渲染缓存一起复制，不含历史成片和累计费用）；命令行 `shotwright copy` |
 | POST | `/projects/{id}/shots` | 新增镜头（可指定插在哪个镜头之后） |
 | PUT | `/projects/{id}/shots/order` | 调整镜头顺序 |
 | PATCH / DELETE | `/projects/{id}/shots/{shot}` | 修改、删除镜头（含入出点、补足方式、取景、原声音量） |

@@ -170,4 +170,16 @@ test.describe("Shotwright 主流程", () => {
     // 后上传的那段是选中的（第 1 段），刚加的排第 2。
     await expect(first.locator(".candidate-wrap .pick.on")).toHaveText(["2", "1"]);
   });
+
+  test("复制为新项目：副本可以单独编辑", async ({ page }) => {
+    await createProject(page, `复制${RUN_ID}。${TWO_SHOTS}`);
+    const originalUrl = page.url();
+    const count = await page.locator("article.shot").count();
+    await page.getByRole("button", { name: /复制为新项目|Duplicate/ }).click();
+    await expect(page).not.toHaveURL(originalUrl);
+    await expect(page.locator("#title")).toHaveValue(/（副本）|\(copy\)/);
+    await expect(page.locator("article.shot")).toHaveCount(count);
+    await page.goto("/");
+    await expect(page.locator(".project-list li").first()).toContainText(/（副本）|\(copy\)/);
+  });
 });

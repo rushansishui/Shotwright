@@ -1324,3 +1324,20 @@ input[type="color"] {
 .candidate-wrap .pick:disabled {
   cursor: default;
 }
+
+.project-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.project-list li.project-row:first-child {
+  border-top: none;
+}
+
+.project-row a {
+  flex: 1;
+  min-width: 0;
+  border-top: none !important;
+}

@@ -8,6 +8,7 @@ shotwright list                          列出项目
 shotwright show <项目>                   查看镜头
 shotwright shot <项目> <序号> --text …   修改某个镜头
 shotwright render <项目> [--allow-paid]  渲染（只重做有改动的镜头）
+shotwright copy <项目> [--title 标题]    复制成新项目继续编辑
 shotwright bench [--render]              跑质量基准集，结果存档并与上次对比
 """
 
@@ -172,6 +173,15 @@ def cmd_translate(args) -> int:
     return 0
 
 
+def cmd_copy(args) -> int:
+    from shotwright.services.duplicate import duplicate_project
+
+    _settings, store = _store(args)
+    copy = duplicate_project(store, store.load(args.project), title=args.title)
+    print(f"已复制为新项目：{copy.id}  {copy.title}")
+    return 0
+
+
 def cmd_bench(args) -> int:
     import json
     import time
@@ -270,6 +280,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="允许为缺画面的 AI 镜头调用收费生成（Seedance、Seedream 等）；默认改用素材检索",
     )
     render.set_defaults(func=cmd_render)
+
+    copy = sub.add_parser("copy", help="把项目复制成新项目（素材、设置、镜头一起复制）")
+    copy.add_argument("project")
+    copy.add_argument("--title", help="新项目的标题；默认「原标题（副本）」")
+    copy.set_defaults(func=cmd_copy)
 
     bench = sub.add_parser("bench", help="跑质量基准集（固定诉求），结果存档并与上次对比")
     bench.add_argument("--render", action="store_true", help="同时渲染草稿成片，测量响度和慢放定格占比")

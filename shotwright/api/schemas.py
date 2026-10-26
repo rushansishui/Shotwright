@@ -169,6 +169,11 @@ class AmbienceSearch(_Body):
     """英文检索词，例如 rain ambience；为空时按第一个镜头的检索词自动生成。"""
 
 
+class DuplicateProject(_Body):
+    title: str = Field("", max_length=120)
+    """新项目的标题；为空时用「原标题（副本）」。"""
+
+
 class RewriteShot(_Body):
     instruction: str = Field(..., min_length=1, max_length=500)
     """一句改写要求，例如「改成俯拍特写，突出按键」。"""
