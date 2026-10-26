@@ -270,6 +270,26 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 raise HTTPException(422, str(exc)) from None
             return store.save(project)
 
+    def _clear_pending(project_id: str, shot_id: str) -> None:
+        """清掉镜头里落盘的任务 id。
+
+        生成成功与失败都会调用：成功后它已经没用，失败后留着会让界面一直显示"生成中"，
+        而且下次启动还会拿它去轮询一个已经结束的任务。
+        """
+        try:
+            with store.lock(project_id):
+                latest = store.load(project_id)
+                try:
+                    target = latest.shot(shot_id)
+                except KeyError:
+                    return
+                if target.visual.pending is None:
+                    return
+                target.visual.pending = None
+                store.save(latest)
+        except (ProjectNotFound, OSError) as exc:
+            log.warning("清除镜头 %s 的任务标记失败：%s", shot_id, exc)
+
     # ---- 基础 ---------------------------------------------------------------
 
     @api.get("/health")
@@ -805,6 +825,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             target = latest.shot(shot_id)
             target.visual.candidates = shot.visual.candidates
             target.visual.takes = shot.visual.takes
+            # 生成已经结束，落盘的任务 id 必须一并清掉，否则 /in-progress 会一直报"生成中"。
+            target.visual.pending = None
             if edit:
                 # 改画面的结果是 AI 视频，切到 AI 视频来源，新画面才会出现在候选里。
                 target.visual.mode = "ai"
@@ -829,6 +851,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             # 保存之后再移除，页面看到"完成"时就能读到新素材。
             with in_progress_lock:
                 in_progress.pop(key, None)
+            # 失败路径不会走到 change()，这里再清一次，保证不会留下"生成中"。
+            _clear_pending(project_id, shot_id)
 
     _VISUAL_TEXT = ("prompt", "image_prompt", "camera", "link")
 

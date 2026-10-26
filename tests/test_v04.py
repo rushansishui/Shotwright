@@ -196,7 +196,46 @@ def test_rejects_unknown_host_and_cross_site_origin(settings):
         assert r.status_code == 201, r.text
 
 
-# ---- 原片导入 ---------------------------------------------------------------
+# ---- 生成结束要清掉落盘的任务标记 -------------------------------------------
+
+
+def test_finished_generation_clears_pending(settings, store):
+    """生成成功后必须清掉 pending，否则 /in-progress 会一直报"生成中"。
+
+    这个标记是给重启后恢复轮询用的（remember_task 拿到远端 id 就落盘）；
+    生成结束不回写的话，界面会永远停在转圈，连重新生成也点不动。
+    """
+    project = _project(store, shots=[Shot(text="一句话。", visual=ShotVisual(mode="ai", prompt="sea"))])
+    shot = project.shots[0]
+    with _client(settings, store) as client:
+        r = client.post(f"/api/v2/projects/{project.id}/shots/{shot.id}/candidates", json={"confirm_charge": True})
+        assert r.status_code == 200, r.text
+        # 生成已经完成：磁盘上不该再留着任务标记。
+        saved = store.load(project.id)
+        assert saved.shot(shot.id).visual.pending is None
+        assert saved.shot(shot.id).visual.selected is not None
+        # 界面据此判断"生成中"，这里必须是空的。
+        assert client.get(f"/api/v2/projects/{project.id}/in-progress").json() == {}
+
+
+def test_failed_generation_clears_pending(settings, store, monkeypatch):
+    """生成失败也要清掉 pending，否则界面卡在"生成中"，用户没法重新提交。"""
+    project = _project(store, shots=[Shot(text="一句话。", visual=ShotVisual(mode="ai", prompt="sea"))])
+    shot = project.shots[0]
+
+    def boom(*args, **kwargs):
+        # 模拟远端已经建了任务、随后失败：先把 id 落盘，再抛错。
+        off_task = kwargs.get("on_task")
+        if off_task is not None:
+            off_task("task-that-failed")
+        raise ProviderError("远端生成失败")
+
+    monkeypatch.setattr(FakeVideoGen, "generate", boom)
+    with _client(settings, store) as client:
+        r = client.post(f"/api/v2/projects/{project.id}/shots/{shot.id}/candidates", json={"confirm_charge": True})
+        assert r.status_code == 502, r.text
+        assert store.load(project.id).shot(shot.id).visual.pending is None
+        assert client.get(f"/api/v2/projects/{project.id}/in-progress").json() == {}
 
 
 def test_footage_import_splits_into_shots(settings, store, tmp_path):
