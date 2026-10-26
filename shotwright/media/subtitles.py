@@ -222,7 +222,8 @@ def split_cues(
     for group, group_start, group_end in groups:
         lines = wrap(group, font_path, size, max_width)
         if len(lines) <= max_lines:
-            pieces.append((group, group_start, group_end))
+            # 换行要写进字幕本身：ASS 用的是 WrapStyle 2（不自动换行），不写的话两行会挤成一行超出画面。
+            pieces.append(("\n".join(lines), group_start, group_end))
             continue
         total = sum(len(line) for line in lines) or 1
         cursor = group_start
