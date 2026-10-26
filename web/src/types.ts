@@ -8,6 +8,14 @@ export interface VoiceSettings {
   volume: number;
 }
 
+/** 字幕自动边距占画面高度的比例，和后端 models.SUBTITLE_EDGE 一致。 */
+export const SUBTITLE_EDGE: Record<string, number> = { "9:16": 0.09, "16:9": 0.07, "1:1": 0.07 };
+
+export function subtitleMargin(style: { margin: number | null }, aspect: string): number {
+  const height = aspect === "9:16" ? 1920 : 1080;
+  return style.margin ?? Math.round(height * (SUBTITLE_EDGE[aspect] ?? 0.07));
+}
+
 export interface SubtitleStyle {
   enabled: boolean;
   font: string;
@@ -16,7 +24,8 @@ export interface SubtitleStyle {
   outline_color: string;
   outline: number;
   position: "top" | "middle" | "bottom";
-  margin: number;
+  /** 距边缘的距离；null 表示按画面比例自动。 */
+  margin: number | null;
 }
 
 export interface PendingTask {

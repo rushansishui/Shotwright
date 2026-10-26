@@ -107,3 +107,30 @@ def test_suggest_titles_api(client, settings):
     }
     assert result["titles"]["intro"]["subtitle"] == "第八届联赛"
     assert [s["title"] for s in result["shots"]][:2] == ["已有的", "冠军之争"]  # 已有的不覆盖
+
+
+def test_subtitle_margin_is_automatic_by_aspect():
+    from shotwright.core.models import SubtitleStyle
+    from shotwright.pipeline.render import subtitle_margin
+
+    assert SubtitleStyle.model_validate({"margin": 240}).margin is None  # 旧版本的固定默认值改为自动
+    assert SubtitleStyle.model_validate({"margin": 300}).margin == 300
+    landscape = Project(canvas={"aspect": "16:9"})
+    portrait = Project(canvas={"aspect": "9:16"})
+    assert subtitle_margin(landscape) == round(1080 * 0.06) + 24  # 1080 × 7% 比通用安全区还小，以安全区为准
+    assert subtitle_margin(portrait) == 173  # 1920 × 9%
+    portrait.delivery = "douyin"
+    assert subtitle_margin(portrait) == round(1920 * 0.20) + 24  # 平台安全区更大时以安全区为准
+    landscape.subtitle.margin = 150
+    assert subtitle_margin(landscape) == 150  # 手动设置的距离
+    landscape.subtitle.margin = 20
+    assert subtitle_margin(landscape) == round(1080 * 0.06) + 24  # 手动设置也不会低于安全区
+
+
+def test_newlines_in_script_do_not_make_three_line_subtitles():
+    from pathlib import Path
+
+    font = Path(__file__).resolve().parents[1] / "resources" / "fonts" / "NotoSansSC-Bold.ttf"
+    text = "再为自己年轻一次——第九届峦山谷尖莎咀杯，即将开幕\n关于篮球，一半是梦想，一半是生活！"
+    for cue in subs.split_cues(text, 0, 10, font_path=font, size=64, max_width=1650):
+        assert len(cue.text.split("\n")) <= 2

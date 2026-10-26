@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { api } from "../api";
+import { subtitleMargin } from "../types";
 import type { Aspect, ShotRole, SubtitleStyle, VisualMode, VisualPatch } from "../types";
 import { Section, Segmented, Slider } from "./Controls";
 import { providerName, useI18n } from "../i18n";
@@ -39,6 +40,7 @@ export function Editor({ projectId }: { projectId: string }) {
   const footageInput = useRef<HTMLInputElement>(null);
   const [footageBusy, setFootageBusy] = useState(false);
   const [expanding, setExpanding] = useState(false);
+  const [marginDraft, setMarginDraft] = useState<number | undefined>(undefined);
 
   if (!project) {
     return <main className="page">{error ? <p className="hint error">{error}</p> : <p className="muted">{t("common.loading")}</p>}</main>;
@@ -344,6 +346,26 @@ export function Editor({ projectId }: { projectId: string }) {
                   ]}
                 />
               </div>
+              {project.subtitle.position !== "middle" && (
+                <div className="field">
+                  <Slider
+                    id="sub-margin"
+                    label={t("editor.subtitleMargin")}
+                    value={marginDraft ?? subtitleMargin(project.subtitle, project.canvas.aspect)}
+                    min={0}
+                    max={project.canvas.aspect === "9:16" ? 600 : 400}
+                    step={10}
+                    format={(v) => (project.subtitle.margin === null && marginDraft === undefined ? t("editor.subtitleMarginAuto", { n: v }) : `${v}`)}
+                    onInput={setMarginDraft}
+                    onCommit={(margin) => updateSubtitle({ margin }).then(() => setMarginDraft(undefined))}
+                  />
+                  {project.subtitle.margin !== null && (
+                    <button type="button" className="linkish small" onClick={() => updateSubtitle({ margin: null })}>
+                      {t("editor.subtitleMarginReset")}
+                    </button>
+                  )}
+                </div>
+              )}
               <Slider
                 id="sub-size"
                 label={t("editor.size")}

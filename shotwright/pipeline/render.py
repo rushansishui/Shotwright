@@ -26,7 +26,7 @@ from shotwright.config import Settings
 from shotwright.core import platforms
 from shotwright.core.fingerprint import fingerprint
 from shotwright.core.ids import new_id
-from shotwright.core.models import Project, Shot
+from shotwright.core.models import Project, Shot, auto_subtitle_margin
 from shotwright.core.store import ProjectStore, read_json, sha256_file, write_json
 from shotwright.media import beats
 from shotwright.media import subtitles as subs
@@ -97,6 +97,15 @@ def safe_margin(project: Project, position: str, margin: int) -> int:
     if position == "bottom":
         return max(margin, bottom + SAFE_GAP)
     return margin
+
+
+def subtitle_margin(project: Project) -> int:
+    """字幕实际的边距：没设置时按画面比例自动，再挪进交付平台的安全区。"""
+    style = project.subtitle
+    margin = style.margin
+    if margin is None:
+        margin = auto_subtitle_margin(project.canvas.aspect, project.canvas.height)
+    return safe_margin(project, style.position, margin)
 
 
 def shot_title_margin(project: Project) -> int:
@@ -637,7 +646,7 @@ class Renderer:
             return assembly
 
         # 字幕和叠加文字挪进交付平台的安全区，不被平台界面挡住。
-        style = style.model_copy(update={"margin": safe_margin(project, style.position, style.margin)})
+        style = style.model_copy(update={"margin": subtitle_margin(project)})
         text_overlays = [
             item.model_copy(update={"margin": safe_margin(project, item.position, item.margin)})
             for item in text_overlays

@@ -3,6 +3,7 @@ import { api, assetUrl, estimateSeconds, plainText, renderUrl } from "../api";
 import { useI18n } from "../i18n";
 import { Segmented } from "./Controls";
 import type { MessageKey } from "../messages";
+import { subtitleMargin } from "../types";
 import type { CheckIssue, CostEstimate, Job, PlatformInfo, Project, RenderResult } from "../types";
 
 function Preview({ project, shotIndex, platform }: { project: Project; shotIndex: number; platform?: PlatformInfo }) {
@@ -26,10 +27,11 @@ function Preview({ project, shotIndex, platform }: { project: Project; shotIndex
   const canvasHeight = project.canvas.aspect === "9:16" ? 1920 : 1080;
   const safe = platform && platform.id !== "general" ? platform.safe : null;
   // 和后端 render.safe_margin 一致：字幕挪进安全区，再留 24 像素。
+  const baseMargin = subtitleMargin(style, project.canvas.aspect);
   const margin =
     safe && style.position !== "middle"
-      ? Math.max(style.margin, (style.position === "top" ? safe.top : safe.bottom) * canvasHeight + 24)
-      : style.margin;
+      ? Math.max(baseMargin, (style.position === "top" ? safe.top : safe.bottom) * canvasHeight + 24)
+      : baseMargin;
 
   return (
     <div ref={frame} className={`preview a${project.canvas.aspect.replace(":", "-")}`} style={{ background: shot?.visual.color ?? "#1F2937" }}>

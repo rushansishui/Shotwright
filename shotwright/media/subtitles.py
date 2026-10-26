@@ -16,7 +16,8 @@ from PIL import ImageFont
 
 from shotwright.core.models import SubtitleStyle
 
-_BREAK_AFTER = re.compile(r"(?<=[。！？!?；;，,、：:…])|(?<=[.!?])\s+")
+_BREAK_AFTER = re.compile(r"(?<=[。！？!?；;，,、：:…])|(?<=[.!?])\s+|\s*\n\s*")
+"""短语分界：句读标点之后、英文句末的空格、文案里的换行（换行由字幕自己按宽度重排）。"""
 _CJK_CHAR = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uff00-\uffef\u3000-\u303f]")
 _TRAILING_PUNCT = "，,、；;：:。"
 

@@ -129,6 +129,14 @@ class VoiceSettings(_Model):
     volume: float = Field(1.0, ge=0.0, le=2.0)
 
 
+SUBTITLE_EDGE = {"9:16": 0.09, "16:9": 0.07, "1:1": 0.07}
+"""字幕自动边距占画面高度的比例：竖屏下方常有平台按钮，留得多一点。"""
+
+
+def auto_subtitle_margin(aspect: str, height: int) -> int:
+    return round(height * SUBTITLE_EDGE.get(aspect, 0.07))
+
+
 class SubtitleStyle(_Model):
     enabled: bool = True
     font: str = "NotoSansSC-Bold.ttf"
@@ -137,8 +145,14 @@ class SubtitleStyle(_Model):
     outline_color: str = "#000000"
     outline: float = Field(3.0, ge=0.0, le=12.0)
     position: Literal["top", "middle", "bottom"] = "bottom"
-    margin: int = Field(240, ge=0, le=1000)
-    """距画面上 / 下边缘的距离（像素，按画布分辨率计）。"""
+    margin: int | None = Field(None, ge=0, le=1000)
+    """距画面上 / 下边缘的距离（像素，按画布分辨率计）；为空时按画面比例自动（见 :func:`auto_subtitle_margin`）。"""
+
+    @field_validator("margin", mode="before")
+    @classmethod
+    def _migrate_margin(cls, value):
+        # 240 是旧版本的固定默认值：在横屏里会让字幕离底边太远，旧项目改为自动。
+        return None if value == 240 else value
 
     @field_validator("color", "outline_color")
     @classmethod
