@@ -297,6 +297,8 @@ def to_ass(
     overlays: list | None = None,
     margin_l: int = 60,
     margin_r: int = 60,
+    extra_styles: list[str] | None = None,
+    extra_events: list[str] | None = None,
 ) -> str:
     """生成 ASS。``overlays`` 是画面上方的文字叠加（卖点、价格、购买引导）。
 
@@ -331,6 +333,8 @@ ScaledBorderAndShadow: yes
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Default,{family},{style.size},{_ass_color(style.color)},&H000000FF,{_ass_color(style.outline_color)},&H64000000,0,0,0,0,100,100,0,0,1,{style.outline:g},0,{alignment},{margin_l},{margin_r},{style.margin},1
 """
+    overlay_styles += extra_styles or []
+    overlay_events += extra_events or []
     if overlay_styles:
         header += "\n".join(overlay_styles) + "\n"
     header += """
@@ -349,3 +353,101 @@ def to_srt(cues: list[Cue]) -> str:
         f"{i}\n{_srt_time(c.start)} --> {_srt_time(c.end)}\n{c.text}\n" for i, c in enumerate(cues, start=1)
     ]
     return "\n".join(blocks)
+
+
+def _alpha(opacity: float) -> str:
+    """ASS 的透明度：00 不透明，FF 全透明。"""
+    return f"{round((1 - max(0.0, min(1.0, opacity))) * 255):02X}"
+
+
+def title_layers(
+    titles,
+    *,
+    width: int,
+    height: int,
+    family: str,
+    headline_margin: int,
+    shot_margin: int,
+    margin_l: int,
+    margin_r: int,
+    fallback_title: str = "",
+    shot_titles: list[tuple[str, float, float]] | None = None,
+) -> tuple[list[str], list[str]]:
+    """标题的 ASS 样式和事件：常驻大标题、片头标题卡、镜头小标题。
+
+    ``shot_titles`` 是每个镜头的（小标题, 开始秒, 结束秒）；边距已按安全区换算好。
+    片头标题卡开着时，常驻大标题在片头结束后才出现，避免重叠。
+    """
+    styles: list[str] = []
+    events: list[str] = []
+    forever = _ass_time(1e6)
+    headline = titles.headline
+    intro = titles.intro
+    intro_text = (intro.text or headline.text or fallback_title).strip() if intro.enabled else ""
+    intro_end = intro.duration if intro_text else 0.0
+
+    if headline.enabled and headline.text.strip():
+        boxed = headline.background_opacity > 0
+        border_style = 3 if boxed else 1
+        box_colour = (
+            f"&H{_alpha(headline.background_opacity)}{_ass_color(headline.background)[4:]}"
+            if boxed
+            else _ass_color(headline.outline_color)
+        )
+        outline = 14 if boxed else max(2, headline.size // 14)
+        styles.append(
+            f"Style: Headline,{family},{headline.size},{_ass_color(headline.color)},&H000000FF,"
+            f"{box_colour},&H64000000,1,0,0,0,100,100,0,0,{border_style},{outline},0,8,"
+            f"{margin_l},{margin_r},{headline_margin},1"
+        )
+        events.append(
+            f"Dialogue: 3,{_ass_time(intro_end)},{forever},Headline,,0,0,0,,{_ass_escape(headline.text.strip())}"
+        )
+
+    shot = titles.shot
+    shot_lines = [(text.strip(), start, end) for text, start, end in shot_titles or [] if text.strip()]
+    if shot_lines:
+        alignment = {"bottom": 2, "middle": 5, "top": 8}[shot.position]
+        styles.append(
+            f"Style: ShotTitle,{family},{shot.size},{_ass_color(shot.color)},&H000000FF,"
+            f"{_ass_color(shot.outline_color)},&H64000000,1,0,0,0,100,100,0,0,1,{max(2, shot.size // 14)},0,"
+            f"{alignment},{margin_l},{margin_r},{shot_margin},1"
+        )
+        for text, start, end in shot_lines:
+            begin = max(start, intro_end)
+            if end - begin < 0.2:
+                continue
+            events.append(
+                f"Dialogue: 2,{_ass_time(begin)},{_ass_time(end)},ShotTitle,,0,0,0,,{{\\fad(150,150)}}{_ass_escape(text)}"
+            )
+
+    if intro_text:
+        fade_in, fade_out = 300, 400
+        end = _ass_time(intro.duration)
+        styles.append(
+            f"Style: Intro,{family},{intro.size},{_ass_color(intro.color)},&H000000FF,&H00000000,&H64000000,"
+            f"1,0,0,0,100,100,0,0,1,{max(2, intro.size // 18)},0,5,{margin_l},{margin_r},0,1"
+        )
+        styles.append(
+            f"Style: IntroSub,{family},{max(24, intro.size * 45 // 100)},{_ass_color(intro.color)},&H000000FF,"
+            f"&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,0,5,{margin_l},{margin_r},0,1"
+        )
+        if intro.dim > 0:
+            # 全屏半透明黑色矩形压暗画面，让标题更醒目。
+            events.append(
+                f"Dialogue: 4,0:00:00.00,{end},Intro,,0,0,0,,"
+                f"{{\\an7\\pos(0,0)\\p1\\bord0\\shad0\\1c&H000000&\\1a&H{_alpha(intro.dim)}&"
+                f"\\fad({fade_in},{fade_out})}}m 0 0 l {width} 0 {width} {height} 0 {height}{{\\p0}}"
+            )
+        lift = intro.size // 2 if intro.subtitle.strip() else 0
+        events.append(
+            f"Dialogue: 5,0:00:00.00,{end},Intro,,0,0,0,,"
+            f"{{\\an5\\pos({width // 2},{height // 2 - lift})\\fad({fade_in},{fade_out})}}{_ass_escape(intro_text)}"
+        )
+        if intro.subtitle.strip():
+            events.append(
+                f"Dialogue: 5,0:00:00.00,{end},IntroSub,,0,0,0,,"
+                f"{{\\an5\\pos({width // 2},{height // 2 + intro.size // 2 + intro.size * 45 // 200})"
+                f"\\fad({fade_in},{fade_out})}}{_ass_escape(intro.subtitle.strip())}"
+            )
+    return styles, events

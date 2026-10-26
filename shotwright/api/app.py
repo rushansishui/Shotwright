@@ -40,6 +40,7 @@ from shotwright.api.schemas import (
     ReorderShots,
     RewriteShot,
     SplitShot,
+    SuggestTitles,
     UpdateProject,
     UpdateShot,
 )
@@ -65,6 +66,7 @@ from shotwright.services import (
     visuals,
 )
 from shotwright.services import cost as cost_service
+from shotwright.services import titles as titles_service
 from shotwright.services.duplicate import duplicate_project
 
 log = logging.getLogger("shotwright.api")
@@ -406,6 +408,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 "subject",
                 "video_type",
                 "look",
+                "titles",
                 "chain_frames",
                 "target_seconds",
                 "canvas",
@@ -441,6 +444,33 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     raise ValueError("参考素材不存在")
                 if asset.kind != "image":
                     raise ValueError("参考素材必须是图片")
+
+        return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/titles/suggest")
+    def suggest_titles(project_id: str, body: SuggestTitles | None = None):
+        """AI 生成标题：候选大标题存进 titles.candidates，可选地为镜头写小标题。不生成画面、不收费。"""
+        body = body or SuggestTitles()
+        project = store.load(_id(project_id))
+        llm = registry.create("llm", None, settings)
+        headlines, subtitle, shot_titles = titles_service.suggest_titles(llm, project)  # type: ignore[arg-type]
+
+        def change(latest: Project) -> None:
+            latest.titles.candidates = headlines
+            if subtitle and not latest.titles.intro.subtitle:
+                latest.titles.intro.subtitle = subtitle
+            if body.apply_headline:
+                latest.titles.headline.text = headlines[0]
+                latest.titles.headline.enabled = True
+            if body.shot_titles:
+                ids = [shot.id for shot in project.shots]
+                for index, title in shot_titles.items():
+                    try:
+                        target = latest.shot(ids[index - 1])
+                    except (KeyError, IndexError):
+                        continue
+                    if not target.title.strip():
+                        target.title = title
 
         return _mutate(project_id, change)
 
@@ -533,6 +563,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 shot.text = body.text
             if body.role is not None:
                 shot.role = body.role
+            if body.title is not None:
+                shot.title = body.title.strip()
             if body.clear_duration:
                 shot.duration = None
             elif body.duration is not None:

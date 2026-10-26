@@ -427,12 +427,19 @@ class Shot(_Model):
     duration: float | None = Field(None, gt=0, le=120)
     """None 表示跟随配音时长。"""
     visual: ShotVisual = Field(default_factory=ShotVisual)
+    title: str = ""
+    """镜头小标题：这个镜头出现期间显示；为空时不显示。"""
     role: ShotRole | None = None
     """镜头类型；写分镜时按视频类型的叙事结构给出，用来选默认的画面来源。"""
     voice: VoiceSettings | None = None
     """单独覆盖这个镜头的配音设置；为空时用项目设置。"""
     status: ShotStatus = "draft"
     error: str | None = None
+
+    @field_validator("title")
+    @classmethod
+    def _check_title(cls, value: str) -> str:
+        return value[:60]
 
     @field_validator("id")
     @classmethod
@@ -489,6 +496,89 @@ class ReferenceAsset(_Model):
         return value[:100]
 
 
+class HeadlineStyle(_Model):
+    """画面顶部常驻的大标题。"""
+
+    enabled: bool = False
+    text: str = ""
+    """标题文字；可以用换行分成两行。"""
+    size: int = Field(76, ge=16, le=200)
+    color: str = "#FFFFFF"
+    outline_color: str = "#000000"
+    background: str = "#000000"
+    """底色；和 ``background_opacity`` 一起决定标题底下的色块。"""
+    background_opacity: float = Field(0.0, ge=0.0, le=1.0)
+    """底色不透明度，0 表示不加底色只描边。"""
+    margin: int = Field(160, ge=0, le=1000)
+    """距画面顶部的距离（像素）；交付平台的安全区更大时以安全区为准。"""
+
+    @field_validator("text")
+    @classmethod
+    def _check_text(cls, value: str) -> str:
+        return value[:80]
+
+    @field_validator("color", "outline_color", "background")
+    @classmethod
+    def _check_color(cls, value: str) -> str:
+        if not _HEX_COLOR.fullmatch(value):
+            raise ValueError("颜色必须是 #RRGGBB 格式")
+        return value.upper()
+
+
+class IntroCard(_Model):
+    """片头标题卡：开头几秒压暗画面、居中显示大标题和副标题，淡入淡出后进入正片。"""
+
+    enabled: bool = False
+    text: str = ""
+    """主标题；为空时用常驻大标题或项目标题。"""
+    subtitle: str = ""
+    duration: float = Field(2.5, ge=1.0, le=8.0)
+    size: int = Field(110, ge=24, le=240)
+    color: str = "#FFFFFF"
+    dim: float = Field(0.55, ge=0.0, le=1.0)
+    """画面压暗程度，0 表示不压暗。"""
+
+    @field_validator("text", "subtitle")
+    @classmethod
+    def _check_text(cls, value: str) -> str:
+        return value[:80]
+
+    @field_validator("color")
+    @classmethod
+    def _check_color(cls, value: str) -> str:
+        if not _HEX_COLOR.fullmatch(value):
+            raise ValueError("颜色必须是 #RRGGBB 格式")
+        return value.upper()
+
+
+class ShotTitleStyle(_Model):
+    """每个镜头小标题的样式（文字写在各镜头的 ``title`` 上）。"""
+
+    size: int = Field(56, ge=16, le=200)
+    color: str = "#FFE45C"
+    outline_color: str = "#000000"
+    position: OverlayPosition = "top"
+    margin: int = Field(330, ge=0, le=1500)
+    """距所在边缘的距离（像素）；默认放在常驻大标题下面。"""
+
+    @field_validator("color", "outline_color")
+    @classmethod
+    def _check_color(cls, value: str) -> str:
+        if not _HEX_COLOR.fullmatch(value):
+            raise ValueError("颜色必须是 #RRGGBB 格式")
+        return value.upper()
+
+
+class TitleSettings(_Model):
+    """标题：常驻大标题、片头标题卡、镜头小标题的样式。"""
+
+    headline: HeadlineStyle = Field(default_factory=HeadlineStyle)
+    intro: IntroCard = Field(default_factory=IntroCard)
+    shot: ShotTitleStyle = Field(default_factory=ShotTitleStyle)
+    candidates: list[str] = Field(default_factory=list, max_length=10)
+    """AI 给出的候选标题，界面上点一下就能用。"""
+
+
 class TransitionSettings(_Model):
     """镜头之间的转场。"""
 
@@ -542,6 +632,8 @@ class Project(_Model):
     """视频诉求：用户想要的内容。最多 4096 字节（UTF-8）。"""
     video_type: VideoType | None = None
     """视频类型；为空表示没选（旧项目或只按文案拆镜头）。"""
+    titles: TitleSettings = Field(default_factory=TitleSettings)
+    """标题：画面顶部常驻大标题、片头标题卡、镜头小标题样式。"""
     look: Look = Field(default_factory=Look)
     """全片设定：主体代号与外观、场景、视觉风格、禁止项。"""
     chain_frames: bool = False

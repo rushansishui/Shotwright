@@ -13,6 +13,7 @@ import { LookSection } from "./editor/LookSection";
 import { projectNeedsExpansion } from "../prompts";
 import { ReferencesSection } from "./editor/ReferencesSection";
 import { OverlaySection } from "./editor/OverlaySection";
+import { TitleSection } from "./editor/TitleSection";
 
 export function Editor({ projectId }: { projectId: string }) {
   const {
@@ -199,7 +200,7 @@ export function Editor({ projectId }: { projectId: string }) {
                 aiImage={aiImage}
                 sourceModes={sourceModes}
                 onFocus={() => setActiveIndex(index)}
-                onUpdate={(body: { text?: string; role?: ShotRole; visual?: VisualPatch }) => run(() => api.updateShot(id, shot.id, body))}
+                onUpdate={(body: { text?: string; title?: string; role?: ShotRole; visual?: VisualPatch }) => run(() => api.updateShot(id, shot.id, body))}
                 onCandidates={(confirmCharge, patch, editSelected, options) =>
                   run(async () => {
                     // 还没失焦保存的提示词先存好，再生成，避免用旧提示词花钱。
@@ -374,6 +375,8 @@ export function Editor({ projectId }: { projectId: string }) {
             </div>
           )}
         </Section>
+
+        <TitleSection project={project} step={5} canSuggest={!!llm} run={run} />
 
         <OverlaySection project={project} run={run} />
 

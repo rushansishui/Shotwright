@@ -19,6 +19,7 @@ from shotwright.core.models import (
     SfxSettings,
     ShotRole,
     SubtitleStyle,
+    TitleSettings,
     TransitionSettings,
     VideoType,
     VisualMode,
@@ -64,6 +65,8 @@ class UpdateProject(_Body):
     video_type: VideoType | None = None
     look: Look | None = None
     """全片设定；整体替换。"""
+    titles: TitleSettings | None = None
+    """标题：常驻大标题、片头标题卡、镜头小标题样式；整体替换。"""
     chain_frames: bool | None = None
     budget: float | None = Field(None, ge=0.0, le=1_000_000)
     """项目费用上限（元）；显式传 null 表示不限，不传则不改。"""
@@ -126,6 +129,8 @@ class UpdateShot(_Body):
     duration: float | None = Field(None, gt=0, le=120)
     clear_duration: bool = False
     visual: VisualPatch | None = None
+    title: str | None = Field(None, max_length=60)
+    """镜头小标题；传空字符串清除。"""
     role: ShotRole | None = None
     voice: VoiceSettings | None = None
     clear_voice: bool = False
@@ -167,6 +172,13 @@ class CandidatesRequest(ChargeConsent):
 class AmbienceSearch(_Body):
     query: str = Field("", max_length=200)
     """英文检索词，例如 rain ambience；为空时按第一个镜头的检索词自动生成。"""
+
+
+class SuggestTitles(_Body):
+    shot_titles: bool = True
+    """同时为还没有小标题的镜头写小标题（已有的不覆盖）。"""
+    apply_headline: bool = False
+    """直接把第一条候选设为常驻大标题并打开。"""
 
 
 class DuplicateProject(_Body):

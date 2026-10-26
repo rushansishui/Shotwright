@@ -69,7 +69,7 @@ export function ShotCard(props: {
   /** 服务 id → 画面来源，用来按当前来源筛选候选素材。 */
   sourceModes: Record<string, VisualMode>;
   onFocus: () => void;
-  onUpdate: (body: { text?: string; role?: ShotRole; visual?: VisualPatch }) => void;
+  onUpdate: (body: { text?: string; title?: string; role?: ShotRole; visual?: VisualPatch }) => void;
   /** ``patch`` 是还没失焦保存的提示词，先存好再生成。 */
   onCandidates: (confirmCharge?: boolean, patch?: VisualPatch, editSelected?: boolean, options?: GenerateOptions) => void;
   /** 配置了大模型时可以让 AI 改写这个镜头的画面。 */
@@ -88,6 +88,8 @@ export function ShotCard(props: {
   const [terms, setTerms] = useState(visual.terms.join(", "));
   const [prompt, setPrompt] = useState(visual.prompt);
   const [link, setLink] = useState(visual.link ?? "");
+  const [shotTitle, setShotTitle] = useState(shot.title ?? "");
+  useEffect(() => setShotTitle(shot.title ?? ""), [shot.title]);
   const [still, setStill] = useState(visual.image_prompt ?? "");
   const [count, setCount] = useState(1);
   const [instruction, setInstruction] = useState("");
@@ -267,6 +269,15 @@ export function ShotCard(props: {
           placeholder={t("shot.textPlaceholder")}
           onChange={(e) => setText(e.target.value)}
           onBlur={() => text !== shot.text && props.onUpdate({ text })}
+        />
+        <input
+          className="input shot-title"
+          aria-label={t("shot.titleLabel")}
+          placeholder={t("shot.titlePlaceholder")}
+          value={shotTitle}
+          maxLength={60}
+          onChange={(e) => setShotTitle(e.target.value)}
+          onBlur={() => shotTitle !== (shot.title ?? "") && props.onUpdate({ title: shotTitle })}
         />
 
         <div className="shot-visual-row">

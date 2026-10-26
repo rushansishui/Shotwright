@@ -1341,3 +1341,52 @@ input[type="color"] {
   min-width: 0;
   border-top: none !important;
 }
+
+/* ---- 标题 ---- */
+.title-candidates {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.chip {
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.chip.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.input.shot-title {
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.preview-title {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  padding: 0 7%;
+  text-align: center;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: pre-line;
+  pointer-events: none;
+}
+
+.preview-title span {
+  padding: 0 0.2em;
+  border-radius: 4px;
+}

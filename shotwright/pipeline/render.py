@@ -99,6 +99,18 @@ def safe_margin(project: Project, position: str, margin: int) -> int:
     return margin
 
 
+def shot_title_margin(project: Project) -> int:
+    """镜头小标题的边距：挪进安全区；和常驻大标题都在顶部时放到大标题下面。"""
+    style = project.titles.shot
+    margin = safe_margin(project, style.position, style.margin)
+    headline = project.titles.headline
+    if style.position == "top" and headline.enabled and headline.text.strip():
+        lines = headline.text.strip().count("\n") + 1
+        below = safe_margin(project, "top", headline.margin) + round(headline.size * 1.35 * lines) + 24
+        margin = max(margin, below)
+    return margin
+
+
 def _overlay_position(item, project: Project) -> tuple[str, str]:
     """图片叠加的位置表达式（ffmpeg overlay 的 x / y）。"""
     margin = safe_margin(project, item.position, item.margin)
@@ -217,7 +229,12 @@ class Renderer:
         self._report(0.85, "合成字幕与背景音乐")
         cues = self._cues(project, timings)
         cuts = [timing.start for timing in timings[1:]]
-        final = self._final(project, assembly_fp, assembly, cues, cuts)
+        shot_titles = [
+            (shot.title, timing.start, timing.start + timing.duration)
+            for shot, timing in zip(project.shots, timings, strict=True)
+            if shot.title.strip()
+        ]
+        final = self._final(project, assembly_fp, assembly, cues, cuts, shot_titles)
 
         output_dir = self.store.render_dir(project.id, render_id)
         video_path = output_dir / "video.mp4"
@@ -465,7 +482,9 @@ class Renderer:
         path = (fonts_dir / project.subtitle.font).resolve()
         if path.parent != fonts_dir or not path.is_file():
             raise RenderError(f"找不到字幕字体：{project.subtitle.font}")
-        text = "".join(speech.plain(shot.text) for shot in project.shots)
+        titles = project.titles
+        text = "".join(speech.plain(shot.text) + shot.title for shot in project.shots)
+        text += titles.headline.text + titles.intro.text + titles.intro.subtitle + project.title
         chosen, missing = subs.pick_font(path, fonts_dir, text)
         if chosen != path:
             self.warnings.append(f"字幕字体 {path.name} 缺少部分文字，已改用 {chosen.name}")
@@ -566,9 +585,21 @@ class Renderer:
         return path
 
     def _final(
-        self, project: Project, assembly_fp: str, assembly: Path, cues: list[subs.Cue], cuts: list[float] | None = None
+        self,
+        project: Project,
+        assembly_fp: str,
+        assembly: Path,
+        cues: list[subs.Cue],
+        cuts: list[float] | None = None,
+        shot_titles: list[tuple[str, float, float]] | None = None,
     ) -> Path:
         cuts = cuts or []
+        titles = project.titles
+        has_titles = bool(
+            shot_titles
+            or (titles.headline.enabled and titles.headline.text.strip())
+            or (titles.intro.enabled and (titles.intro.text or titles.headline.text or project.title).strip())
+        )
         style = project.subtitle
         overlays = [o for o in project.overlays if o.enabled and (o.text.strip() or o.image)]
         # 文字叠加走 ASS；图片叠加（Logo）ASS 渲染不了，用 ffmpeg overlay 滤镜。
@@ -597,6 +628,7 @@ class Renderer:
             and not text_overlays
             and not image_overlays
             and not project.ai_badge
+            and not has_titles
             and project.loudness is None
             and not grade
             and not (self.quality == "final" and project.delivery != platforms.DEFAULT_PLATFORM)
@@ -612,7 +644,7 @@ class Renderer:
         ]
         margin_l, margin_r = side_margins(project)
         reencode = self.quality == "final" and project.delivery != platforms.DEFAULT_PLATFORM
-        needs_ass = bool(cues or text_overlays or project.ai_badge)
+        needs_ass = bool(cues or text_overlays or project.ai_badge or has_titles)
         font = self._font_path(project) if needs_ass else None
         fp = fingerprint(
             "final",
@@ -630,6 +662,7 @@ class Renderer:
             AUDIO_MIX,
             (grade, GRADE_VERSION) if grade else None,
             project.delivery if project.delivery != platforms.DEFAULT_PLATFORM else None,
+            (titles.model_dump(exclude={"candidates"}), shot_titles, project.title) if has_titles else None,
             (project.sfx.model_dump(), ambience.sha256 if ambience else None, cuts if whoosh else None, WHOOSH_VERSION)
             if ambience or whoosh
             else None,
@@ -654,6 +687,21 @@ class Renderer:
                     step += 1
                     video_out = f"v{step}"
 
+                title_styles: list[str] = []
+                title_events: list[str] = []
+                if has_titles and font is not None:
+                    title_styles, title_events = subs.title_layers(
+                        titles,
+                        width=project.canvas.width,
+                        height=project.canvas.height,
+                        family=subs.font_family(font),
+                        headline_margin=safe_margin(project, "top", titles.headline.margin),
+                        shot_margin=shot_title_margin(project),
+                        margin_l=margin_l,
+                        margin_r=margin_r,
+                        fallback_title=project.title,
+                        shot_titles=shot_titles,
+                    )
                 if needs_ass and font is not None:
                     (work / "fonts").mkdir()
                     shutil.copyfile(font, work / "fonts" / font.name)
@@ -668,6 +716,8 @@ class Renderer:
                             overlays=text_overlays,
                             margin_l=margin_l,
                             margin_r=margin_r,
+                            extra_styles=title_styles,
+                            extra_events=title_events,
                         ),
                         encoding="utf-8",
                     )

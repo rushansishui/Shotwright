@@ -67,6 +67,22 @@ export interface Take {
   created_at: number;
 }
 
+export interface TitleSettings {
+  headline: {
+    enabled: boolean;
+    text: string;
+    size: number;
+    color: string;
+    outline_color: string;
+    background: string;
+    background_opacity: number;
+    margin: number;
+  };
+  intro: { enabled: boolean; text: string; subtitle: string; duration: number; size: number; color: string; dim: number };
+  shot: { size: number; color: string; outline_color: string; position: OverlayPosition; margin: number };
+  candidates: string[];
+}
+
 export interface ShotVisual {
   mode: VisualMode;
   terms: string[];
@@ -106,6 +122,8 @@ export interface Shot {
   text: string;
   duration: number | null;
   visual: ShotVisual;
+  /** 镜头小标题：这个镜头出现期间显示。 */
+  title?: string;
   /** 镜头类型：开场钩子、产品亮相、使用演示、场景氛围、人物、原理示意、口播、结尾引导。 */
   role?: ShotRole | null;
   voice: VoiceSettings | null;
@@ -173,6 +191,8 @@ export interface Project {
   subject: string;
   video_type?: VideoType | null;
   look?: Look;
+  /** 标题：常驻大标题、片头标题卡、镜头小标题样式。 */
+  titles?: TitleSettings;
   /** 首尾帧衔接：上一个 AI 镜头的最后一帧作为下一个镜头的首帧。 */
   chain_frames?: boolean;
   language: string;

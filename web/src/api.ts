@@ -93,11 +93,14 @@ export const api = {
     body: Partial<
       Pick<
         Project,
-        "title" | "video_type" | "look" | "chain_frames" | "budget" | "sfx" | "delivery" | "language" | "canvas" | "voice" | "subtitle" | "bgm" | "loudness" | "references" | "overlays" | "transition" | "ai_badge"
+        "title" | "video_type" | "look" | "titles" | "chain_frames" | "budget" | "sfx" | "delivery" | "language" | "canvas" | "voice" | "subtitle" | "bgm" | "loudness" | "references" | "overlays" | "transition" | "ai_badge"
       >
     >,
   ) =>
     request<Project>(`/projects/${id}`, json("PATCH", body)),
+  /** AI 生成标题：候选大标题、片头副标题、镜头小标题（已有的不覆盖）。 */
+  suggestTitles: (id: string, options: { shot_titles?: boolean; apply_headline?: boolean } = {}) =>
+    request<Project>(`/projects/${id}/titles/suggest`, json("POST", options)),
   /** 复制成新项目继续编辑（素材、设置、镜头和渲染缓存一起复制）。 */
   duplicateProject: (id: string, title = "") => request<Project>(`/projects/${id}/duplicate`, json("POST", { title })),
   deleteProject: (id: string) => request<void>(`/projects/${id}`, json("DELETE")),
@@ -109,7 +112,7 @@ export const api = {
   updateShot: (
     id: string,
     shotId: string,
-    body: { text?: string; duration?: number; clear_duration?: boolean; role?: ShotRole; visual?: VisualPatch },
+    body: { text?: string; title?: string; duration?: number; clear_duration?: boolean; role?: ShotRole; visual?: VisualPatch },
   ) => request<Project>(`/projects/${id}/shots/${shotId}`, json("PATCH", body)),
   deleteShot: (id: string, shotId: string) => request<Project>(`/projects/${id}/shots/${shotId}`, json("DELETE")),
   /** 收费的 AI 生成必须传 confirmCharge=true（用户已确认），否则后端返回 402。 */

@@ -57,6 +57,64 @@ function Preview({ project, shotIndex, platform }: { project: Project; shotIndex
           </span>
         </div>
       )}
+      {(() => {
+        const headline = project.titles?.headline;
+        const shotStyle = project.titles?.shot;
+        const showHeadline = !!headline?.enabled && !!headline.text.trim();
+        const top = (m: number) => (safe ? Math.max(m, safe.top * canvasHeight + 24) : m);
+        const headlineTop = headline ? top(headline.margin) : 0;
+        const lines = headline ? headline.text.trim().split("\n").length : 0;
+        let shotMargin = shotStyle ? (shotStyle.position === "top" ? top(shotStyle.margin) : shotStyle.margin) : 0;
+        if (shotStyle?.position === "top" && showHeadline && headline) {
+          shotMargin = Math.max(shotMargin, headlineTop + headline.size * 1.35 * lines + 24);
+        }
+        const outline = (size: number, color: string) => `${Math.max(0.5, (size / 14) * scale)}px ${color}`;
+        return (
+          <>
+            {showHeadline && headline && (
+              <div className="preview-title" style={{ top: headlineTop * scale }}>
+                <span
+                  style={{
+                    fontSize: Math.max(10, headline.size * scale),
+                    color: headline.color,
+                    background:
+                      headline.background_opacity > 0
+                        ? `${headline.background}${Math.round(headline.background_opacity * 255).toString(16).padStart(2, "0")}`
+                        : undefined,
+                    WebkitTextStroke: headline.background_opacity > 0 ? undefined : outline(headline.size, headline.outline_color),
+                    paintOrder: "stroke fill",
+                  }}
+                >
+                  {headline.text}
+                </span>
+              </div>
+            )}
+            {shot?.title?.trim() && shotStyle && (
+              <div
+                className="preview-title"
+                style={
+                  shotStyle.position === "top"
+                    ? { top: shotMargin * scale }
+                    : shotStyle.position === "bottom"
+                      ? { bottom: shotMargin * scale }
+                      : { top: "50%", transform: "translateY(-50%)" }
+                }
+              >
+                <span
+                  style={{
+                    fontSize: Math.max(9, shotStyle.size * scale),
+                    color: shotStyle.color,
+                    WebkitTextStroke: outline(shotStyle.size, shotStyle.outline_color),
+                    paintOrder: "stroke fill",
+                  }}
+                >
+                  {shot.title}
+                </span>
+              </div>
+            )}
+          </>
+        );
+      })()}
       {safe && (
         <div
           className="safe-area"
