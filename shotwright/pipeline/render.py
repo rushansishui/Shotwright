@@ -29,6 +29,7 @@ from shotwright.core.ids import new_id
 from shotwright.core.models import Project, Shot, auto_subtitle_margin
 from shotwright.core.store import ProjectStore, read_json, sha256_file, write_json
 from shotwright.media import beats
+from shotwright.media import fonts as font_lib
 from shotwright.media import subtitles as subs
 from shotwright.media.ffmpeg import (
     LOCAL_PROTOCOLS,
@@ -154,7 +155,7 @@ class Renderer:
         self._cancel = cancel or threading.Event()
         self.stages: list[StageRecord] = []
         self.warnings: list[str] = []
-        self._font: Path | None = None
+        self._faces: dict[str, font_lib.FontFace] | None = None
 
     # ---- 工具 ---------------------------------------------------------------
 
@@ -483,34 +484,70 @@ class Renderer:
             cancel=self._cancel,
         )
 
-    def _font_path(self, project: Project) -> Path:
-        """字幕字体；缺字时（例如中文字体显示韩文）自动换成能显示的内置字体并提示。"""
-        if self._font is not None:
-            return self._font
-        fonts_dir = self.settings.fonts_dir.resolve()
-        path = (fonts_dir / project.subtitle.font).resolve()
-        if path.parent != fonts_dir or not path.is_file():
-            raise RenderError(f"找不到字幕字体：{project.subtitle.font}")
+    def _text_faces(self, project: Project) -> dict[str, font_lib.FontFace]:
+        """字幕和三种标题各自用的字体文件（已按「加粗」挑好字重）。
+
+        标题没选字体时跟随字幕字体；字体缺字时（例如中文字体显示韩文）换成能显示的内置字体并提示。
+        """
+        if self._faces is not None:
+            return self._faces
         titles = project.titles
-        text = "".join(speech.plain(shot.text) + shot.title for shot in project.shots)
-        text += titles.headline.text + titles.intro.text + titles.intro.subtitle + project.title
-        chosen, missing = subs.pick_font(path, fonts_dir, text)
-        if chosen != path:
-            self.warnings.append(f"字幕字体 {path.name} 缺少部分文字，已改用 {chosen.name}")
-        if missing:
-            self.warnings.append(
-                f"字幕里有字体无法显示的文字：{missing[:20]}，请在 resources/fonts 中加入支持该语言的字体"
-            )
-        self._font = chosen
-        return chosen
+        subtitle_font = font_lib.find(self.settings, project.subtitle.font)
+        if subtitle_font is None:
+            raise RenderError(f"找不到字幕字体：{project.subtitle.font}")
+        script = "".join(speech.plain(shot.text) for shot in project.shots)
+        texts = {
+            "subtitle": (project.subtitle, script),
+            "headline": (titles.headline, titles.headline.text),
+            "intro": (titles.intro, titles.intro.text + titles.intro.subtitle + titles.headline.text + project.title),
+            "shot": (titles.shot, "".join(shot.title for shot in project.shots)),
+        }
+        fonts_dir = self.settings.fonts_dir.resolve()
+        faces: dict[str, font_lib.FontFace] = {}
+        for kind, (style, text) in texts.items():
+            face = subtitle_font
+            if kind != "subtitle" and style.font:
+                face = font_lib.find(self.settings, style.font) or subtitle_font
+                if face is subtitle_font:
+                    self.warnings.append(f"找不到标题字体 {style.font}，已改用字幕字体")
+            face = font_lib.pick_weight(self.settings, face, style.bold)
+            if text.strip():
+                chosen, missing = subs.pick_font(face.path, fonts_dir, text)
+                if chosen != face.path:
+                    fallback = font_lib.find(self.settings, chosen.name)
+                    if fallback is not None:
+                        self.warnings.append(f"字体 {face.file} 缺少部分文字，已改用 {chosen.name}")
+                        face = font_lib.pick_weight(self.settings, fallback, style.bold)
+                if missing:
+                    self.warnings.append(
+                        f"有字体无法显示的文字：{missing[:20]}，请在 resources/fonts 中加入支持该语言的字体"
+                    )
+            faces[kind] = face
+        self._faces = faces
+        return faces
+
+    def _font_path(self, project: Project) -> Path:
+        """字幕字体文件（叠加文字和 AI 角标也用它）。"""
+        return self._text_faces(project)["subtitle"].path
 
     def _cues(self, project: Project, timings: list[ShotTiming]) -> list[subs.Cue]:
         style = project.subtitle
         if not style.enabled:
             return []
-        font = self._font_path(project)
+        face = self._text_faces(project)["subtitle"]
+        font = face.path
         left, right = side_margins(project)
         max_width = min(int(project.canvas.width * 0.86), project.canvas.width - left - right)
+        if style.background_opacity > 0:
+            max_width -= 2 * subs.box_padding(style, style.size)
+        if style.italic:
+            max_width -= style.size // 4
+        if style.bold and not face.bold:
+            max_width = int(max_width * 0.96)  # 合成加粗会让字略宽
+        if style.background_opacity <= 0:
+            max_width -= round(2 * style.outline2)
+        if style.keywords:
+            max_width -= round(style.size * (style.keyword_scale - 1) * 4)  # 关键词放大后行会变宽，按 4 个字预留
         cues: list[subs.Cue] = []
         for shot, timing in zip(project.shots, timings, strict=True):
             if not shot.text.strip():
@@ -525,6 +562,7 @@ class Renderer:
                     size=style.size,
                     max_width=max_width,
                     words=timing.words,
+                    spacing=style.spacing,
                 )
             )
         return cues
@@ -654,7 +692,9 @@ class Renderer:
         margin_l, margin_r = side_margins(project)
         reencode = self.quality == "final" and project.delivery != platforms.DEFAULT_PLATFORM
         needs_ass = bool(cues or text_overlays or project.ai_badge or has_titles)
-        font = self._font_path(project) if needs_ass else None
+        faces = self._text_faces(project) if needs_ass else None
+        font = faces["subtitle"].path if faces else None
+        used_faces = sorted({face.path for face in faces.values()}) if faces else []
         fp = fingerprint(
             "final",
             assembly_fp,
@@ -664,7 +704,7 @@ class Renderer:
             [(o.model_dump(), asset.sha256) for o, asset in image_overlays] if image_overlays else None,
             self.quality,
             project.ai_badge,
-            sha256_file(font) if font else None,
+            [sha256_file(path) for path in used_faces] or None,
             bgm_asset.sha256 if bgm_asset else None,
             project.bgm.model_dump(exclude={"candidates", "query"}) if bgm_asset else None,
             project.loudness,
@@ -698,23 +738,25 @@ class Renderer:
 
                 title_styles: list[str] = []
                 title_events: list[str] = []
-                if has_titles and font is not None:
+                if has_titles and faces is not None:
                     title_styles, title_events = subs.title_layers(
                         titles,
                         width=project.canvas.width,
                         height=project.canvas.height,
-                        family=subs.font_family(font),
+                        families={kind: faces[kind].ass_family for kind in ("headline", "intro", "shot")},
                         headline_margin=safe_margin(project, "top", titles.headline.margin),
                         shot_margin=shot_title_margin(project),
                         margin_l=margin_l,
                         margin_r=margin_r,
                         fallback_title=project.title,
                         shot_titles=shot_titles,
+                        total=duration,
                     )
                 if needs_ass and font is not None:
                     (work / "fonts").mkdir()
-                    shutil.copyfile(font, work / "fonts" / font.name)
-                    family = subs.font_family(font)
+                    for path in used_faces:
+                        shutil.copyfile(path, work / "fonts" / path.name)
+                    family = faces["subtitle"].ass_family
                     (work / "subs.ass").write_text(
                         subs.to_ass(
                             cues,

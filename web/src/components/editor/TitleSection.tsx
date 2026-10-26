@@ -1,22 +1,15 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api";
 import { useI18n } from "../../i18n";
-import type { OverlayPosition, Project, TitleSettings } from "../../types";
+import { TEXT_STYLE_DEFAULTS } from "../../types";
+import type { OverlayPosition, Project, TextStyle, TitleSettings } from "../../types";
 import { Section, Segmented, Slider } from "../Controls";
+import { TextStyleEditor } from "./TextStyleEditor";
 
 const DEFAULT_TITLES: TitleSettings = {
-  headline: {
-    enabled: false,
-    text: "",
-    size: 76,
-    color: "#FFFFFF",
-    outline_color: "#000000",
-    background: "#000000",
-    background_opacity: 0,
-    margin: 160,
-  },
-  intro: { enabled: false, text: "", subtitle: "", duration: 2.5, size: 110, color: "#FFFFFF", dim: 0.55 },
-  shot: { size: 56, color: "#FFE45C", outline_color: "#000000", position: "top", margin: 330 },
+  headline: { ...TEXT_STYLE_DEFAULTS, outline: 5, enabled: false, text: "", size: 76, margin: 160 },
+  intro: { ...TEXT_STYLE_DEFAULTS, outline: 6, animation: "fade", enabled: false, text: "", subtitle: "", duration: 2.5, size: 110, dim: 0.55 },
+  shot: { ...TEXT_STYLE_DEFAULTS, color: "#FFE45C", outline: 4, animation: "fade", size: 56, position: "top", margin: 330 },
   candidates: [],
 };
 
@@ -25,10 +18,11 @@ interface TitleSectionProps {
   step: number;
   canSuggest: boolean;
   run: (action: () => Promise<Project>, shotId?: string) => Promise<Project | null>;
+  onError?: (message: string) => void;
 }
 
 /** 标题：画面顶部常驻大标题、片头标题卡、镜头小标题样式，以及 AI 生成标题。 */
-export function TitleSection({ project, step, canSuggest, run }: TitleSectionProps) {
+export function TitleSection({ project, step, canSuggest, run, onError }: TitleSectionProps) {
   const { t } = useI18n();
   const saved: TitleSettings = {
     ...DEFAULT_TITLES,
@@ -121,27 +115,15 @@ export function TitleSection({ project, step, canSuggest, run }: TitleSectionPro
               onInput={(size) => setHeadline({ size })}
               onCommit={(size) => setHeadline({ size }, true)}
             />
-            <Slider
-              id="headline-bg"
-              label={t("titles.background")}
-              value={headline.background_opacity}
-              min={0}
-              max={1}
-              step={0.05}
-              format={(v) => (v === 0 ? t("titles.noBackground") : `${Math.round(v * 100)}%`)}
-              onInput={(background_opacity) => setHeadline({ background_opacity })}
-              onCommit={(background_opacity) => setHeadline({ background_opacity }, true)}
-            />
-            <label className="inline-field">
-              <span className="label">{t("titles.color")}</span>
-              <input type="color" value={headline.color.toLowerCase()} onChange={(e) => setHeadline({ color: e.target.value.toUpperCase() }, true)} />
-              <span className="label">{t("titles.backgroundColor")}</span>
-              <input
-                type="color"
-                value={headline.background.toLowerCase()}
-                onChange={(e) => setHeadline({ background: e.target.value.toUpperCase() }, true)}
+            <div className="span-2">
+              <TextStyleEditor
+                id="headline-style"
+                value={headline}
+                inheritFont={project.subtitle.font}
+                onError={onError}
+                onChange={(patch: Partial<TextStyle>, commit) => setHeadline(patch, commit)}
               />
-            </label>
+            </div>
           </div>
         )}
       </div>
@@ -194,7 +176,26 @@ export function TitleSection({ project, step, canSuggest, run }: TitleSectionPro
                 onInput={(dim) => setIntro({ dim })}
                 onCommit={(dim) => setIntro({ dim }, true)}
               />
+              <Slider
+                id="intro-size"
+                label={t("titles.size")}
+                value={intro.size}
+                min={48}
+                max={200}
+                step={2}
+                format={(v) => `${v}px`}
+                onInput={(size) => setIntro({ size })}
+                onCommit={(size) => setIntro({ size }, true)}
+              />
             </div>
+            <TextStyleEditor
+              id="intro-style"
+              value={intro}
+              inheritFont={project.subtitle.font}
+              showAlign={false}
+              onError={onError}
+              onChange={(patch: Partial<TextStyle>, commit) => setIntro(patch, commit)}
+            />
           </>
         )}
       </div>
@@ -224,10 +225,15 @@ export function TitleSection({ project, step, canSuggest, run }: TitleSectionPro
             onInput={(size) => setShot({ size })}
             onCommit={(size) => setShot({ size }, true)}
           />
-          <label className="inline-field">
-            <span className="label">{t("titles.color")}</span>
-            <input type="color" value={shot.color.toLowerCase()} onChange={(e) => setShot({ color: e.target.value.toUpperCase() }, true)} />
-          </label>
+          <div className="span-2">
+            <TextStyleEditor
+              id="shot-title-style"
+              value={shot}
+              inheritFont={project.subtitle.font}
+              onError={onError}
+              onChange={(patch: Partial<TextStyle>, commit) => setShot(patch, commit)}
+            />
+          </div>
         </div>
       </div>
     </Section>

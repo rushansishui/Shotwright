@@ -50,6 +50,7 @@ from shotwright.core.models import Project, Shot, ShotVisual, VoiceSettings, val
 from shotwright.core.store import ProjectNotFound, ProjectStore, read_json
 from shotwright.logs import setup_logging
 from shotwright.media import ffmpeg
+from shotwright.media import fonts as font_lib
 from shotwright.pipeline.shots import MAX_SEQUENCE
 from shotwright.providers import registry
 from shotwright.providers.base import ChargeConfirmationRequired, ProviderError
@@ -334,6 +335,48 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             for lang in languages.LANGUAGES.values()
         ]
 
+    # ---- 字体 ---------------------------------------------------------------
+
+    @api.get("/fonts")
+    def list_fonts():
+        """按字体族分组的可用字体：内置字体和用户导入的字体。"""
+        return font_lib.families(settings)
+
+    @api.get("/fonts/{name}")
+    def font_file(name: str):
+        """字体文件本身，界面预览用。只返回字体库里的文件。"""
+        face = font_lib.find(settings, name)
+        if face is None:
+            raise HTTPException(404, "找不到这个字体")
+        media_type = "font/otf" if face.path.suffix.lower() == ".otf" else "font/ttf"
+        return FileResponse(face.path, media_type=media_type, headers={"Cache-Control": "max-age=86400"})
+
+    @api.post("/fonts", status_code=201)
+    def import_font(file: UploadFile = File(...)):
+        """导入自己的字体（.ttf / .otf），之后所有项目都能用。请只导入有使用授权的字体。"""
+        filename = Path(file.filename or "font.ttf").name
+        with tempfile.TemporaryDirectory(prefix="shotwright-font-") as temp:
+            path = Path(temp) / ("upload" + Path(filename).suffix.lower()[:5])
+            size = 0
+            with path.open("wb") as handle:
+                while chunk := file.file.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > font_lib.MAX_FONT_BYTES:
+                        raise HTTPException(413, "字体文件超过 40MB")
+                    handle.write(chunk)
+            try:
+                face = font_lib.import_font(settings, path, filename)
+            except font_lib.FontError as exc:
+                raise HTTPException(422, str(exc)) from None
+        return {"file": face.file, "family": face.family}
+
+    @api.delete("/fonts/{name}", status_code=204)
+    def delete_font(name: str):
+        try:
+            font_lib.delete_font(settings, name)
+        except font_lib.FontError as exc:
+            raise HTTPException(422, str(exc)) from None
+
     # ---- 项目 ---------------------------------------------------------------
 
     @api.get("/projects")
@@ -444,6 +487,18 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     raise ValueError("参考素材不存在")
                 if asset.kind != "image":
                     raise ValueError("参考素材必须是图片")
+
+        return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/subtitle/keywords")
+    def suggest_keywords(project_id: str):
+        """AI 挑选字幕高亮关键词，替换 subtitle.keywords。不生成画面、不收费。"""
+        project = store.load(_id(project_id))
+        llm = registry.create("llm", None, settings)
+        words = titles_service.suggest_keywords(llm, project)  # type: ignore[arg-type]
+
+        def change(latest: Project) -> None:
+            latest.subtitle.keywords = words
 
         return _mutate(project_id, change)
 

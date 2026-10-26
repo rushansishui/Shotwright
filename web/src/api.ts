@@ -4,6 +4,7 @@ import type {
   PlatformInfo,
   BgmSearchResult,
   CostEstimate,
+  FontFamily,
   Job,
   LanguageInfo,
   Project,
@@ -101,6 +102,8 @@ export const api = {
   /** AI 生成标题：候选大标题、片头副标题、镜头小标题（已有的不覆盖）。 */
   suggestTitles: (id: string, options: { shot_titles?: boolean; apply_headline?: boolean } = {}) =>
     request<Project>(`/projects/${id}/titles/suggest`, json("POST", options)),
+  /** AI 从文案里挑字幕高亮关键词（替换 subtitle.keywords）。 */
+  suggestKeywords: (id: string) => request<Project>(`/projects/${id}/subtitle/keywords`, json("POST", {})),
   /** 复制成新项目继续编辑（素材、设置、镜头和渲染缓存一起复制）。 */
   duplicateProject: (id: string, title = "") => request<Project>(`/projects/${id}/duplicate`, json("POST", { title })),
   deleteProject: (id: string) => request<void>(`/projects/${id}`, json("DELETE")),
@@ -157,6 +160,15 @@ export const api = {
   render: (id: string, confirmCharge = false, quality: "draft" | "final" = "final") =>
     request<Job>(`/projects/${id}/renders`, json("POST", { confirm_charge: confirmCharge, quality })),
   platforms: () => request<PlatformInfo[]>("/platforms"),
+  /** 字体库：内置字体和导入的字体，按字体族分组。 */
+  fonts: () => request<FontFamily[]>("/fonts"),
+  /** 导入自己的字体（.ttf / .otf），所有项目都能用。 */
+  importFont: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<{ file: string; family: string }>("/fonts", { method: "POST", body: form });
+  },
+  deleteFont: (name: string) => request<void>(`/fonts/${encodeURIComponent(name)}`, { method: "DELETE" }),
   searchAmbience: (id: string, query = "") =>
     request<Project>(`/projects/${id}/sfx/ambience`, json("POST", { query })),
   checkup: (id: string, quality: "draft" | "final" = "final") =>
@@ -198,3 +210,5 @@ export function estimateSeconds(shot: Shot, rate: number): number {
   const seconds = Math.max(1.5, (cjk / 4.5 + words / 2.6) / Math.max(rate, 0.1)) + markPauses(shot.text);
   return Math.round((seconds + 0.25) * 10) / 10;
 }
+
+export const fontUrl = (name: string) => `${BASE}/fonts/${encodeURIComponent(name)}`;

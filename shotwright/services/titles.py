@@ -55,3 +55,38 @@ def suggest_titles(llm: LLMProvider, project: Project) -> tuple[list[str], str, 
         if title and 1 <= index <= len(project.shots):
             shots[index] = title
     return headlines, subtitle, shots
+
+
+KEYWORD_PROMPT = """你是短视频字幕编辑。从下面的文案里挑出值得在字幕里高亮的关键词：数字、价格、卖点、核心名词、情绪最强的词。
+- 每个镜头最多挑 1–2 个，全片不超过 {limit} 个；
+- 关键词必须是文案里原样出现的连续文字，中文 2–6 个字、英文 1–3 个词；
+- 不挑虚词、代词和整句。
+只输出 JSON：{{"keywords": ["..."]}}"""
+
+MAX_KEYWORDS = 12
+
+
+def suggest_keywords(llm: LLMProvider, project: Project) -> list[str]:
+    """AI 挑选字幕高亮关键词；只保留文案里确实出现的词。"""
+    script = "\n".join(speech.plain(shot.text) for shot in project.shots if shot.text.strip())
+    if not script.strip():
+        raise ProviderError("项目里还没有文案")
+    limit = min(MAX_KEYWORDS, max(3, len(project.shots) * 2))
+    data = _extract_json(
+        llm.complete(
+            [
+                {"role": "system", "content": KEYWORD_PROMPT.format(limit=limit)},
+                {"role": "user", "content": script[:4000]},
+            ],
+            json_mode=True,
+        )
+    )
+    lower = script.lower()
+    words: list[str] = []
+    for item in data.get("keywords") or []:
+        word = str(item).strip()[:20]
+        if word and word.lower() in lower and word not in words:
+            words.append(word)
+    if not words:
+        raise ProviderError("大模型没有给出文案里的关键词")
+    return words[:limit]

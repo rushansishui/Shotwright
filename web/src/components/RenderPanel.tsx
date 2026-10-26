@@ -4,7 +4,13 @@ import { useI18n } from "../i18n";
 import { Segmented } from "./Controls";
 import type { MessageKey } from "../messages";
 import { subtitleMargin } from "../types";
+import { textCss, useFontReady, useFonts, weightFile } from "../textStyle";
+import { highlightKeywords } from "./editor/KeywordField";
+import type { TextStyle } from "../types";
 import type { CheckIssue, CostEstimate, Job, PlatformInfo, Project, RenderResult } from "../types";
+
+const alignFlex = (align: string | undefined) =>
+  ({ left: "flex-start", center: "center", right: "flex-end" })[align ?? "center"] ?? "center";
 
 function Preview({ project, shotIndex, platform }: { project: Project; shotIndex: number; platform?: PlatformInfo }) {
   const { t } = useI18n();
@@ -20,6 +26,20 @@ function Preview({ project, shotIndex, platform }: { project: Project; shotIndex
   }, []);
 
   const style = project.subtitle;
+  const families = useFonts();
+  const headlineStyle = project.titles?.headline;
+  const shotTitleStyle = project.titles?.shot;
+  const fileFor = (item: TextStyle | undefined) =>
+    item ? weightFile(families, item.font ?? style.font, item.bold) : null;
+  const subtitleFile = fileFor(style);
+  const headlineFile = fileFor(headlineStyle);
+  const shotTitleFile = fileFor(shotTitleStyle);
+  useFontReady([subtitleFile, headlineFile, shotTitleFile]);
+  /** 入场效果在预览里循环播放；样式一变就从头播放。 */
+  const animClass = (item: TextStyle) => `preview-text anim-${item.animation}`;
+  const animKey = (item: TextStyle) => JSON.stringify(item);
+  /** 循环效果套在外层，和入场效果的动画互不覆盖。 */
+  const loopClass = (item: TextStyle) => `preview-loop loop-${item.loop ?? "none"}`;
   const scale = height / (project.canvas.aspect === "16:9" ? 1080 : project.canvas.aspect === "1:1" ? 1080 : 1920);
   const asset = shot?.visual.selected && shot.visual.mode !== "color" ? project.assets[shot.visual.selected] : undefined;
   const position = { top: "flex-start", middle: "center", bottom: "flex-end" }[style.position];
@@ -44,18 +64,22 @@ function Preview({ project, shotIndex, platform }: { project: Project; shotIndex
           className="preview-subs"
           style={{
             justifyContent: position,
+            alignItems: alignFlex(style.align),
             padding: `${margin * scale}px ${Math.max(7, (safe?.right ?? 0) * 100 + 1)}% ${margin * scale}px ${Math.max(7, (safe?.left ?? 0) * 100 + 1)}%`,
           }}
         >
-          <span
-            style={{
-              fontSize: Math.max(10, style.size * scale),
-              color: style.color,
-              WebkitTextStroke: `${Math.max(0.5, style.outline * scale * 1.4)}px ${style.outline_color}`,
-              paintOrder: "stroke fill",
-            }}
-          >
-            {plainText(shot.text).replace(/[，。,]$/u, "").slice(0, 34)}
+          <span className={loopClass(style)}>
+            <span key={animKey(style)} className={animClass(style)} style={textCss(style, style.size, scale, subtitleFile)}>
+              {highlightKeywords(plainText(shot.text).replace(/[，。,]$/u, "").slice(0, 34), style).map((part, index) =>
+                typeof part === "string" ? (
+                  part
+                ) : (
+                  <span key={index} style={{ color: style.keyword_color, fontSize: `${style.keyword_scale}em` }}>
+                    {part.word}
+                  </span>
+                ),
+              )}
+            </span>
           </span>
         </div>
       )}
@@ -70,47 +94,33 @@ function Preview({ project, shotIndex, platform }: { project: Project; shotIndex
         if (shotStyle?.position === "top" && showHeadline && headline) {
           shotMargin = Math.max(shotMargin, headlineTop + headline.size * 1.35 * lines + 24);
         }
-        const outline = (size: number, color: string) => `${Math.max(0.5, (size / 14) * scale)}px ${color}`;
         return (
           <>
             {showHeadline && headline && (
-              <div className="preview-title" style={{ top: headlineTop * scale }}>
-                <span
-                  style={{
-                    fontSize: Math.max(10, headline.size * scale),
-                    color: headline.color,
-                    background:
-                      headline.background_opacity > 0
-                        ? `${headline.background}${Math.round(headline.background_opacity * 255).toString(16).padStart(2, "0")}`
-                        : undefined,
-                    WebkitTextStroke: headline.background_opacity > 0 ? undefined : outline(headline.size, headline.outline_color),
-                    paintOrder: "stroke fill",
-                  }}
-                >
-                  {headline.text}
+              <div className="preview-title" style={{ top: headlineTop * scale, justifyContent: alignFlex(headline.align) }}>
+                <span className={loopClass(headline)}>
+                  <span key={animKey(headline)} className={animClass(headline)} style={textCss(headline, headline.size, scale, headlineFile)}>
+                    {headline.text}
+                  </span>
                 </span>
               </div>
             )}
             {shot?.title?.trim() && shotStyle && (
               <div
                 className="preview-title"
-                style={
-                  shotStyle.position === "top"
+                style={{
+                  justifyContent: alignFlex(shotStyle.align),
+                  ...(shotStyle.position === "top"
                     ? { top: shotMargin * scale }
                     : shotStyle.position === "bottom"
                       ? { bottom: shotMargin * scale }
-                      : { top: "50%", transform: "translateY(-50%)" }
-                }
+                      : { top: "50%", transform: "translateY(-50%)" }),
+                }}
               >
-                <span
-                  style={{
-                    fontSize: Math.max(9, shotStyle.size * scale),
-                    color: shotStyle.color,
-                    WebkitTextStroke: outline(shotStyle.size, shotStyle.outline_color),
-                    paintOrder: "stroke fill",
-                  }}
-                >
-                  {shot.title}
+                <span className={loopClass(shotStyle)}>
+                  <span key={animKey(shotStyle)} className={animClass(shotStyle)} style={textCss(shotStyle, shotStyle.size, scale, shotTitleFile)}>
+                    {shot.title}
+                  </span>
                 </span>
               </div>
             )}

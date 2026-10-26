@@ -16,16 +16,97 @@ export function subtitleMargin(style: { margin: number | null }, aspect: string)
   return style.margin ?? Math.round(height * (SUBTITLE_EDGE[aspect] ?? 0.07));
 }
 
-export interface SubtitleStyle {
+export type TextAnimation = "none" | "fade" | "pop" | "slide_up" | "typewriter" | "karaoke";
+export type TextExit = "none" | "fade" | "shrink" | "slide_down";
+export type TextLoop = "none" | "pulse" | "swing";
+export type TextAlign = "left" | "center" | "right";
+
+/** 字幕和标题共用的文字样式（对标剪映 / CapCut 的文字面板）。 */
+export interface TextStyle {
+  /** 字体文件名；标题为 null 时跟随字幕字体。 */
+  font: string | null;
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  color: string;
+  opacity: number;
+  outline: number;
+  outline_color: string;
+  shadow: number;
+  shadow_color: string;
+  shadow_opacity: number;
+  /** 阴影方向（度）：0 向右，90 向下。 */
+  shadow_angle: number;
+  shadow_blur: number;
+  /** 第二层描边（套在第一层外面），0 表示不加。 */
+  outline2: number;
+  outline2_color: string;
+  glow: number;
+  background: string;
+  background_opacity: number;
+  spacing: number;
+  /** 行间距（像素）。 */
+  line_spacing: number;
+  align: TextAlign;
+  animation: TextAnimation;
+  exit: TextExit;
+  loop: TextLoop;
+  highlight_color: string;
+}
+
+export const TEXT_STYLE_DEFAULTS: TextStyle = {
+  font: null,
+  bold: true,
+  italic: false,
+  underline: false,
+  color: "#FFFFFF",
+  opacity: 1,
+  outline: 3,
+  outline_color: "#000000",
+  shadow: 0,
+  shadow_color: "#000000",
+  shadow_opacity: 0.6,
+  shadow_angle: 45,
+  shadow_blur: 0,
+  outline2: 0,
+  outline2_color: "#FFFFFF",
+  glow: 0,
+  background: "#000000",
+  background_opacity: 0,
+  spacing: 0,
+  line_spacing: 0,
+  align: "center",
+  animation: "none",
+  exit: "none",
+  loop: "none",
+  highlight_color: "#FFE45C",
+};
+
+export interface SubtitleStyle extends TextStyle {
   enabled: boolean;
   font: string;
   size: number;
-  color: string;
-  outline_color: string;
-  outline: number;
   position: "top" | "middle" | "bottom";
   /** 距边缘的距离；null 表示按画面比例自动。 */
   margin: number | null;
+  /** 关键词高亮：字幕里出现这些词时换色并放大。 */
+  keywords: string[];
+  keyword_color: string;
+  keyword_scale: number;
+}
+
+/** 字体库里的一个字体族（内置或用户导入）。 */
+export interface FontFamily {
+  family: string;
+  name_zh: string;
+  name_en: string;
+  /** 选这个字体时写进项目的文件。 */
+  file: string;
+  files: string[];
+  /** 每个文件的字重（常规 400、粗体 700）。 */
+  weights: Record<string, number>;
+  has_bold: boolean;
+  user: boolean;
 }
 
 export interface PendingTask {
@@ -76,19 +157,32 @@ export interface Take {
   created_at: number;
 }
 
+export interface HeadlineStyle extends TextStyle {
+  enabled: boolean;
+  text: string;
+  size: number;
+  margin: number;
+}
+
+export interface IntroCard extends TextStyle {
+  enabled: boolean;
+  text: string;
+  subtitle: string;
+  duration: number;
+  size: number;
+  dim: number;
+}
+
+export interface ShotTitleStyle extends TextStyle {
+  size: number;
+  position: OverlayPosition;
+  margin: number;
+}
+
 export interface TitleSettings {
-  headline: {
-    enabled: boolean;
-    text: string;
-    size: number;
-    color: string;
-    outline_color: string;
-    background: string;
-    background_opacity: number;
-    margin: number;
-  };
-  intro: { enabled: boolean; text: string; subtitle: string; duration: number; size: number; color: string; dim: number };
-  shot: { size: number; color: string; outline_color: string; position: OverlayPosition; margin: number };
+  headline: HeadlineStyle;
+  intro: IntroCard;
+  shot: ShotTitleStyle;
   candidates: string[];
 }
 

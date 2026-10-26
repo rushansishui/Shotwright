@@ -137,16 +137,108 @@ def auto_subtitle_margin(aspect: str, height: int) -> int:
     return round(height * SUBTITLE_EDGE.get(aspect, 0.07))
 
 
-class SubtitleStyle(_Model):
+TextAnimation = Literal["none", "fade", "pop", "slide_up", "typewriter", "karaoke"]
+"""文字入场效果：无、淡入、弹出、上滑、逐字打出、卡拉 OK 逐字高亮（只用于字幕，跟着配音变色）。"""
+TextExit = Literal["none", "fade", "shrink", "slide_down"]
+"""文字出场效果：无、淡出、缩小消失、下滑淡出。"""
+TextLoop = Literal["none", "pulse", "swing"]
+"""文字循环效果（显示期间一直重复）：呼吸缩放、左右摇摆。"""
+TextAlign = Literal["left", "center", "right"]
+
+
+def _check_hex(value: str) -> str:
+    if not _HEX_COLOR.fullmatch(value):
+        raise ValueError("颜色必须是 #RRGGBB 格式")
+    return value.upper()
+
+
+def _check_font_name(value: str | None) -> str | None:
+    if value is not None and ("/" in value or "\\" in value or value.startswith(".")):
+        raise ValueError("字体只能是 resources/fonts 下的文件名")
+    return value
+
+
+class TextStyle(_Model):
+    """字幕和标题共用的文字样式（对标剪映 / CapCut 的文字面板）。
+
+    描边、阴影、底框、发光都可以叠加；开了底框时描边不显示（ASS 的底框占用了描边颜色）。
+    """
+
+    font: str | None = None
+    """字体文件名；标题为空时跟随字幕字体。"""
+    bold: bool = True
+    italic: bool = False
+    underline: bool = False
+    color: str = "#FFFFFF"
+    opacity: float = Field(1.0, ge=0.1, le=1.0)
+    """文字整体不透明度。"""
+    outline: float = Field(3.0, ge=0.0, le=16.0)
+    """描边粗细（像素），0 表示不描边。"""
+    outline_color: str = "#000000"
+    shadow: float = Field(0.0, ge=0.0, le=20.0)
+    """阴影距离（像素），0 表示无阴影。"""
+    shadow_color: str = "#000000"
+    shadow_opacity: float = Field(0.6, ge=0.0, le=1.0)
+    shadow_angle: float = Field(45.0, ge=0.0, le=360.0)
+    """阴影方向（度）：0 向右，90 向下，45 是右下。"""
+    shadow_blur: float = Field(0.0, ge=0.0, le=20.0)
+    """阴影模糊（像素），0 表示硬阴影。"""
+    outline2: float = Field(0.0, ge=0.0, le=16.0)
+    """第二层描边粗细（像素，套在第一层描边外面），0 表示不加；花字常用。"""
+    outline2_color: str = "#FFFFFF"
+    glow: float = Field(0.0, ge=0.0, le=12.0)
+    """边缘柔化 / 发光（像素）；配合彩色描边就是霓虹字。"""
+    background: str = "#000000"
+    background_opacity: float = Field(0.0, ge=0.0, le=1.0)
+    """底框不透明度，0 表示不加底框。"""
+    spacing: float = Field(0.0, ge=-10.0, le=40.0)
+    """字间距（像素）。"""
+    line_spacing: float = Field(0.0, ge=0.0, le=120.0)
+    """行间距（像素）：多行文字时各行之间额外留的距离。"""
+    align: TextAlign = "center"
+    animation: TextAnimation = "none"
+    exit: TextExit = "none"
+    loop: TextLoop = "none"
+    highlight_color: str = "#FFE45C"
+    """卡拉 OK 高亮色：已读到的字变成这个颜色。"""
+
+    @field_validator("color", "outline_color", "outline2_color", "shadow_color", "background", "highlight_color")
+    @classmethod
+    def _check_color(cls, value: str) -> str:
+        return _check_hex(value)
+
+    @field_validator("font")
+    @classmethod
+    def _check_font(cls, value: str | None) -> str | None:
+        return _check_font_name(value)
+
+
+class SubtitleStyle(TextStyle):
     enabled: bool = True
     font: str = "NotoSansSC-Bold.ttf"
     size: int = Field(64, ge=16, le=200)
-    color: str = "#FFFFFF"
-    outline_color: str = "#000000"
-    outline: float = Field(3.0, ge=0.0, le=12.0)
     position: Literal["top", "middle", "bottom"] = "bottom"
     margin: int | None = Field(None, ge=0, le=1000)
     """距画面上 / 下边缘的距离（像素，按画布分辨率计）；为空时按画面比例自动（见 :func:`auto_subtitle_margin`）。"""
+    keywords: list[str] = Field(default_factory=list, max_length=40)
+    """关键词高亮：字幕里出现这些词时换成高亮色并放大。"""
+    keyword_color: str = "#FFD60A"
+    keyword_scale: float = Field(1.15, ge=1.0, le=1.6)
+
+    @field_validator("keywords")
+    @classmethod
+    def _check_keywords(cls, value: list[str]) -> list[str]:
+        seen: list[str] = []
+        for word in value:
+            word = word.strip()[:20]
+            if word and word not in seen:
+                seen.append(word)
+        return seen
+
+    @field_validator("keyword_color")
+    @classmethod
+    def _check_keyword_color(cls, value: str) -> str:
+        return _check_hex(value)
 
     @field_validator("margin", mode="before")
     @classmethod
@@ -154,19 +246,10 @@ class SubtitleStyle(_Model):
         # 240 是旧版本的固定默认值：在横屏里会让字幕离底边太远，旧项目改为自动。
         return None if value == 240 else value
 
-    @field_validator("color", "outline_color")
-    @classmethod
-    def _check_color(cls, value: str) -> str:
-        if not _HEX_COLOR.fullmatch(value):
-            raise ValueError("颜色必须是 #RRGGBB 格式")
-        return value.upper()
-
     @field_validator("font")
     @classmethod
     def _check_font(cls, value: str) -> str:
-        if "/" in value or "\\" in value or value.startswith("."):
-            raise ValueError("字体只能是 resources/fonts 下的文件名")
-        return value
+        return _check_font_name(value) or "NotoSansSC-Bold.ttf"
 
 
 class BgmSettings(_Model):
@@ -510,19 +593,14 @@ class ReferenceAsset(_Model):
         return value[:100]
 
 
-class HeadlineStyle(_Model):
+class HeadlineStyle(TextStyle):
     """画面顶部常驻的大标题。"""
 
     enabled: bool = False
     text: str = ""
     """标题文字；可以用换行分成两行。"""
     size: int = Field(76, ge=16, le=200)
-    color: str = "#FFFFFF"
-    outline_color: str = "#000000"
-    background: str = "#000000"
-    """底色；和 ``background_opacity`` 一起决定标题底下的色块。"""
-    background_opacity: float = Field(0.0, ge=0.0, le=1.0)
-    """底色不透明度，0 表示不加底色只描边。"""
+    outline: float = Field(5.0, ge=0.0, le=16.0)
     margin: int = Field(160, ge=0, le=1000)
     """距画面顶部的距离（像素）；交付平台的安全区更大时以安全区为准。"""
 
@@ -531,15 +609,8 @@ class HeadlineStyle(_Model):
     def _check_text(cls, value: str) -> str:
         return value[:80]
 
-    @field_validator("color", "outline_color", "background")
-    @classmethod
-    def _check_color(cls, value: str) -> str:
-        if not _HEX_COLOR.fullmatch(value):
-            raise ValueError("颜色必须是 #RRGGBB 格式")
-        return value.upper()
 
-
-class IntroCard(_Model):
+class IntroCard(TextStyle):
     """片头标题卡：开头几秒压暗画面、居中显示大标题和副标题，淡入淡出后进入正片。"""
 
     enabled: bool = False
@@ -548,7 +619,8 @@ class IntroCard(_Model):
     subtitle: str = ""
     duration: float = Field(2.5, ge=1.0, le=8.0)
     size: int = Field(110, ge=24, le=240)
-    color: str = "#FFFFFF"
+    outline: float = Field(6.0, ge=0.0, le=16.0)
+    animation: TextAnimation = "fade"
     dim: float = Field(0.55, ge=0.0, le=1.0)
     """画面压暗程度，0 表示不压暗。"""
 
@@ -557,30 +629,17 @@ class IntroCard(_Model):
     def _check_text(cls, value: str) -> str:
         return value[:80]
 
-    @field_validator("color")
-    @classmethod
-    def _check_color(cls, value: str) -> str:
-        if not _HEX_COLOR.fullmatch(value):
-            raise ValueError("颜色必须是 #RRGGBB 格式")
-        return value.upper()
 
-
-class ShotTitleStyle(_Model):
+class ShotTitleStyle(TextStyle):
     """每个镜头小标题的样式（文字写在各镜头的 ``title`` 上）。"""
 
     size: int = Field(56, ge=16, le=200)
     color: str = "#FFE45C"
-    outline_color: str = "#000000"
+    outline: float = Field(4.0, ge=0.0, le=16.0)
+    animation: TextAnimation = "fade"
     position: OverlayPosition = "top"
     margin: int = Field(330, ge=0, le=1500)
     """距所在边缘的距离（像素）；默认放在常驻大标题下面。"""
-
-    @field_validator("color", "outline_color")
-    @classmethod
-    def _check_color(cls, value: str) -> str:
-        if not _HEX_COLOR.fullmatch(value):
-            raise ValueError("颜色必须是 #RRGGBB 格式")
-        return value.upper()
 
 
 class TitleSettings(_Model):

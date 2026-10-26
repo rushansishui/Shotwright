@@ -15,6 +15,8 @@ import { projectNeedsExpansion } from "../prompts";
 import { ReferencesSection } from "./editor/ReferencesSection";
 import { OverlaySection } from "./editor/OverlaySection";
 import { TitleSection } from "./editor/TitleSection";
+import { TextStyleEditor } from "./editor/TextStyleEditor";
+import { KeywordField } from "./editor/KeywordField";
 
 export function Editor({ projectId }: { projectId: string }) {
   const {
@@ -41,6 +43,7 @@ export function Editor({ projectId }: { projectId: string }) {
   const [footageBusy, setFootageBusy] = useState(false);
   const [expanding, setExpanding] = useState(false);
   const [marginDraft, setMarginDraft] = useState<number | undefined>(undefined);
+  const [styleDraft, setStyleDraft] = useState<Partial<SubtitleStyle>>({});
 
   if (!project) {
     return <main className="page">{error ? <p className="hint error">{error}</p> : <p className="muted">{t("common.loading")}</p>}</main>;
@@ -377,28 +380,28 @@ export function Editor({ projectId }: { projectId: string }) {
                 onInput={(size) => setDraft({ ...draft, size })}
                 onCommit={(size) => updateSubtitle({ size }).then(() => setDraft({ ...draft, size: undefined }))}
               />
-              <div className="field">
-                <span className="label">{t("editor.color")}</span>
-                <div className="row">
-                  <label className="color-field">
-                    <input type="color" value={project.subtitle.color.toLowerCase()} onChange={(e) => updateSubtitle({ color: e.target.value.toUpperCase() })} />
-                    {t("editor.textColor")}
-                  </label>
-                  <label className="color-field">
-                    <input
-                      type="color"
-                      value={project.subtitle.outline_color.toLowerCase()}
-                      onChange={(e) => updateSubtitle({ outline_color: e.target.value.toUpperCase() })}
-                    />
-                    {t("editor.outlineColor")}
-                  </label>
-                </div>
+              <div className="span-2">
+                <TextStyleEditor
+                  id="sub-style"
+                  value={{ ...project.subtitle, ...styleDraft }}
+                  allowKaraoke
+                  onError={setError}
+                  onChange={(change, commit) => {
+                    // 字幕字体不会是空（没有「跟随」选项）。
+                    const patch = change as Partial<SubtitleStyle>;
+                    setStyleDraft((current) => ({ ...current, ...patch }));
+                    if (commit) updateSubtitle(patch).then(() => setStyleDraft({}));
+                  }}
+                />
+              </div>
+              <div className="span-2">
+                <KeywordField project={project} canSuggest={!!llm} update={updateSubtitle} run={(action) => run(action)} />
               </div>
             </div>
           )}
         </Section>
 
-        <TitleSection project={project} step={5} canSuggest={!!llm} run={run} />
+        <TitleSection project={project} step={5} canSuggest={!!llm} run={run} onError={setError} />
 
         <OverlaySection project={project} run={run} />
 

@@ -18,7 +18,7 @@ def test_title_layers_build_headline_intro_and_shot_titles():
         titles,
         width=1080,
         height=1920,
-        family="Noto Sans SC",
+        families={"headline": "Noto Sans SC", "intro": "Noto Sans SC", "shot": "Noto Sans SC"},
         headline_margin=160,
         shot_margin=330,
         margin_l=60,
@@ -29,7 +29,7 @@ def test_title_layers_build_headline_intro_and_shot_titles():
     assert names == ["Style: Headline", "Style: ShotTitle", "Style: Intro", "Style: IntroSub"]
     assert ",3,14," in styles[0]  # 有底色时用色块
     headline = next(e for e in events if ",Headline," in e)
-    assert headline.startswith("Dialogue: 3,0:00:02.50,")  # 片头结束后才出现
+    assert headline.startswith("Dialogue: 33,0:00:02.50,")  # 片头结束后才出现
     shot_events = [e for e in events if ",ShotTitle," in e]
     assert len(shot_events) == 1 and "冠军之争" in shot_events[0]  # 片头期间的小标题让开
     assert any("\\p1" in e for e in events) and any("尖沙咀杯开赛" in e and ",Intro," in e for e in events)
