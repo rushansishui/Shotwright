@@ -1599,3 +1599,41 @@ input[type="color"] {
     animation: none !important;
   }
 }
+
+/* ---- 读音纠正 ---- */
+.pronunciations {
+  margin-top: 14px;
+}
+.pronunciations .row.between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pron-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.pron-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.pron-row .input {
+  flex: 1 1 110px;
+  min-width: 0;
+}
+.pron-arrow {
+  color: var(--muted, #888);
+}
+.pron-note {
+  flex-basis: 100%;
+  padding-left: 2px;
+}
+.pron-add {
+  margin-top: 6px;
+}

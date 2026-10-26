@@ -41,7 +41,7 @@ from shotwright.media.ffmpeg import (
 )
 from shotwright.media.grades import GRADE_VERSION, grade_filter
 from shotwright.providers.base import ProviderError
-from shotwright.services import speech, visuals
+from shotwright.services import pronounce, speech, visuals
 
 from .metadata import tag_video
 from .render_types import (
@@ -563,6 +563,7 @@ class Renderer:
                     max_width=max_width,
                     words=timing.words,
                     spacing=style.spacing,
+                    respell=lambda text: pronounce.respell(project, text),
                 )
             )
         return cues

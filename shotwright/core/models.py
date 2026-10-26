@@ -697,6 +697,26 @@ class Overlay(_Model):
         return value.upper()
 
 
+class Pronunciation(_Model):
+    """读音纠正：配音时把 ``word`` 换成读音相同的 ``say`` 再合成，字幕仍显示 ``word``。
+
+    多数配音服务不支持指定读音，用同音字替换对所有服务都有效，例如「飞的」读作「飞滴」。
+    """
+
+    word: str = Field(min_length=1, max_length=20)
+    say: str = Field(min_length=1, max_length=40)
+    note: str = Field("", max_length=60)
+    """说明（例如正确的拼音），只在界面上显示。"""
+
+    @field_validator("word", "say")
+    @classmethod
+    def _strip(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("读音纠正的词不能为空")
+        return value
+
+
 class Project(_Model):
     schema_version: int = SCHEMA_VERSION
     id: str = Field(default_factory=new_id)
@@ -719,6 +739,8 @@ class Project(_Model):
     """同一个视频的不同语言版本共用一个 group（原始项目的 id）。"""
     canvas: Canvas = Field(default_factory=Canvas)
     voice: VoiceSettings = Field(default_factory=VoiceSettings)
+    pronunciations: list[Pronunciation] = Field(default_factory=list, max_length=200)
+    """读音纠正：配音时按这些词替换成同音字，字幕不变。"""
     subtitle: SubtitleStyle = Field(default_factory=SubtitleStyle)
     overlays: list[Overlay] = Field(default_factory=list)
     """叠加在画面上的文字与图形（卖点、价格、Logo），与字幕分开。"""

@@ -17,6 +17,7 @@ import { OverlaySection } from "./editor/OverlaySection";
 import { TitleSection } from "./editor/TitleSection";
 import { TextStyleEditor } from "./editor/TextStyleEditor";
 import { KeywordField } from "./editor/KeywordField";
+import { PronunciationSection } from "./editor/PronunciationSection";
 
 export function Editor({ projectId }: { projectId: string }) {
   const {
@@ -313,6 +314,7 @@ export function Editor({ projectId }: { projectId: string }) {
               onCommit={(volume) => updateVoice({ volume }).then(() => setDraft({ ...draft, volume: undefined }))}
             />
           </div>
+          <PronunciationSection project={project} canSuggest={!!llm} run={(action) => run(action)} onError={setError} />
           <div className="divider" />
           <BgmSection
             project={project}

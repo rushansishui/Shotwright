@@ -94,7 +94,7 @@ export const api = {
     body: Partial<
       Pick<
         Project,
-        "title" | "video_type" | "look" | "titles" | "chain_frames" | "budget" | "sfx" | "delivery" | "language" | "canvas" | "voice" | "subtitle" | "bgm" | "loudness" | "references" | "overlays" | "transition" | "ai_badge"
+        "title" | "video_type" | "look" | "titles" | "chain_frames" | "budget" | "sfx" | "delivery" | "language" | "canvas" | "voice" | "subtitle" | "bgm" | "loudness" | "references" | "overlays" | "transition" | "ai_badge" | "pronunciations"
       >
     >,
   ) =>
@@ -102,6 +102,26 @@ export const api = {
   /** AI 生成标题：候选大标题、片头副标题、镜头小标题（已有的不覆盖）。 */
   suggestTitles: (id: string, options: { shot_titles?: boolean; apply_headline?: boolean } = {}) =>
     request<Project>(`/projects/${id}/titles/suggest`, json("POST", options)),
+  /** AI 检查文案里容易读错的词，追加到读音纠正表。 */
+  suggestPronunciations: (id: string) => request<Project>(`/projects/${id}/pronunciations/suggest`, json("POST", {})),
+  /** 按当前配音设置和读音纠正合成一句试听，返回音频。 */
+  previewVoice: async (id: string, text: string): Promise<Blob> => {
+    const response = await fetch(`${BASE}/projects/${id}/voice/preview`, {
+      ...json("POST", { text }),
+      headers: { "Content-Type": "application/json", "Accept-Language": currentLang() === "zh" ? "zh-CN" : "en" },
+    });
+    if (!response.ok) {
+      let message = translate("common.requestFailed", { status: response.status });
+      try {
+        const data = await response.json();
+        if (typeof data.detail === "string") message = data.detail;
+      } catch {
+        /* 响应不是 JSON */
+      }
+      throw new ApiError(message);
+    }
+    return response.blob();
+  },
   /** 从镜头的候选素材里删掉一个。 */
   removeCandidate: (id: string, shotId: string, assetId: string) =>
     request<Project>(`/projects/${id}/shots/${shotId}/candidates/${assetId}`, json("DELETE")),

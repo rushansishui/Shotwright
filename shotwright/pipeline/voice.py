@@ -18,6 +18,7 @@ from shotwright.core.store import ProjectStore, read_json, write_json
 from shotwright.media.ffmpeg import run_ffmpeg
 from shotwright.providers import registry
 from shotwright.providers.base import ProviderError, TTSProvider
+from shotwright.services import pronounce
 from shotwright.services import speech as marks
 
 from .render_types import AUDIO_ARGS, RenderError, StageRecord
@@ -74,7 +75,8 @@ def synthesize_shot(
     返回 (指纹, 音频路径, 时长秒, 逐词时间戳列表)。
     """
     voice = project.voice_for(shot)
-    text = shot.text.strip()
+    # 读音纠正：易读错的词换成同音字再合成（字幕仍显示原文）；替换后的文字参与指纹，改了会重新配音。
+    text = pronounce.spoken(project, shot.text.strip())
     provider_id = voice.provider if text else "silence"
     fp = fingerprint("voice", text, voice.model_dump(), shot.duration if not text else None)
     cache = store.cache_dir(project.id, "voice")
@@ -138,3 +140,26 @@ def synthesize_shot(
         StageRecord(f"{shot.id}:voice", "voice", fp, False, round(time.monotonic() - started, 3))
     )
     return fp, cache / filename, round(duration, 3), words
+
+
+PREVIEW_LIMIT = 200
+"""试听最多合成这么多字。"""
+
+
+def preview_voice(store: ProjectStore, settings: Settings, project: Project, text: str) -> Path:
+    """按项目的配音设置和读音纠正合成一句试听，结果按内容缓存。"""
+    text = marks.plain(text).strip()[:PREVIEW_LIMIT]
+    if not text:
+        raise RenderError("试听的文字为空")
+    voice = project.voice
+    said = pronounce.spoken(project, text)
+    fp = fingerprint("preview", said, voice.model_dump())
+    cache = store.cache_dir(project.id, "preview")
+    for existing in cache.glob(f"{fp}.*"):
+        return existing
+    tts: TTSProvider = registry.create("tts", voice.provider, settings)  # type: ignore[assignment]
+    with tempfile.TemporaryDirectory(prefix="shotwright-preview-") as temp:
+        result = tts.synthesize(said, voice=voice.voice, rate=voice.rate, volume=voice.volume, output=Path(temp) / "p")
+        target = cache / f"{fp}{result.path.suffix}"
+        shutil.move(str(result.path), target)
+    return target

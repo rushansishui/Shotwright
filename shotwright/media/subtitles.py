@@ -189,11 +189,13 @@ def split_cues(
     max_lines: int = 2,
     words: list[tuple[str, float, float]] | None = None,
     spacing: float = 0.0,
+    respell=None,
 ) -> list[Cue]:
     """把一段文案切成若干条字幕，每条最多 ``max_lines`` 行。
 
     给了 ``words``（配音服务的逐词时间戳，相对本镜头音频开头）时按词对齐；
-    否则按字数比例在 ``[start, end]`` 内分配。
+    否则按字数比例在 ``[start, end]`` 内分配。配音时做过读音纠正（同音字替换）的，
+    ``respell(text)`` 返回（交给配音服务的文字, 每个字对应原文的位置），用来把时间戳对回原文。
     """
     source = text.strip()
     phrases: list[tuple[str, int, int]] = []
@@ -242,7 +244,12 @@ def split_cues(
             pieces.append(("\n".join(chunk), cursor, max(0, piece_end)))
             cursor = piece_end
 
-    spans = _word_spans(source, words) if words else []
+    spans: list[tuple[int, int, float, float]] = []
+    if words:
+        said, mapping = respell(source) if respell else (source, None)
+        spans = _word_spans(said, words)
+        if mapping is not None and said != source:
+            spans = [(mapping[a], mapping[b - 1] + 1, t0, t1) for a, b, t0, t1 in spans]
     total_units = sum(_units(piece) for piece, _, _ in pieces) or 1
     cues: list[Cue] = []
     cursor = start

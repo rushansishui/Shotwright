@@ -37,6 +37,7 @@ from shotwright.api.schemas import (
     CreateVersion,
     DuplicateProject,
     ExpandRequest,
+    PreviewVoice,
     ReorderShots,
     RewriteShot,
     SplitShot,
@@ -51,6 +52,8 @@ from shotwright.core.store import ProjectNotFound, ProjectStore, read_json
 from shotwright.logs import setup_logging
 from shotwright.media import ffmpeg
 from shotwright.media import fonts as font_lib
+from shotwright.pipeline import voice as voice_stage
+from shotwright.pipeline.render_types import RenderError
 from shotwright.pipeline.shots import MAX_SEQUENCE
 from shotwright.providers import registry
 from shotwright.providers.base import ChargeConfirmationRequired, ProviderError
@@ -62,6 +65,7 @@ from shotwright.services import (
     localize,
     music,
     prompting,
+    pronounce,
     rewrite,
     storyboard,
     visuals,
@@ -456,6 +460,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 "target_seconds",
                 "canvas",
                 "voice",
+                "pronunciations",
                 "subtitle",
                 "overlays",
                 "transition",
@@ -489,6 +494,32 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     raise ValueError("参考素材必须是图片")
 
         return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/pronunciations/suggest")
+    def suggest_pronunciations(project_id: str):
+        """AI 检查文案里容易读错的词（多音字等），追加到读音纠正表。不收费。"""
+        project = store.load(_id(project_id))
+        llm = registry.create("llm", None, settings)
+        found = pronounce.suggest(llm, project)  # type: ignore[arg-type]
+
+        def change(latest: Project) -> None:
+            known = {item.word for item in latest.pronunciations}
+            latest.pronunciations += [item for item in found if item.word not in known]
+
+        return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/voice/preview")
+    def preview_voice(project_id: str, body: PreviewVoice):
+        """按当前配音设置和读音纠正合成一句试听。"""
+        project = store.load(_id(project_id))
+        try:
+            path = voice_stage.preview_voice(store, settings, project, body.text)
+        except RenderError as exc:
+            raise HTTPException(422, str(exc)) from None
+        except ProviderError as exc:
+            raise HTTPException(502, str(exc)) from None
+        media_type = "audio/mpeg" if path.suffix == ".mp3" else "audio/mp4" if path.suffix == ".m4a" else "audio/wav"
+        return FileResponse(path, media_type=media_type)
 
     @api.post("/projects/{project_id}/subtitle/keywords")
     def suggest_keywords(project_id: str):

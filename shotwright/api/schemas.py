@@ -15,6 +15,7 @@ from shotwright.core.models import (
     FitMode,
     Look,
     Overlay,
+    Pronunciation,
     ReferenceAsset,
     SfxSettings,
     ShotRole,
@@ -75,6 +76,8 @@ class UpdateProject(_Body):
     """目标总时长（秒）。"""
     canvas: Canvas | None = None
     voice: VoiceSettings | None = None
+    pronunciations: list[Pronunciation] | None = Field(None, max_length=200)
+    """读音纠正；整体替换。"""
     subtitle: SubtitleStyle | None = None
     overlays: list[Overlay] | None = None
     """叠加文字与图形；整体替换。"""
@@ -172,6 +175,10 @@ class CandidatesRequest(ChargeConsent):
 class AmbienceSearch(_Body):
     query: str = Field("", max_length=200)
     """英文检索词，例如 rain ambience；为空时按第一个镜头的检索词自动生成。"""
+
+
+class PreviewVoice(_Body):
+    text: str = Field(min_length=1, max_length=500)
 
 
 class SuggestTitles(_Body):

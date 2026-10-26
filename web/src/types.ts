@@ -288,6 +288,13 @@ export interface SfxSettings {
 /** 视频类型：商品广告、品牌宣传、知识科普、口播、原片改造。 */
 export type VideoType = "product_ad" | "brand" | "explainer" | "talking" | "footage";
 
+/** 读音纠正：配音时把 word 换成读音相同的 say，字幕仍显示 word。 */
+export interface Pronunciation {
+  word: string;
+  say: string;
+  note: string;
+}
+
 export interface Project {
   id: string;
   title: string;
@@ -299,6 +306,8 @@ export interface Project {
   /** 首尾帧衔接：上一个 AI 镜头的最后一帧作为下一个镜头的首帧。 */
   chain_frames?: boolean;
   language: string;
+  /** 读音纠正表。 */
+  pronunciations?: Pronunciation[];
   target_seconds: number | null;
   /** 目标总时长（秒）；成片以实际配音为准。 */
   group: string | null;
