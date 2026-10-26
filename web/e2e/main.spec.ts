@@ -65,9 +65,9 @@ test.describe("Shotwright 主流程", () => {
     await expect(shots).toHaveCount(1);
   });
 
-  test("参考素材、文字与转场、语言版本区块都在", async ({ page }) => {
+  test("全片设定与主体库、文字与转场、语言版本区块都在", async ({ page }) => {
     await createProject(page, `区块${RUN_ID}，${TWO_SHOTS}`);
-    await expect(page.getByRole("heading", { name: /参考素材|Reference assets/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /全片设定与主体库|Look and references/ })).toBeVisible();
     await expect(page.getByRole("heading", { name: /文字与转场|Text & transitions/ })).toBeVisible();
     await expect(page.getByRole("heading", { name: /语言版本|Language versions/ })).toBeVisible();
   });
@@ -116,5 +116,75 @@ test.describe("Shotwright 主流程", () => {
     page.once("dialog", (dialog) => dialog.accept());
     await shots.first().getByRole("button", { name: /与下一个镜头合并|Merge with the next shot/ }).click();
     await expect(shots).toHaveCount(2);
+  });
+
+  test("诉求模板：选类型、填模板，提交前提醒没填的内容", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("radio", { name: /口播|Talking head/ }).click();
+    await expect(page.locator("#subject")).toHaveAttribute("placeholder", /视频号|YouTube Shorts/);
+    await page.getByRole("button", { name: /使用模板|Use template/ }).click();
+    await expect(page.locator("#subject")).toHaveValue(/主讲人|Presenter/);
+    await page.getByRole("button", { name: /生成分镜|Create storyboard/ }).click();
+    await expect(page.getByRole("alert")).toContainText(/没有填写|unfilled/);
+    await expect(page.getByRole("button", { name: /仍然生成|Create anyway/ })).toBeVisible();
+    // 填入例子后不再提醒。
+    await page.getByRole("button", { name: /填入例子|Fill in example/ }).click();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+  });
+
+  test("全片设定：添加主体并保存外观", async ({ page }) => {
+    await createProject(page, `全片设定${RUN_ID}。${TWO_SHOTS}`);
+    const look = page.locator(".look");
+    await look.getByRole("button", { name: /添加主体|Add subject/ }).click();
+    const appearance = look.getByRole("textbox", { name: /外观|Appearance/ }).first();
+    await appearance.fill("哑光白色圆柱形机身");
+    await appearance.blur();
+    await page.reload();
+    await expect(page.locator(".look").getByRole("textbox", { name: /外观|Appearance/ }).first()).toHaveValue(
+      "哑光白色圆柱形机身",
+    );
+  });
+
+  test("分镜多选：一个镜头选两段素材，依次播放", async ({ page }) => {
+    const dir = mkdtempSync(join(tmpdir(), "shotwright-multi-"));
+    const clips = ["testsrc2", "smptebars"].map((pattern, index) => {
+      const file = join(dir, `clip${index}.mp4`);
+      execFileSync("ffmpeg", [
+        "-y", "-loglevel", "error", "-f", "lavfi", "-i", `${pattern}=size=320x568:rate=24`, "-t", "1.5",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", file,
+      ]);
+      return file;
+    });
+    await createProject(page, `多选${RUN_ID}。${TWO_SHOTS}`);
+    const first = page.locator("article.shot").first();
+    await first.getByRole("radio", { name: /上传|Upload/ }).click();
+    const input = first.locator('input[type="file"][accept="video/*,image/*"]');
+    for (const clip of clips) {
+      await input.setInputFiles(clip);
+      await expect(first.locator(".candidate-wrap")).toHaveCount(clips.indexOf(clip) + 1);
+    }
+    await expect(first.getByText(/多选几段素材|pick several clips/)).toBeVisible();
+    const notPicked = first.locator(".candidate-wrap .pick:not(.on)");
+    await notPicked.first().click();
+    await expect(first.getByText(/已选 2 段素材|2 clips picked/)).toBeVisible();
+    // 后上传的那段是选中的（第 1 段），刚加的排第 2。
+    await expect(first.locator(".candidate-wrap .pick.on")).toHaveText(["2", "1"]);
+    // 删除选中的那段：多选里的下一段顶上，只剩一段素材。
+    page.once("dialog", (dialog) => dialog.accept());
+    await first.locator(".candidate-wrap").nth(1).getByRole("button", { name: /删除这个素材|Remove this clip/ }).click();
+    await expect(first.locator(".candidate-wrap")).toHaveCount(1);
+    await expect(first.locator(".candidate.on")).toHaveCount(1);
+  });
+
+  test("复制为新项目：副本可以单独编辑", async ({ page }) => {
+    await createProject(page, `复制${RUN_ID}。${TWO_SHOTS}`);
+    const originalUrl = page.url();
+    const count = await page.locator("article.shot").count();
+    await page.getByRole("button", { name: /复制为新项目|Duplicate/ }).click();
+    await expect(page).not.toHaveURL(originalUrl);
+    await expect(page.locator("#title")).toHaveValue(/（副本）|\(copy\)/);
+    await expect(page.locator("article.shot")).toHaveCount(count);
+    await page.goto("/");
+    await expect(page.locator(".project-list li").first()).toContainText(/（副本）|\(copy\)/);
   });
 });

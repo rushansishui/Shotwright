@@ -182,3 +182,18 @@ def test_split_cues_falls_back_when_words_do_not_match():
         words=[("xyz", 0.1, 0.5)],
     )
     assert cues and cues[0].end > cues[0].start
+
+
+def test_two_line_cues_keep_their_line_breaks():
+    """两行的字幕要把换行写进字幕本身：ASS 不会自动换行，否则会挤成一行超出画面。"""
+    text = (
+        "2002年中国男足第一次闯进世界杯，小组赛又逼平了西班牙和乌拉圭。但在宝龙峦山谷，"
+        "有一群人在某种意义上更为传奇！因为那份对篮球纯粹的热爱，跨越了漫长的时光，来到了今天！"
+    )
+    cues = subs.split_cues(text, 0, 20, font_path=FONT, size=64, max_width=1650)
+    assert any("\n" in cue.text for cue in cues)
+    font = subs._font(str(FONT), 64)
+    for cue in cues:
+        lines = cue.text.split("\n")
+        assert len(lines) <= 2
+        assert all(font.getlength(line) <= 1650 for line in lines)

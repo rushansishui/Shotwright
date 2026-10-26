@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { api } from "../api";
-import type { Aspect, SubtitleStyle, VisualMode, VisualPatch } from "../types";
+import { subtitleMargin } from "../types";
+import type { Aspect, ShotRole, SubtitleStyle, VisualMode, VisualPatch } from "../types";
 import { Section, Segmented, Slider } from "./Controls";
 import { providerName, useI18n } from "../i18n";
 import { RenderPanel } from "./RenderPanel";
@@ -8,8 +9,15 @@ import { Versions } from "./Versions";
 import { ShotCard } from "./ShotCard";
 import { useEditor } from "./editor/useEditor";
 import { BgmSection } from "./editor/BgmSection";
+import { SfxSection } from "./editor/SfxSection";
+import { LookSection } from "./editor/LookSection";
+import { projectNeedsExpansion } from "../prompts";
 import { ReferencesSection } from "./editor/ReferencesSection";
 import { OverlaySection } from "./editor/OverlaySection";
+import { TitleSection } from "./editor/TitleSection";
+import { TextStyleEditor } from "./editor/TextStyleEditor";
+import { KeywordField } from "./editor/KeywordField";
+import { PronunciationSection } from "./editor/PronunciationSection";
 
 export function Editor({ projectId }: { projectId: string }) {
   const {
@@ -34,6 +42,9 @@ export function Editor({ projectId }: { projectId: string }) {
   const { t, lang } = useI18n();
   const footageInput = useRef<HTMLInputElement>(null);
   const [footageBusy, setFootageBusy] = useState(false);
+  const [expanding, setExpanding] = useState(false);
+  const [marginDraft, setMarginDraft] = useState<number | undefined>(undefined);
+  const [styleDraft, setStyleDraft] = useState<Partial<SubtitleStyle>>({});
 
   if (!project) {
     return <main className="page">{error ? <p className="hint error">{error}</p> : <p className="muted">{t("common.loading")}</p>}</main>;
@@ -53,6 +64,8 @@ export function Editor({ projectId }: { projectId: string }) {
   ] as const) {
     for (const p of providers?.[kind] ?? []) sourceModes[p.id] ??= mode;
   }
+  const llm = defaultProvider("llm");
+  const expandCount = llm ? projectNeedsExpansion(project) : 0;
   const aiVideo = defaultProvider("video_gen");
   const aiImage = defaultProvider("image_gen");
   const updateSubtitle = (patch: Partial<SubtitleStyle>) =>
@@ -107,6 +120,17 @@ export function Editor({ projectId }: { projectId: string }) {
             onChange={(e) => setTitle(e.target.value)}
             onBlur={() => title !== project.title && run(() => api.updateProject(id, { title }))}
           />
+          <button
+            type="button"
+            className="btn"
+            title={t("editor.duplicateHint")}
+            onClick={async () => {
+              const copy = await run(() => api.duplicateProject(id));
+              if (copy) window.location.hash = `#/p/${copy.id}`;
+            }}
+          >
+            {t("editor.duplicate")}
+          </button>
           <Segmented
             label={t("editor.aspect")}
             value={project.canvas.aspect}
@@ -151,6 +175,23 @@ export function Editor({ projectId }: { projectId: string }) {
           }
         >
           {project.shots.length === 0 && <p className="muted">{t("editor.noShots")}</p>}
+          {expandCount > 0 && (
+            <div className="hint warn expand-hint">
+              <span>{t("editor.expandHint")}</span>
+              <button
+                type="button"
+                className="btn small"
+                disabled={expanding}
+                onClick={async () => {
+                  setExpanding(true);
+                  await run(() => api.expand(id));
+                  setExpanding(false);
+                }}
+              >
+                {expanding ? t("editor.expanding") : t("editor.expand")}
+              </button>
+            </div>
+          )}
           <div className="shots">
             {project.shots.map((shot, index) => (
               <ShotCard
@@ -165,15 +206,18 @@ export function Editor({ projectId }: { projectId: string }) {
                 aiImage={aiImage}
                 sourceModes={sourceModes}
                 onFocus={() => setActiveIndex(index)}
-                onUpdate={(body: { text?: string; visual?: VisualPatch }) => run(() => api.updateShot(id, shot.id, body))}
-                onCandidates={(confirmCharge, prompt, editSelected) =>
+                onUpdate={(body: { text?: string; title?: string; role?: ShotRole; visual?: VisualPatch }) => run(() => api.updateShot(id, shot.id, body))}
+                onCandidates={(confirmCharge, patch, editSelected, options) =>
                   run(async () => {
                     // 还没失焦保存的提示词先存好，再生成，避免用旧提示词花钱。
-                    if (prompt !== undefined) await api.updateShot(id, shot.id, { visual: { prompt } });
-                    return api.candidates(id, shot.id, confirmCharge, editSelected);
+                    if (patch !== undefined) await api.updateShot(id, shot.id, { visual: patch });
+                    return api.candidates(id, shot.id, confirmCharge, editSelected, options);
                   }, shot.id)
                 }
+                canRewrite={!!llm}
+                onRewrite={(instruction) => run(() => api.rewriteShot(id, shot.id, instruction), shot.id)}
                 onUpload={(file) => uploadForShot(shot.id, file)}
+                onRemoveCandidate={(assetId) => run(() => api.removeCandidate(id, shot.id, assetId), shot.id)}
                 onMove={(delta) => moveShot(index, delta)}
                 onInsert={() => run(() => api.addShot(id, shot.id))}
                 onSplit={(at) => run(() => api.splitShot(id, shot.id, at), shot.id)}
@@ -193,7 +237,9 @@ export function Editor({ projectId }: { projectId: string }) {
           </div>
         </Section>
 
-        <Section step={2} title={t("references.title")}>
+        <Section step={2} title={t("look.section")}>
+          <LookSection project={project} run={run} />
+          <div className="divider" />
           <ReferencesSection project={project} run={run} setError={setError} />
         </Section>
 
@@ -268,6 +314,7 @@ export function Editor({ projectId }: { projectId: string }) {
               onCommit={(volume) => updateVoice({ volume }).then(() => setDraft({ ...draft, volume: undefined }))}
             />
           </div>
+          <PronunciationSection project={project} canSuggest={!!llm} run={(action) => run(action)} onError={setError} />
           <div className="divider" />
           <BgmSection
             project={project}
@@ -276,6 +323,8 @@ export function Editor({ projectId }: { projectId: string }) {
             draft={draft}
             setDraft={setDraft}
           />
+          <div className="divider" />
+          <SfxSection project={project} run={run} setError={setError} />
         </Section>
 
         <Section
@@ -303,6 +352,26 @@ export function Editor({ projectId }: { projectId: string }) {
                   ]}
                 />
               </div>
+              {project.subtitle.position !== "middle" && (
+                <div className="field">
+                  <Slider
+                    id="sub-margin"
+                    label={t("editor.subtitleMargin")}
+                    value={marginDraft ?? subtitleMargin(project.subtitle, project.canvas.aspect)}
+                    min={0}
+                    max={project.canvas.aspect === "9:16" ? 600 : 400}
+                    step={10}
+                    format={(v) => (project.subtitle.margin === null && marginDraft === undefined ? t("editor.subtitleMarginAuto", { n: v }) : `${v}`)}
+                    onInput={setMarginDraft}
+                    onCommit={(margin) => updateSubtitle({ margin }).then(() => setMarginDraft(undefined))}
+                  />
+                  {project.subtitle.margin !== null && (
+                    <button type="button" className="linkish small" onClick={() => updateSubtitle({ margin: null })}>
+                      {t("editor.subtitleMarginReset")}
+                    </button>
+                  )}
+                </div>
+              )}
               <Slider
                 id="sub-size"
                 label={t("editor.size")}
@@ -314,33 +383,43 @@ export function Editor({ projectId }: { projectId: string }) {
                 onInput={(size) => setDraft({ ...draft, size })}
                 onCommit={(size) => updateSubtitle({ size }).then(() => setDraft({ ...draft, size: undefined }))}
               />
-              <div className="field">
-                <span className="label">{t("editor.color")}</span>
-                <div className="row">
-                  <label className="color-field">
-                    <input type="color" value={project.subtitle.color.toLowerCase()} onChange={(e) => updateSubtitle({ color: e.target.value.toUpperCase() })} />
-                    {t("editor.textColor")}
-                  </label>
-                  <label className="color-field">
-                    <input
-                      type="color"
-                      value={project.subtitle.outline_color.toLowerCase()}
-                      onChange={(e) => updateSubtitle({ outline_color: e.target.value.toUpperCase() })}
-                    />
-                    {t("editor.outlineColor")}
-                  </label>
-                </div>
+              <div className="span-2">
+                <TextStyleEditor
+                  id="sub-style"
+                  value={{ ...project.subtitle, ...styleDraft }}
+                  allowKaraoke
+                  onError={setError}
+                  onChange={(change, commit) => {
+                    // 字幕字体不会是空（没有「跟随」选项）。
+                    const patch = change as Partial<SubtitleStyle>;
+                    setStyleDraft((current) => ({ ...current, ...patch }));
+                    if (commit) updateSubtitle(patch).then(() => setStyleDraft({}));
+                  }}
+                />
+              </div>
+              <div className="span-2">
+                <KeywordField project={project} canSuggest={!!llm} update={updateSubtitle} run={(action) => run(action)} />
               </div>
             </div>
           )}
         </Section>
+
+        <TitleSection project={project} step={5} canSuggest={!!llm} run={run} onError={setError} />
 
         <OverlaySection project={project} run={run} />
 
         <Versions project={project} languages={languages} />
       </div>
 
-      <RenderPanel project={project} paidAvailable={Boolean(aiVideo || aiImage)} shotIndex={activeIndex} onShotIndex={setActiveIndex} onRendered={load} />
+      <RenderPanel
+        project={project}
+        paidAvailable={Boolean(aiVideo || aiImage)}
+        shotIndex={activeIndex}
+        onShotIndex={setActiveIndex}
+        onRendered={load}
+        onBudget={(budget) => run(() => api.updateProject(id, { budget }))}
+        onDelivery={(delivery) => run(() => api.updateProject(id, { delivery }))}
+      />
     </main>
   );
 }

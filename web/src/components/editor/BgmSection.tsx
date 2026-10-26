@@ -27,7 +27,9 @@ export function BgmSection({ project, run, setError, draft, setDraft }: BgmSecti
 
   async function uploadBgm(file: File) {
     try {
-      const asset = await api.upload(id, file);
+      // 按音频登记：音乐文件常装在视频容器里（带封面的 mp4/m4a、MV 片段），
+      // 走普通上传会被当成视频素材，背景音乐这边就选不了。
+      const asset = await api.upload(id, file, true);
       if (asset.kind !== "audio") throw new Error(t("editor.bgmNotAudio"));
       await run(() => api.updateProject(id, { bgm: { ...project.bgm, asset_id: asset.id } }));
     } catch (e) {
@@ -188,6 +190,32 @@ export function BgmSection({ project, run, setError, draft, setDraft }: BgmSecti
           )
         }
       />
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={project.bgm.duck ?? true}
+          onChange={(e) => run(() => api.updateProject(id, { bgm: { ...project.bgm, duck: e.target.checked } }))}
+        />
+        {t("editor.bgmDuck")}
+      </label>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={!!project.bgm.beat_sync}
+          disabled={!project.bgm.asset_id}
+          onChange={(e) => run(() => api.updateProject(id, { bgm: { ...project.bgm, beat_sync: e.target.checked } }))}
+        />
+        {t("editor.bgmBeatSync")}
+      </label>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={project.loudness !== null}
+          onChange={(e) => run(() => api.updateProject(id, { loudness: e.target.checked ? -14 : null }))}
+        />
+        {t("editor.loudness")}
+      </label>
+      <p className="muted small">{t("editor.loudnessHint")}</p>
     </div>
   );
 }

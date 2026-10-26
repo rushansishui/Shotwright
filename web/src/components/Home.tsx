@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { BRIEF_TEMPLATES, VIDEO_TYPES, checkBrief, hasIssues } from "../briefs";
 import { useI18n } from "../i18n";
-import type { Aspect, LanguageInfo, ProjectSummary, Providers } from "../types";
+import type { MessageKey } from "../messages";
+import type { Aspect, LanguageInfo, ProjectSummary, Providers, VideoType } from "../types";
 import { Segmented } from "./Controls";
 
 /** 视频诉求的上限，和后端 schemas.MAX_SUBJECT_BYTES 一致。 */
@@ -15,6 +17,9 @@ function utf8Bytes(text: string): number {
 export function Home() {
   const [mode, setMode] = useState<"llm" | "split">("llm");
   const [subject, setSubject] = useState("");
+  const [videoType, setVideoType] = useState<VideoType>("product_ad");
+  /** 诉求检查发现问题时先提示；用户点「仍然生成」后才真正提交。 */
+  const [warned, setWarned] = useState(false);
   const [script, setScript] = useState("");
   const [aspect, setAspect] = useState<Aspect>("9:16");
   const [duration, setDuration] = useState(30);
@@ -36,6 +41,22 @@ export function Home() {
   const subjectBytes = utf8Bytes(subject);
   const tooLong = subjectBytes > MAX_SUBJECT_BYTES;
   const canSubmit = mode === "llm" ? subject.trim().length > 0 && !tooLong : script.trim().length > 0;
+  const templates = BRIEF_TEMPLATES[lang === "zh" ? "zh" : "en"];
+  const issues = checkBrief(subject, videoType);
+
+  function useTemplate() {
+    if (subject.trim() && !window.confirm(t("home.templateReplace"))) return;
+    setSubject(templates[videoType].template);
+    setWarned(false);
+  }
+
+  function submit() {
+    if (mode === "llm" && !warned && hasIssues(issues)) {
+      setWarned(true);
+      return;
+    }
+    void create();
+  }
 
   async function create() {
     setBusy(true);
@@ -47,6 +68,7 @@ export function Home() {
         script: mode === "split" ? script : "",
         canvas: { aspect },
         language,
+        video_type: videoType,
         // 镜头数交给大模型按诉求和时长决定。
         shots: null,
         duration: mode === "llm" ? duration : null,
@@ -76,6 +98,21 @@ export function Home() {
         />
         {mode === "llm" ? (
           <div className="field">
+            <span className="label">{t("home.videoType")}</span>
+            <Segmented
+              label={t("home.videoType")}
+              value={videoType}
+              onChange={(value) => {
+                setVideoType(value);
+                setWarned(false);
+              }}
+              options={VIDEO_TYPES.map((value) => ({ value, label: t(`videoType.${value}` as MessageKey) }))}
+            />
+            {videoType === "footage" && <p className="hint">{t("home.footageHint")}</p>}
+          </div>
+        ) : null}
+        {mode === "llm" ? (
+          <div className="field">
             <div className="field-row">
               <label htmlFor="subject">{t("home.subject")}</label>
               <span className={`muted small ${tooLong ? "bad" : ""}`}>
@@ -85,12 +122,34 @@ export function Home() {
             <textarea
               id="subject"
               className="input"
-              rows={5}
-              placeholder={t("home.subjectPlaceholder")}
+              rows={9}
+              placeholder={t("home.subjectExample", { example: templates[videoType].example })}
               value={subject}
-              onChange={(e) => setSubject(e.target.value)}
+              onChange={(e) => {
+                setSubject(e.target.value);
+                setWarned(false);
+              }}
               aria-invalid={tooLong}
             />
+            <div className="row">
+              <button type="button" className="btn small" onClick={useTemplate}>
+                {t("home.useTemplate")}
+              </button>
+              <button type="button" className="btn small ghost" onClick={() => {
+                  setSubject(templates[videoType].example);
+                  setWarned(false);
+                }}>
+                {t("home.useExample")}
+              </button>
+            </div>
+            <details className="brief-tips">
+              <summary>{t("home.tips")}</summary>
+              <ul>
+                {["purpose", "audience", "message", "appearance", "style", "include", "noText"].map((key) => (
+                  <li key={key}>{t(`home.tip.${key}` as MessageKey)}</li>
+                ))}
+              </ul>
+            </details>
             {tooLong && <p className="hint error">{t("home.subjectTooLong")}</p>}
             {providers && !llmReady && (
               <p className="hint warn">{t("home.llmMissing")}</p>
@@ -156,8 +215,24 @@ export function Home() {
           )}
         </div>
         {error && <p className="hint error">{error}</p>}
-        <button type="button" className="btn primary big" disabled={!canSubmit || busy} onClick={create}>
-          {busy ? (mode === "llm" ? t("home.writing") : t("home.creating")) : t("home.submit")}
+        {warned && mode === "llm" && hasIssues(issues) && (
+          <div className="hint warn brief-check" role="alert">
+            <p>{t("home.checkTitle")}</p>
+            <ul>
+              {issues.unfilled > 0 && <li>{t("home.checkUnfilled", { n: issues.unfilled })}</li>}
+              {issues.tooShort && <li>{t("home.checkShort")}</li>}
+              {issues.noAppearance && <li>{t("home.checkAppearance")}</li>}
+            </ul>
+          </div>
+        )}
+        <button type="button" className="btn primary big" disabled={!canSubmit || busy} onClick={submit}>
+          {busy
+            ? mode === "llm"
+              ? t("home.writing")
+              : t("home.creating")
+            : warned && mode === "llm" && hasIssues(issues)
+              ? t("home.submitAnyway")
+              : t("home.submit")}
         </button>
       </section>
 
@@ -170,7 +245,7 @@ export function Home() {
         ) : (
           <ul className="project-list">
             {projects.map((p) => (
-              <li key={p.id}>
+              <li key={p.id} className="project-row">
                 <a href={`#/p/${p.id}`}>
                   <span className="project-title">{p.title}</span>
                   <span className="muted">
@@ -182,6 +257,21 @@ export function Home() {
                     })}
                   </span>
                 </a>
+                <button
+                  type="button"
+                  className="btn small ghost"
+                  title={t("editor.duplicateHint")}
+                  onClick={async () => {
+                    try {
+                      const copy = await api.duplicateProject(p.id);
+                      window.location.hash = `#/p/${copy.id}`;
+                    } catch (e) {
+                      setError((e as Error).message);
+                    }
+                  }}
+                >
+                  {t("editor.duplicate")}
+                </button>
               </li>
             ))}
           </ul>

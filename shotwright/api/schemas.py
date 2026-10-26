@@ -8,13 +8,21 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from shotwright.core.models import (
     BgmSettings,
+    CameraMove,
     Canvas,
+    DeliveryPlatform,
     FillMode,
     FitMode,
+    Look,
     Overlay,
+    Pronunciation,
     ReferenceAsset,
+    SfxSettings,
+    ShotRole,
     SubtitleStyle,
+    TitleSettings,
     TransitionSettings,
+    VideoType,
     VisualMode,
     VoiceSettings,
     check_subject,
@@ -31,6 +39,8 @@ class CreateProject(_Body):
     script: str = Field("", max_length=20000)
     title: str = Field("", max_length=120)
     mode: Literal["llm", "split", "empty"] = "split"
+    video_type: VideoType | None = None
+    """视频类型（商品广告、品牌宣传、知识科普、口播、原片改造），写分镜时据此安排结构。"""
     """llm：让大模型写文案并拆镜头；split：把 script 按句拆成镜头；empty：空项目。"""
     shots: int | None = Field(None, ge=1, le=60)
     """期望的镜头数；为空时由大模型按目标时长和诉求内容自行决定。"""
@@ -53,10 +63,21 @@ class UpdateProject(_Body):
     """切换视频语言：同时换成该语言的默认配音声音和字幕字体（文案不变）。"""
     subject: str | None = None
     """视频诉求；上限 4096 字节。"""
+    video_type: VideoType | None = None
+    look: Look | None = None
+    """全片设定；整体替换。"""
+    titles: TitleSettings | None = None
+    """标题：常驻大标题、片头标题卡、镜头小标题样式；整体替换。"""
+    chain_frames: bool | None = None
+    budget: float | None = Field(None, ge=0.0, le=1_000_000)
+    """项目费用上限（元）；显式传 null 表示不限，不传则不改。"""
+    """首尾帧衔接开关。"""
     target_seconds: float | None = Field(None, gt=0, le=1800)
     """目标总时长（秒）。"""
     canvas: Canvas | None = None
     voice: VoiceSettings | None = None
+    pronunciations: list[Pronunciation] | None = Field(None, max_length=200)
+    """读音纠正；整体替换。"""
     subtitle: SubtitleStyle | None = None
     overlays: list[Overlay] | None = None
     """叠加文字与图形；整体替换。"""
@@ -64,6 +85,12 @@ class UpdateProject(_Body):
     ai_badge: bool | None = None
     """画面上是否显示「AI 生成」角标。"""
     bgm: BgmSettings | None = None
+    delivery: DeliveryPlatform | None = None
+    """交付平台：决定编码参数和字幕、叠加文字的安全区。"""
+    sfx: SfxSettings | None = None
+    """音效层：转场音效和环境声。"""
+    loudness: float | None = Field(None, ge=-30.0, le=-5.0)
+    """导出响度（LUFS）；显式传 null 表示不做响度处理，不传则不改。"""
     references: list[ReferenceAsset] | None = None
     """项目级参考素材库；整体替换。"""
 
@@ -77,8 +104,13 @@ class VisualPatch(_Body):
     mode: VisualMode | None = None
     terms: list[str] | None = Field(None, max_length=10)
     prompt: str | None = Field(None, max_length=2000)
+    image_prompt: str | None = Field(None, max_length=2000)
+    camera: CameraMove | None = None
+    link: str | None = Field(None, max_length=400)
     provider: str | None = None
     selected: str | None = None
+    sequence: list[str] | None = Field(None, max_length=10)
+    """多选：在选中的素材之后依次播放的其他素材（按顺序）；传空列表取消多选。"""
     first_frame: str | None = None
     clear_first_frame: bool = False
     """为真时取消首帧，改为纯文字生成视频。"""
@@ -100,6 +132,9 @@ class UpdateShot(_Body):
     duration: float | None = Field(None, gt=0, le=120)
     clear_duration: bool = False
     visual: VisualPatch | None = None
+    title: str | None = Field(None, max_length=60)
+    """镜头小标题；传空字符串清除。"""
+    role: ShotRole | None = None
     voice: VoiceSettings | None = None
     clear_voice: bool = False
 
@@ -129,6 +164,43 @@ class ChargeConsent(_Body):
 class CandidatesRequest(ChargeConsent):
     edit_selected: bool = False
     """改画面：把当前选中的视频交给支持视频转视频的 AI 服务按提示词改写。"""
+    count: int = Field(1, ge=1, le=3)
+    """AI 视频一次生成几条，同一批供挑选；费用按条数成倍增加。"""
+    keyframes: int = Field(0, ge=0, le=3)
+    """AI 视频镜头先出几张关键帧图片（0 表示直接生成视频）。"""
+    quality: Literal["draft", "final"] = "final"
+    """草稿档用较低分辨率生成 AI 视频。"""
+
+
+class AmbienceSearch(_Body):
+    query: str = Field("", max_length=200)
+    """英文检索词，例如 rain ambience；为空时按第一个镜头的检索词自动生成。"""
+
+
+class PreviewVoice(_Body):
+    text: str = Field(min_length=1, max_length=500)
+
+
+class SuggestTitles(_Body):
+    shot_titles: bool = True
+    """同时为还没有小标题的镜头写小标题（已有的不覆盖）。"""
+    apply_headline: bool = False
+    """直接把第一条候选设为常驻大标题并打开。"""
+
+
+class DuplicateProject(_Body):
+    title: str = Field("", max_length=120)
+    """新项目的标题；为空时用「原标题（副本）」。"""
+
+
+class RewriteShot(_Body):
+    instruction: str = Field(..., min_length=1, max_length=500)
+    """一句改写要求，例如「改成俯拍特写，突出按键」。"""
+
+
+class ExpandRequest(_Body):
+    only_short: bool = True
+    """只补全画面描述太短或缺少衔接的镜头；为假时重写所有非纯色镜头。"""
 
 
 class CreateVersion(_Body):
@@ -156,6 +228,8 @@ class BgmDownload(_Body):
     """候选的远端唯一标识，来自搜索结果的 remote_id。"""
     url: str = Field(..., max_length=2000)
     """下载地址，来自搜索结果的 url。"""
+    preview_url: str = Field("", max_length=2000)
+    """试听地址；界面会把整条候选原样发回来，这里接受但不用。"""
     title: str = Field("", max_length=200)
     author: str = Field("", max_length=200)
     duration: float = Field(0.0, ge=0)

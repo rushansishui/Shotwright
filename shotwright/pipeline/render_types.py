@@ -13,6 +13,13 @@ KEN_BURNS = "ken-burns-1"
 """图片镜头的运动效果版本；改动滤镜参数时同步修改，让旧缓存失效。"""
 
 
+AUDIO_MIX = "audio-mix-2"
+"""整片音频处理（背景音乐闪避、淡入淡出、响度标准化）的版本；改动参数时同步修改，让旧缓存失效。"""
+
+TRUE_PEAK = -1.5
+"""响度标准化时的真峰值上限（dBTP），避免平台转码后削波。"""
+
+
 class RenderError(RuntimeError):
     pass
 
@@ -51,6 +58,8 @@ class RenderResult:
     timings: list[ShotTiming]
     stages: list[StageRecord]
     warnings: list[str] = field(default_factory=list)
+    inspection: list[dict] = field(default_factory=list)
+    """成片抽帧检查发现的问题：[{"shot": 镜头序号, "issues": [...]}]。"""
 
     def to_dict(self) -> dict:
         from dataclasses import asdict

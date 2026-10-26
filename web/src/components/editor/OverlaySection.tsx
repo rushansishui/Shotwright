@@ -42,7 +42,7 @@ export function OverlaySection({ project, run }: OverlaySectionProps) {
   }
 
   return (
-    <Section step={5} title={t("overlay.title")} extra={
+    <Section step={6} title={t("overlay.title")} extra={
       <button type="button" className="btn" onClick={() => save([...overlays, newOverlay()])}>
         {t("overlay.add")}
       </button>

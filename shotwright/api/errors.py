@@ -22,8 +22,18 @@ EN: dict[str, str] = {
     "任务已结束或不存在": "Job has already finished or does not exist",
     "文件不存在": "File not found",
     "无效的 id": "Invalid id",
+    "候选素材不存在": "Candidate not found",
+    "试听的文字为空": "Nothing to preview",
+    "读音纠正的词不能为空": "Pronunciation entries cannot be empty",
     "路径越界": "Path escapes the project directory",
     "项目路径越界": "Project path escapes the storage directory",
+    # 字体
+    "找不到这个字体": "Font not found",
+    "只支持 .ttf 和 .otf 字体文件": "Only .ttf and .otf font files are supported",
+    "字体文件超过 40MB": "Font file is larger than 40MB",
+    "无法读取这个字体文件": "This font file could not be read",
+    "和内置字体重名，请先改个文件名": "A built-in font has the same file name; please rename the file first",
+    "内置字体不能删除": "Built-in fonts cannot be deleted",
     # 校验
     "不支持的语言": "Unsupported language",
     "请填写视频诉求": "Please describe what the video should say",

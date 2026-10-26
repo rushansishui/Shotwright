@@ -36,7 +36,15 @@ if not exist "config.toml" (
   echo [Shotwright] Created config.toml from the template. Fill in API keys there when needed.
 )
 
-if not exist "web\dist\index.html" (
+rem Rebuild the web UI when it is missing or any file under web\src is newer than the build
+rem (for example after pulling new code), so the browser never shows an outdated UI.
+set "NEED_WEB="
+if not exist "web\dist\index.html" set "NEED_WEB=1"
+if not defined NEED_WEB (
+  powershell -NoProfile -Command "$d=(Get-Item 'web\dist\index.html').LastWriteTime; $n=Get-ChildItem 'web\src','web\index.html','web\package.json' -Recurse -File | Where-Object { $_.LastWriteTime -gt $d } | Select-Object -First 1; if ($n) { exit 1 }"
+  if errorlevel 1 set "NEED_WEB=1"
+)
+if defined NEED_WEB (
   where npm >nul 2>nul
   if errorlevel 1 (
     echo [Shotwright] Node.js not found, skipping the web UI build. Install Node.js 20+ from https://nodejs.org/

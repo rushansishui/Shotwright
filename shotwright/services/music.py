@@ -44,6 +44,14 @@ def build_default_query(project: Project) -> str:
     return "calm background music"
 
 
+def ambience_query(project: Project) -> str:
+    """环境声的默认检索词：取第一个有检索词的镜头的前两个词，加上 ambience。"""
+    for shot in project.shots:
+        if shot.visual.terms:
+            return f"{' '.join(shot.visual.terms[0].split()[:2])} ambience"
+    return "room tone ambience"
+
+
 def suggest_queries(llm: LLMProvider, project: Project) -> list[str]:
     """让大模型把诉求和镜头提示词提炼成音乐检索词；失败时退回默认词。"""
     prompts = [shot.visual.prompt.strip() for shot in project.shots if shot.visual.prompt.strip()]

@@ -198,7 +198,10 @@ registry.register(
             ),
             ConfigField("model", "模型", default="doubao-seedance-2-5-260628"),
             ConfigField("base_url", "Base URL", default=ARK_BASE_URL),
-            ConfigField("resolution", "分辨率", default="1080p", help="480p / 720p / 1080p"),
+            ConfigField("resolution", "分辨率", default="1080p", help="480p / 720p / 1080p，成片档使用"),
+            ConfigField(
+                "draft_resolution", "草稿分辨率", default="720p", help="草稿档生成用的分辨率，更快更省钱"
+            ),
             ConfigField("min_duration", "最短秒数", default="4"),
             ConfigField("max_duration", "最长秒数", default="30"),
             ConfigField("poll_interval", "轮询间隔（秒）", default="5"),
@@ -214,6 +217,7 @@ registry.register(
         has_audio=False,
         video_to_video=True,
         max_ref_images=1,
+        prompt_languages=("zh", "en"),
     ),
     SeedanceVideo,
 )

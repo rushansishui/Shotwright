@@ -1,0 +1,1069 @@
+"""视频质量专项：声音、诉求、分镜等改动的测试。"""
+
+from test_api import _create
+
+from shotwright.core.models import Project, Shot, ShotVisual, VoiceSettings
+from shotwright.media.ffmpeg import measure_loudness, run_ffmpeg
+from shotwright.pipeline.render import Renderer, audio_filter
+
+
+def _sine(path, *, seconds=4.0, volume=1.0):
+    run_ffmpeg(
+        [
+            "-f",
+            "lavfi",
+            "-i",
+            f"sine=frequency=440:duration={seconds}",
+            "-af",
+            f"volume={volume}",
+            "-c:a",
+            "aac",
+            str(path),
+        ]
+    )
+    return path
+
+
+def _project_with_bgm(store, tmp_path, **kwargs):
+    shots = [
+        Shot(text="第一个镜头。", visual=ShotVisual(mode="color")),
+        Shot(text="第二个镜头。", visual=ShotVisual(mode="color")),
+    ]
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=shots, **kwargs))
+    bgm = store.add_asset(project, _sine(tmp_path / "bgm.m4a", volume=0.05), kind="audio", source="upload")
+    project.bgm.asset_id = bgm.id
+    project.bgm.volume = 1.0
+    store.save(project)
+    return project
+
+
+def test_export_normalizes_loudness(store, settings, tmp_path):
+    project = _project_with_bgm(store, tmp_path)
+    result = Renderer(store, settings).render(project.id)
+    loudness = measure_loudness(store.render_dir(project.id, result.render_id) / result.video)
+    assert loudness is not None and abs(loudness - (-14.0)) <= 1.0
+
+
+def test_loudness_can_be_turned_off(store, settings, tmp_path):
+    project = _project_with_bgm(store, tmp_path, loudness=None)
+    result = Renderer(store, settings).render(project.id)
+    loudness = measure_loudness(store.render_dir(project.id, result.render_id) / result.video)
+    # 0.05 倍的正弦波远低于 -14 LUFS，不处理时保持原样。
+    assert loudness is not None and loudness < -25
+
+
+def test_audio_filter_ducks_and_fades_bgm():
+    project = Project()
+    graph = audio_filter(project, 1, 10.0)
+    assert "sidechaincompress" in graph
+    assert "afade=t=in:st=0:d=1.00" in graph
+    assert "afade=t=out:st=8.000:d=2.00" in graph
+    assert graph.endswith("[a]")
+
+    project.bgm.duck = False
+    project.bgm.fade_in = 0
+    project.loudness = None
+    graph = audio_filter(project, 1, 10.0)
+    assert "sidechaincompress" not in graph and "afade=t=in" not in graph
+    assert graph.endswith("normalize=0[a]") and "sidechaincompress" not in graph
+
+
+def test_audio_filter_without_bgm_is_empty():
+    assert audio_filter(Project(), None, 5.0) == ""
+
+
+def test_ducking_lowers_music_under_voice(store, settings, tmp_path):
+    """有声音的主轨（模拟配音）会把背景音乐压下去。"""
+    voice = _sine(tmp_path / "voice.m4a", seconds=4.0, volume=0.5)
+    music = _sine(tmp_path / "music.m4a", seconds=4.0, volume=0.5)
+    project = Project()
+    project.bgm.volume = 1.0
+    project.bgm.fade_in = 0
+    project.bgm.fade_out = 0
+
+    def mix(duck):
+        project.bgm.duck = duck
+        out = tmp_path / f"mix-{duck}.m4a"
+        run_ffmpeg(
+            [
+                "-i",
+                str(voice),
+                "-i",
+                str(music),
+                "-filter_complex",
+                audio_filter(project, 1, 4.0),
+                "-map",
+                "[a]",
+                "-c:a",
+                "aac",
+                str(out),
+            ]
+        )
+        return measure_loudness(out)
+
+    assert mix(True) < mix(False) - 1.0
+
+
+def test_api_turns_loudness_off_and_on(client):
+    project = _create(client)
+    assert project["loudness"] == -14.0
+    patched = client.patch(f"/api/v2/projects/{project['id']}", json={"loudness": None}).json()
+    assert patched["loudness"] is None
+    patched = client.patch(f"/api/v2/projects/{project['id']}", json={"title": "x"}).json()
+    assert patched["loudness"] is None  # 不传就不改
+    patched = client.patch(f"/api/v2/projects/{project['id']}", json={"loudness": -16}).json()
+    assert patched["loudness"] == -16
+
+
+class _RecordingLLM:
+    def __init__(self, reply):
+        self.reply = reply
+        self.messages = []
+
+    def complete(self, messages, *, json_mode=False):
+        self.messages.append(messages)
+        return self.reply
+
+
+def test_video_type_is_stored_and_sent_to_llm():
+    from shotwright.services import storyboard
+
+    llm = _RecordingLLM('{"title": "t", "shots": [{"text": "一句话。", "terms": ["a"], "prompt": "p"}]}')
+    storyboard.generate_storyboard(llm, "卖咖啡机", video_type="product_ad")
+    assert "视频类型：商品广告" in llm.messages[0][-1]["content"]
+
+
+def test_api_saves_video_type_and_footage_sets_default(client, tmp_path):
+    from conftest import make_clip
+
+    created = client.post(
+        "/api/v2/projects",
+        json={"mode": "split", "script": "一句话。", "video_type": "brand", "voice": {"provider": "silent"}},
+    ).json()
+    assert created["video_type"] == "brand"
+    assert (
+        client.patch(f"/api/v2/projects/{created['id']}", json={"video_type": "talking"}).json()["video_type"]
+        == "talking"
+    )
+    assert client.patch(f"/api/v2/projects/{created['id']}", json={"video_type": "nope"}).status_code == 422
+
+    empty = client.post("/api/v2/projects", json={"mode": "empty"}).json()
+    clip = make_clip(tmp_path / "raw.mp4", seconds=1.0)
+    with clip.open("rb") as handle:
+        response = client.post(f"/api/v2/projects/{empty['id']}/footage", files={"file": ("raw.mp4", handle)})
+    assert response.status_code == 201, response.text
+    assert client.get(f"/api/v2/projects/{empty['id']}").json()["video_type"] == "footage"
+
+
+class _ScriptedLLM:
+    """按固定回复写分镜的大模型。"""
+
+    def __init__(self, settings=None):
+        pass
+
+    def complete(self, messages, *, json_mode=False):
+        return (
+            '{"title": "t", "shots": ['
+            '{"text": "第一个镜头的文案。", "terms": ["coffee"], "prompt": "a white coffee maker on a desk"},'
+            '{"text": "第二个镜头的文案。", "terms": ["subway"], "prompt": "a woman runs to the subway"}]}'
+        )
+
+
+def test_bench_runs_briefs_and_reports(store, settings, tmp_path):
+    from shotwright.providers import registry
+    from shotwright.providers.base import ProviderSpec
+    from shotwright.services import bench
+
+    registry.register(ProviderSpec(kind="llm", id="scripted", name="Scripted", offline=True), _ScriptedLLM)
+    settings.defaults["llm"] = "scripted"
+    settings.auto_fetch_visuals = True
+    report = bench.run_bench(
+        store,
+        settings,
+        tmp_path / "run",
+        render=True,
+        aspects=["16:9"],
+        only=["product_ad"],
+        progress=lambda m: None,
+    )
+    case = report.cases[0]
+    assert not case.error, case.error
+    assert case.shots == 2 and case.prompt_avg == 6.5
+    assert case.rendered and case.loudness is None  # 静音配音、没有背景音乐：测不出响度
+    # 假素材 2 秒，和镜头时长相当，几乎不需要补足。
+    assert case.fill_ratio < 0.05 and case.blank_ratio == 0.0
+    text = (tmp_path / "run" / "report.md").read_text(encoding="utf-8")
+    assert "画面描述平均长度" in text and "product_ad" in text
+    compared = bench.format_report(report.to_dict(), report.to_dict())
+    assert "| 变化 |" in compared
+
+
+def test_prompt_size_counts_words_and_cjk():
+    from shotwright.services.bench import prompt_size
+
+    assert prompt_size("a white coffee maker") == 4
+    assert prompt_size("白色咖啡机放在木桌上") == 5
+
+
+_GOOD_PROMPT_ZH = (
+    "P1 放在浅色木桌中央，清晨的阳光从左侧窗户斜照进来。一只手伸进画面按下 P1 正面的银色圆形按键，"
+    "指示灯亮起，几秒后深褐色的浓缩咖啡缓缓流进白色陶瓷杯，杯口升起细细的热气。近景，主体位于画面中下方，"
+    "背景是虚化的书架和绿植，暖色自然光，桌面上有一本摊开的笔记本和一支黑色钢笔，整体干净明亮。"
+)
+
+
+def _board_reply(prompt=_GOOD_PROMPT_ZH, link="开场：从桌面空镜切入"):
+    import json
+
+    return json.dumps(
+        {
+            "title": "一键咖啡",
+            "look": {
+                "subjects": [
+                    {
+                        "code": "P1",
+                        "name": "便携咖啡机",
+                        "kind": "product",
+                        "appearance": "哑光白色圆柱形机身",
+                    },
+                    {"code": "P1", "name": "重复", "kind": "product", "appearance": "x"},
+                    {"code": "1bad", "name": "非法代号"},
+                ],
+                "scene": "城市公寓",
+                "style": "明亮干净",
+                "avoid": "其他品牌",
+            },
+            "shots": [
+                {
+                    "text": "早上没时间？",
+                    "terms": ["coffee"],
+                    "prompt": prompt,
+                    "camera": "push_in",
+                    "link": link,
+                },
+                {"text": "一键出咖啡。", "terms": ["cup"], "prompt": prompt, "camera": "zoom", "link": link},
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+
+def test_write_storyboard_parses_look_camera_and_link():
+    from shotwright.services import storyboard
+
+    llm = _RecordingLLM(_board_reply())
+    board = storyboard.write_storyboard(llm, "卖咖啡机", video_type="product_ad", aspect="9:16", duration=8)
+    assert [s.code for s in board.look.subjects] == ["P1"]
+    assert board.look.subjects[0].appearance == "哑光白色圆柱形机身"
+    assert board.shots[0].visual.camera == "push_in" and board.shots[1].visual.camera == "auto"
+    assert board.shots[0].visual.link.startswith("开场")
+    assert board.issues == [] and len(llm.messages) == 1
+    user = llm.messages[0][-1]["content"]
+    assert "画面比例：竖屏 9:16" in user and "目标时长：约 8 秒" in user and "诉求原文" in user
+    assert "120–200 字" in llm.messages[0][0]["content"]
+
+
+def test_write_storyboard_rewrites_once_when_check_fails():
+    from shotwright.services import storyboard
+
+    class TwoReplies:
+        def __init__(self):
+            self.calls = []
+
+        def complete(self, messages, *, json_mode=False):
+            self.calls.append(messages)
+            return _board_reply(prompt="P2 很短", link="") if len(self.calls) == 1 else _board_reply()
+
+    llm = TwoReplies()
+    board = storyboard.write_storyboard(llm, "卖咖啡机", video_type="product_ad")
+    assert len(llm.calls) == 2
+    feedback = llm.calls[1][-1]["content"]
+    assert "画面描述只有" in feedback and "缺少衔接说明" in feedback and "P2" in feedback
+    assert board.issues == [] and board.shots[0].visual.prompt == _GOOD_PROMPT_ZH
+
+
+def test_check_storyboard_flags_duration_and_missing_subjects():
+    from shotwright.core.models import Look
+    from shotwright.services.storyboard import Storyboard, check_storyboard
+
+    board = Storyboard(
+        title="t", shots=[Shot(text="很短。", visual=ShotVisual(prompt="x", link="y"))], look=Look()
+    )
+    issues = check_storyboard(board, lang="en", duration=60, video_type="product_ad")
+    assert any("目标约 60 秒" in issue for issue in issues)
+    assert any("缺少主体" in issue for issue in issues)
+    assert any("个词" in issue for issue in issues)
+
+
+def test_compose_prompt_adds_look_camera_link_and_no_text():
+    from shotwright.core.models import Look, LookSubject
+    from shotwright.services import prompting
+
+    project = Project(
+        look=Look(
+            subjects=[
+                LookSubject(code="P1", name="咖啡机", kind="product", appearance="哑光白色圆柱形机身"),
+                LookSubject(code="A", name="女主", kind="person", appearance="黑色短发"),
+            ],
+            scene="城市公寓",
+            style="明亮干净",
+            avoid="其他品牌",
+        )
+    )
+    shot = Shot(
+        text="x", visual=ShotVisual(prompt="P1 放在桌上", camera="orbit", link="承接上一镜头的手部动作")
+    )
+    text = prompting.compose(project, shot)
+    assert text.startswith("P1 放在桌上")
+    assert "运镜：镜头绕主体缓慢环绕" in text and "衔接：承接上一镜头的手部动作" in text
+    assert "P1（咖啡机）：哑光白色圆柱形机身" in text and "黑色短发" not in text  # 只带上用到的主体
+    assert "场景：城市公寓" in text and "不要出现：其他品牌" in text and "不出现任何文字" in text
+
+    image = prompting.compose(project, shot, target="image")
+    assert "运镜" not in image and "静态画面" in image
+
+    project.language = "en-US"
+    assert "Camera: Slow orbit" in prompting.compose(project, shot)
+
+
+def test_prompt_is_translated_when_model_lacks_language(store, settings):
+    from shotwright.providers import registry
+    from shotwright.providers.base import ProviderSpec
+    from shotwright.services import prompting, visuals
+
+    class Translator:
+        def __init__(self, _settings):
+            pass
+
+        def complete(self, messages, *, json_mode=False):
+            return "TRANSLATED: " + messages[-1]["content"][:10]
+
+    registry.register(ProviderSpec(kind="llm", id="translator", name="T", offline=True), Translator)
+    settings.defaults["llm"] = "translator"
+    project = store.create(
+        Project(
+            voice=VoiceSettings(provider="silent"),
+            shots=[Shot(text="x", visual=ShotVisual(mode="image", prompt="一只猫"))],
+        )
+    )
+    prompting._cache.clear()
+    # 假的文生图只声明支持英文：中文项目提交前先翻译。
+    assert visuals.build_prompt(settings, project, project.shots[0], "image_gen", "fakeimg").startswith(
+        "TRANSLATED"
+    )
+    # Seedream 支持中文：原样提交。
+    assert visuals.build_prompt(settings, project, project.shots[0], "image_gen", "seedream").startswith(
+        "一只猫"
+    )
+
+
+def test_api_updates_look_and_shot_camera(client):
+    created = _create(client)
+    look = {
+        "subjects": [{"code": "P1", "name": "咖啡机", "kind": "product", "appearance": "白色"}],
+        "scene": "公寓",
+        "style": "",
+        "avoid": "",
+    }
+    patched = client.patch(f"/api/v2/projects/{created['id']}", json={"look": look}).json()
+    assert patched["look"]["subjects"][0]["code"] == "P1"
+    bad = {**look, "subjects": [look["subjects"][0], look["subjects"][0]]}
+    assert client.patch(f"/api/v2/projects/{created['id']}", json={"look": bad}).status_code == 422
+    shot_id = created["shots"][0]["id"]
+    shot = client.patch(
+        f"/api/v2/projects/{created['id']}/shots/{shot_id}",
+        json={"visual": {"camera": "crane", "link": "接上一镜"}},
+    ).json()
+    target = next(s for s in shot["shots"] if s["id"] == shot_id) if "shots" in shot else shot
+    assert target["visual"]["camera"] == "crane" and target["visual"]["link"] == "接上一镜"
+
+
+class _VaryingVideo:
+    """每次生成不同画面的假 AI 视频服务（素材按内容去重，相同画面会被当成同一个素材）。"""
+
+    patterns = ["testsrc2", "smptebars", "rgbtestsrc", "yuvtestsrc", "pal75bars", "smptehdbars"]
+    calls: list[dict] = []
+
+    def __init__(self, settings):
+        self.resolution = settings.get("resolution") or "1080p"
+
+    def generate(
+        self, prompt, *, aspect, duration, output, first_frame=None, reference_video=None, on_task=None
+    ):
+        from conftest import make_clip
+
+        _VaryingVideo.calls.append(
+            {
+                "prompt": prompt,
+                "duration": duration,
+                "first_frame": first_frame,
+                "resolution": self.resolution,
+            }
+        )
+        pattern = self.patterns[len(_VaryingVideo.calls) % len(self.patterns)]
+        return make_clip(output.with_suffix(".mp4"), seconds=min(duration, 3.0), pattern=pattern)
+
+
+def _varying(settings, *, max_duration=None):
+    from shotwright.providers import registry
+    from shotwright.providers.base import ProviderSpec
+
+    registry.register(
+        ProviderSpec(kind="video_gen", id="varying", name="Varying", paid=True, max_duration=max_duration),
+        _VaryingVideo,
+    )
+    settings.defaults["video_gen"] = "varying"
+    _VaryingVideo.calls.clear()
+
+
+def test_generation_records_takes_and_prunes_with_candidates(store, settings):
+    from shotwright.services import visuals
+
+    _varying(settings)
+    shot = Shot(text="一句话。", visual=ShotVisual(mode="ai", prompt="a cat"))
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=[shot]))
+    shot = project.shots[0]
+    first = visuals.refresh_candidates(store, settings, project, shot, confirm_charge=True)[0]
+    second = visuals.refresh_candidates(store, settings, project, shot, confirm_charge=True)[0]
+    assert [t.asset_id for t in shot.visual.takes] == [first, second]
+    assert shot.visual.take(second).kind == "video" and shot.visual.take(second).prompt == "a cat"
+    assert shot.visual.takes[0].batch != shot.visual.takes[1].batch
+
+    # 候选被挤出时版本记录一起清理。
+    visuals._attach(shot, [], select=False)
+    shot.visual.candidates = [second]
+    visuals._attach(shot, [])
+    assert [t.asset_id for t in shot.visual.takes] == [second]
+
+
+def test_image_prompt_is_used_for_images_and_falls_back():
+    from shotwright.services import prompting
+
+    project = Project()
+    shot = Shot(text="x", visual=ShotVisual(prompt="P1 被拿起后放下", image_prompt="P1 静置在木桌上"))
+    assert prompting.compose(project, shot, target="image").startswith("P1 静置在木桌上")
+    assert prompting.compose(project, shot).startswith("P1 被拿起后放下")
+    shot.visual.image_prompt = ""
+    assert prompting.compose(project, shot, target="image").startswith("P1 被拿起后放下")
+
+
+def test_storyboard_reads_still_prompt():
+    import json
+
+    from shotwright.services import storyboard
+
+    data = json.loads(_board_reply())
+    data["shots"][0]["still"] = "P1 静置在木桌上"
+    board = storyboard.write_storyboard(_RecordingLLM(json.dumps(data, ensure_ascii=False)), "x")
+    assert board.shots[0].visual.image_prompt == "P1 静置在木桌上"
+
+
+class _VaryingImage:
+    calls: list[str] = []
+
+    def __init__(self, settings):
+        pass
+
+    def generate(self, prompt, *, aspect, output):
+        from conftest import make_image
+
+        _VaryingImage.calls.append(prompt)
+        size = ["320x240", "400x300", "480x360", "560x420"][len(_VaryingImage.calls) % 4]
+        return make_image(output.with_suffix(".png"), size=size)
+
+
+def test_count_keyframes_and_draft_resolution(store, settings):
+    from shotwright.providers import registry
+    from shotwright.providers.base import ProviderSpec
+    from shotwright.services import visuals
+
+    _varying(settings)
+    registry.register(ProviderSpec(kind="image_gen", id="varyimg", name="VI", paid=True), _VaryingImage)
+    settings.defaults["image_gen"] = "varyimg"
+    shot = Shot(text="一句话。", visual=ShotVisual(mode="ai", prompt="P1 被拿起", image_prompt="P1 静置"))
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=[shot]))
+    shot = project.shots[0]
+
+    frames = visuals.refresh_candidates(store, settings, project, shot, confirm_charge=True, keyframes=2)
+    assert len(frames) == 2 and shot.visual.selected is None  # 关键帧不改变选中的画面
+    assert {t.kind for t in shot.visual.takes} == {"keyframe"} and len(
+        {t.batch for t in shot.visual.takes}
+    ) == 1
+    assert all(prompt.startswith("P1 静置") for prompt in _VaryingImage.calls)
+
+    videos = visuals.refresh_candidates(
+        store, settings, project, shot, confirm_charge=True, count=2, quality="draft"
+    )
+    assert len(videos) == 2 and shot.visual.selected == videos[-1]
+    batches = {t.batch for t in shot.visual.takes if t.kind == "video"}
+    assert len(batches) == 1
+    assert [call["resolution"] for call in _VaryingVideo.calls] == ["720p", "720p"]
+    assert project.assets[videos[0]].meta["resolution"] == "720p"
+
+
+def test_draft_resolution_halves_video_cost(settings):
+    from shotwright.services import cost
+
+    settings.providers.setdefault("video_gen", {})["seedance"] = {"api_key": "k", "resolution": "1080p"}
+    project = Project(
+        shots=[Shot(text="一句话说完。", visual=ShotVisual(mode="ai", prompt="x", provider="seedance"))]
+    )
+    final = cost.estimate_render_cost(project, settings).total_visual
+    draft = cost.estimate_render_cost(project, settings, "draft").total_visual
+    assert final > 0 and abs(draft - final / 2) < 1e-6
+
+
+class _Seer:
+    """假的看图模型：按调用顺序返回预设的得分。"""
+
+    replies: list[str] = []
+    prompts: list[tuple[str, int]] = []
+
+    def __init__(self, settings):
+        self.vision_model = "fake-vision"
+
+    def complete(self, messages, *, json_mode=False):
+        return "{}"
+
+    def see(self, prompt, images):
+        _Seer.prompts.append((prompt, len(images)))
+        return _Seer.replies.pop(0)
+
+
+def test_inspection_scores_takes_and_selects_best(store, settings, tmp_path):
+    from conftest import make_image
+
+    from shotwright.core.models import ReferenceAsset
+    from shotwright.providers import registry
+    from shotwright.providers.base import ProviderSpec
+    from shotwright.services import visuals
+
+    _varying(settings)
+    registry.register(ProviderSpec(kind="llm", id="seer", name="Seer", offline=True), _Seer)
+    settings.defaults["llm"] = "seer"
+    shot = Shot(text="一句话。", visual=ShotVisual(mode="ai", prompt="P1 放在桌上"))
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=[shot]))
+    ref = store.add_asset(project, make_image(tmp_path / "ref.png"), kind="image", source="upload")
+    project.references = [ReferenceAsset(asset_id=ref.id, role="product", label="正面")]
+    shot = project.shots[0]
+    _Seer.prompts.clear()
+    _Seer.replies[:] = [
+        '{"relevance": 0.9, "consistency": 0.9, "issue": "无"}',
+        '{"relevance": 0.9, "consistency": 0.3, "issue": "产品颜色变成了黑色"}',
+    ]
+    added = visuals.refresh_candidates(store, settings, project, shot, confirm_charge=True, count=2)
+    first, second = (shot.visual.take(asset_id) for asset_id in added)
+    assert first.score == 0.9 and first.issue == ""
+    assert second.score == 0.54 and second.issue == "产品颜色变成了黑色"
+    assert shot.visual.selected == added[0]  # 选中得分高的一条
+    prompt, images = _Seer.prompts[0]
+    assert "参考图（正面）" in prompt and images == 4  # 1 张参考图 + 3 帧
+
+
+def test_inspection_is_skipped_without_vision_model(store, settings):
+    from shotwright.services import visuals
+
+    _varying(settings)
+    shot = Shot(text="一句话。", visual=ShotVisual(mode="ai", prompt="a cat"))
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=[shot]))
+    added = visuals.refresh_candidates(store, settings, project, project.shots[0], confirm_charge=True)
+    assert project.shots[0].visual.take(added[0]).score is None
+
+
+def test_chain_frames_uses_previous_last_frame(store, settings):
+    from shotwright.services import visuals
+
+    _varying(settings)
+    shots = [
+        Shot(text="第一句。", visual=ShotVisual(mode="ai", prompt="a cat walks")),
+        Shot(text="第二句。", visual=ShotVisual(mode="ai", prompt="the cat sits")),
+    ]
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=shots))
+    first = visuals.refresh_candidates(store, settings, project, project.shots[0], confirm_charge=True)[0]
+    visuals.refresh_candidates(store, settings, project, project.shots[1], confirm_charge=True)
+    assert _VaryingVideo.calls[-1]["first_frame"] is None  # 默认关闭
+
+    project.chain_frames = True
+    [second] = visuals.refresh_candidates(store, settings, project, project.shots[1], confirm_charge=True)
+    assert _VaryingVideo.calls[-1]["first_frame"] is not None
+    frame_id = project.assets[second].meta["first_frame"]
+    assert (
+        project.assets[frame_id].kind == "image" and project.assets[frame_id].meta["last_frame_of"] == first
+    )
+
+
+def test_long_shot_is_extended_from_last_frame(store, settings):
+    from shotwright.media.ffmpeg import probe
+    from shotwright.services import visuals
+
+    _varying(settings, max_duration=2)
+    text = "这是一段比较长的旁白，需要好几秒才能读完，所以画面要比模型一次能生成的时长更长一些才行。"
+    shot = Shot(text=text, visual=ShotVisual(mode="ai", prompt="a cat walks"))
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=[shot]))
+    [asset_id] = visuals.refresh_candidates(store, settings, project, project.shots[0], confirm_charge=True)
+    calls = _VaryingVideo.calls
+    assert 2 <= len(calls) <= visuals.MAX_EXTEND_PARTS
+    assert calls[0]["first_frame"] is None and all(call["first_frame"] is not None for call in calls[1:])
+    assert calls[1]["prompt"].startswith("接着上一段画面继续")
+    assert all(call["duration"] <= 2 for call in calls)
+    asset = project.assets[asset_id]
+    assert asset.meta["segments"] == str(len(calls))
+    assert probe(store.asset_path(project, asset_id)).duration > 3.5
+    assert project.shots[0].visual.take(asset_id).kind == "extend"
+
+
+def _register_llm(settings, reply_fn, name="rewriter"):
+    from shotwright.providers import registry
+    from shotwright.providers.base import ProviderSpec
+
+    class Replying:
+        calls: list = []
+
+        def __init__(self, _settings):
+            pass
+
+        def complete(self, messages, *, json_mode=False):
+            Replying.calls.append(messages)
+            return reply_fn(messages)
+
+    registry.register(ProviderSpec(kind="llm", id=name, name=name, offline=True), Replying)
+    settings.defaults["llm"] = name
+    return Replying
+
+
+def test_rewrite_shot_keeps_text_and_uses_neighbours(client, settings):
+    import json
+
+    llm = _register_llm(
+        settings,
+        lambda m: json.dumps(
+            {
+                "prompt": "俯拍特写，P1 的按键被按下",
+                "still": "P1 俯拍特写",
+                "camera": "crane",
+                "link": "承接上一镜的手",
+            },
+            ensure_ascii=False,
+        ),
+    )
+    created = _create(client)
+    shot_id = created["shots"][1]["id"]
+    response = client.post(
+        f"/api/v2/projects/{created['id']}/shots/{shot_id}/rewrite", json={"instruction": "改成俯拍特写"}
+    )
+    assert response.status_code == 200, response.text
+    shot = next(s for s in response.json()["shots"] if s["id"] == shot_id)
+    assert shot["visual"]["prompt"].startswith("俯拍特写") and shot["visual"]["camera"] == "crane"
+    assert shot["text"] == created["shots"][1]["text"]
+    user = llm.calls[-1][-1]["content"]
+    assert "上一个镜头" in user and "下一个镜头" not in user and "改成俯拍特写" in user
+
+
+def test_expand_fills_short_prompts_and_missing_look(client, settings):
+    import json
+
+    def reply(messages):
+        return json.dumps(
+            {
+                "look": {
+                    "subjects": [{"code": "P1", "name": "咖啡机", "kind": "product", "appearance": "白色"}]
+                },
+                "shots": [
+                    {"index": 1, "prompt": _GOOD_PROMPT_ZH, "camera": "orbit", "link": "开场"},
+                    {"index": 2, "prompt": "", "link": "接上一镜"},
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+    llm = _register_llm(settings, reply, name="expander")
+    created = _create(client)
+    result = client.post(f"/api/v2/projects/{created['id']}/expand", json={}).json()
+    assert result["look"]["subjects"][0]["code"] == "P1"
+    first, second = result["shots"][0], result["shots"][1]
+    assert first["visual"]["prompt"] == _GOOD_PROMPT_ZH and first["visual"]["camera"] == "orbit"
+    assert second["visual"]["prompt"] == "" and second["visual"]["link"] == "接上一镜"  # 空字段保留原值
+    assert "还没有全片设定" in llm.calls[-1][0]["content"]
+
+
+def test_needs_expansion_skips_locked_and_color():
+    from shotwright.services.rewrite import needs_expansion
+
+    project = Project()
+    assert needs_expansion(project, Shot(visual=ShotVisual(mode="ai", prompt="短")))
+    assert not needs_expansion(project, Shot(visual=ShotVisual(mode="ai", prompt="短", locked=True)))
+    assert not needs_expansion(project, Shot(visual=ShotVisual(mode="color")))
+    assert not needs_expansion(project, Shot(visual=ShotVisual(mode="ai", prompt=_GOOD_PROMPT_ZH, link="接")))
+
+
+def test_budget_blocks_generation_over_limit(store, settings, client):
+    from shotwright.providers.base import BudgetExceeded
+    from shotwright.services import visuals
+
+    settings.providers.setdefault("video_gen", {})["seedance"] = {"api_key": "k"}
+    shot = Shot(text="一句话说完。", visual=ShotVisual(mode="ai", prompt="x", provider="seedance"))
+    project = Project(shots=[shot], budget=0.5, cost_credits=0.2)
+    # Seedance 至少按 4 秒计费，约 0.56 元，超过剩余的 0.3 元。
+    import pytest
+
+    with pytest.raises(BudgetExceeded, match="超出项目费用上限"):
+        visuals.check_budget(settings, project, project.shots[0], "video_gen", "seedance")
+    project.budget = None
+    visuals.check_budget(settings, project, project.shots[0], "video_gen", "seedance")
+
+    created = _create(client)
+    assert client.patch(f"/api/v2/projects/{created['id']}", json={"budget": 10}).json()["budget"] == 10
+    assert client.patch(f"/api/v2/projects/{created['id']}", json={"budget": None}).json()["budget"] is None
+
+
+def test_checkup_lists_render_risks(store, settings, tmp_path, client):
+    from conftest import make_clip
+
+    from shotwright.core.models import Overlay
+    from shotwright.services import checkup
+
+    text = "这是一段比较长的旁白，需要好几秒才能读完，素材却只有一秒，会被定格补足很久。"
+    shots = [
+        Shot(text=text, visual=ShotVisual(mode="upload")),
+        Shot(text="第二句。", visual=ShotVisual(mode="ai", prompt="")),
+        Shot(text="第三句。", visual=ShotVisual(mode="ai", prompt="x")),
+    ]
+    project = store.create(
+        Project(
+            voice=VoiceSettings(provider="silent"),
+            shots=shots,
+            overlays=[
+                Overlay(text="限时优惠", position="bottom"),
+                Overlay(text="立即购买", position="top"),
+                Overlay(text="包邮", position="top"),
+            ],
+        )
+    )
+    clip = store.add_asset(
+        project,
+        make_clip(tmp_path / "c.mp4", seconds=1.0, size="320x240"),
+        kind="video",
+        source="upload",
+        width=320,
+        height=240,
+        duration=1.0,
+    )
+    project.shots[0].visual.selected = clip.id
+    project.shots[0].visual.candidates = [clip.id]
+    codes = [issue.code for issue in checkup.check_project(project, settings)]
+    assert codes.count("no_visual") == 2 and "no_prompt" in codes
+    assert "low_resolution" in codes and "short_footage" in codes
+    assert "overlay_subtitle" in codes and "overlay_overlap" in codes and "no_look" in codes
+
+    store.save(project)
+    data = client.get(f"/api/v2/projects/{project.id}/checkup").json()
+    first = next(item for item in data["issues"] if item["code"] == "short_footage")
+    assert first["shot"] == 1 and first["params"]["footage"] == 1.0
+
+
+def test_structure_roles_and_suggested_sources():
+    import json
+
+    from shotwright.services import storyboard
+
+    data = json.loads(_board_reply())
+    data["shots"][0]["role"] = "hook"
+    data["shots"][1]["role"] = "scene"
+    llm = _RecordingLLM(json.dumps(data, ensure_ascii=False))
+    board = storyboard.write_storyboard(llm, "x", video_type="product_ad")
+    assert "痛点或效果对比" in llm.messages[0][0]["content"]
+    assert [s.role for s in board.shots] == ["hook", "scene"]
+    storyboard.suggest_sources(board.shots, {"ai"})
+    assert [s.visual.mode for s in board.shots] == ["ai", "stock"]
+    storyboard.suggest_sources(board.shots, set())
+    assert board.shots[0].visual.mode == "ai"  # 已经设过的不会被改回去
+
+
+def test_available_sources_follow_configuration(settings):
+    from shotwright.services import visuals
+
+    assert visuals.available_sources(settings) == {"ai", "image"}  # 测试里的假服务都不需要配置
+    settings.defaults["video_gen"] = "seedance"
+    assert "ai" not in visuals.available_sources(settings)
+
+
+def test_stock_prefers_resolution_and_ranks_by_vision(store, settings):
+    from conftest import make_clip
+
+    from shotwright.providers import registry
+    from shotwright.providers.base import ProviderSpec, StockCandidate
+    from shotwright.services import visuals
+
+    class SizedStock:
+        def __init__(self, _settings):
+            pass
+
+        def search(self, query, *, aspect, min_duration, limit):
+            return [
+                StockCandidate("sized", "low", "x://low", "video", 360, 640, 3.0),
+                StockCandidate("sized", "a", "x://a", "video", 1080, 1920, 3.0),
+                StockCandidate("sized", "b", "x://b", "video", 1080, 1920, 3.0),
+            ]
+
+        def download(self, candidate, output):
+            pattern = {"low": "testsrc2", "a": "smptebars", "b": "rgbtestsrc"}[candidate.remote_id]
+            return make_clip(output.with_suffix(".mp4"), pattern=pattern)
+
+    registry.register(ProviderSpec(kind="stock", id="sized", name="Sized", offline=True), SizedStock)
+    registry.register(ProviderSpec(kind="llm", id="seer", name="Seer", offline=True), _Seer)
+    settings.defaults.update({"stock": "sized", "llm": "seer"})
+    shot = Shot(text="城市夜景。", visual=ShotVisual(mode="stock", terms=["city night"]))
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=[shot]))
+    _Seer.replies[:] = [
+        '{"items": [{"index": 1, "relevance": 0.9, "text": true}, {"index": 2, "relevance": 0.7}]}'
+    ]
+    added = visuals.fetch_stock_candidates(store, settings, project, project.shots[0], limit=2)
+    remote = [project.assets[a].meta["remote_id"] for a in added]
+    # 低分辨率的被排除在前两个之外；带水印的排到最后。
+    assert remote == ["b", "a"]
+    assert project.assets[added[1]].meta["issue"] == "画面里有水印或文字"
+    assert project.shots[0].visual.selected == added[0]
+
+
+def test_speech_marks_parse_and_strip():
+    from shotwright.services import speech
+
+    text = "早上没时间？[停顿]试试这台*便携咖啡机*。[停顿 1.2][pause]三分钟出咖啡。"
+    parts = speech.segments(text)
+    assert [(p.text, p.pause_before, p.emphasis) for p in parts] == [
+        ("早上没时间？", 0.0, False),
+        ("试试这台", 0.5, False),
+        ("便携咖啡机", 0.12, True),
+        ("三分钟出咖啡。", 1.7, False),
+    ]
+    assert speech.plain(text) == "早上没时间？试试这台便携咖啡机。三分钟出咖啡。"
+    assert abs(speech.pause_seconds(text) - 2.32) < 1e-9
+    assert not speech.has_marks("普通文案。") and speech.segments("普通文案。")[0].pause_before == 0
+
+
+def test_marked_text_renders_pauses_and_clean_subtitles(store, settings):
+    from shotwright.pipeline.render import Renderer
+
+    plain_text = "第一句话说完。第二句话接上。"
+    marked = "第一句话说完。[停顿 1]第二句话*接上*。"
+    shots = [
+        Shot(text=plain_text, visual=ShotVisual(mode="color")),
+        Shot(text=marked, visual=ShotVisual(mode="color")),
+    ]
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=shots, loudness=None))
+    result = Renderer(store, settings).render(project.id)
+    plain_voice, marked_voice = (timing.voice_duration for timing in result.timings)
+    assert marked_voice > plain_voice + 0.9
+    srt = (store.render_dir(project.id, result.render_id) / "subtitles.srt").read_text(encoding="utf-8")
+    assert "[停顿" not in srt and "*" not in srt and "接上" in srt
+
+
+def test_grade_presets_render_and_change_fingerprint(store, settings):
+    from shotwright.media.ffmpeg import extract_frame
+    from shotwright.media.grades import GRADES
+    from shotwright.pipeline.render import Renderer
+
+    shots = [Shot(text="一句话。", visual=ShotVisual(mode="color", color="#808080"))]
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=shots, loudness=None))
+    project.subtitle.enabled = False
+    store.save(project)
+    plain = Renderer(store, settings).render(project.id)
+
+    project = store.load(project.id)
+    project.look.grade = "bw"
+    store.save(project)
+    graded = Renderer(store, settings).render(project.id)
+    assert {s.key for s in graded.stages if not s.reused} == {"final"}
+
+    for name in GRADES:  # 每个预设的滤镜都能被 ffmpeg 接受
+        project = store.load(project.id)
+        project.look.grade = name
+        store.save(project)
+        result = Renderer(store, settings).render(project.id)
+        frame = extract_frame(
+            store.render_dir(project.id, result.render_id) / result.video, store.root / f"{name}.jpg", at=0.5
+        )
+        assert frame.exists()
+    assert plain.render_id != graded.render_id
+
+
+def test_beat_detection_finds_click_track_tempo(tmp_path):
+    from shotwright.media.beats import detect_beats
+
+    click = tmp_path / "click.wav"
+    run_ffmpeg(
+        ["-f", "lavfi", "-i", "aevalsrc='if(lt(mod(t,0.5),0.03),sin(2*PI*1000*t),0)':s=8000:d=20", str(click)]
+    )
+    found, bpm = detect_beats(click)
+    assert 115 <= bpm <= 125
+    assert all(abs(beat - round(beat * 2) / 2) < 0.06 for beat in found[:10])
+
+
+def test_snap_cuts_only_extends_and_respects_fixed():
+    from shotwright.media.beats import snap_cuts
+
+    beats = [0.5 * i for i in range(1, 40)]
+    assert snap_cuts([2.3, 3.1, 2.0], 0.0, beats) == [2.5, 3.1, 2.0]  # 2.3→2.5；第二个切点 5.6 离 6.0 太远
+    assert snap_cuts([2.3, 3.1, 2.0], 0.0, beats, fixed=[True, False, False]) == [2.3, 3.2, 2.0]
+    assert snap_cuts([2.1, 2.0], 0.0, [3.0]) == [2.1, 2.0]  # 超过 0.35 秒不挪
+
+
+def test_render_snaps_cuts_to_music_beats(store, settings, tmp_path):
+    from shotwright.pipeline.render import Renderer
+
+    click = tmp_path / "click.m4a"
+    run_ffmpeg(
+        [
+            "-f",
+            "lavfi",
+            "-i",
+            "aevalsrc='if(lt(mod(t,0.5),0.03),sin(2*PI*1000*t),0)':s=44100:d=20",
+            "-c:a",
+            "aac",
+            str(click),
+        ]
+    )
+    shots = [
+        Shot(text="第一句话说得稍微长一点。", visual=ShotVisual(mode="color")),
+        Shot(text="第二句。", visual=ShotVisual(mode="color")),
+    ]
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=shots, loudness=None))
+    music = store.add_asset(project, click, kind="audio", source="upload")
+    project.bgm.asset_id = music.id
+    project.bgm.beat_sync = True
+    store.save(project)
+    result = Renderer(store, settings).render(project.id)
+    cut = result.timings[1].start
+    assert abs(cut - round(cut * 2) / 2) < 0.06
+
+
+def test_audio_filter_places_whoosh_at_cuts_and_ambience():
+    project = Project()
+    project.sfx.transitions = True
+    graph = audio_filter(project, None, 10.0, ambience_index=1, whoosh_index=2, cuts=[3.0, 6.5, 9.95])
+    assert "adelay=2750:all=1" in graph and "adelay=6250:all=1" in graph and "9700" not in graph
+    assert "[amb]" in graph and graph.endswith("amix=inputs=3:duration=first:normalize=0[a]")
+
+
+def test_render_with_transition_sfx_and_ambience(store, settings, tmp_path, client):
+    from shotwright.pipeline.render import Renderer
+
+    shots = [
+        Shot(text="第一句话。", visual=ShotVisual(mode="color")),
+        Shot(text="第二句话。", visual=ShotVisual(mode="color")),
+    ]
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=shots, loudness=None))
+    ambience = store.add_asset(
+        project, _sine(tmp_path / "amb.m4a", volume=0.3), kind="audio", source="upload"
+    )
+    store.save(project)
+    response = client.patch(
+        f"/api/v2/projects/{project.id}", json={"sfx": {"transitions": True, "ambience": ambience.id}}
+    )
+    assert response.status_code == 200, response.text
+    bad = client.patch(f"/api/v2/projects/{project.id}", json={"sfx": {"ambience": "missing"}})
+    assert bad.status_code == 422
+    result = Renderer(store, settings).render(project.id)
+    loudness = measure_loudness(store.render_dir(project.id, result.render_id) / result.video)
+    assert loudness is not None  # 静音配音之外有了环境声和转场音效
+
+
+def test_ambience_search_sets_project_ambience(client, settings, tmp_path):
+    from shotwright.providers import registry
+    from shotwright.providers.base import MusicCandidate, ProviderSpec
+
+    class FakeMusic:
+        queries: list[str] = []
+
+        def __init__(self, _settings):
+            pass
+
+        def search(self, query, *, min_duration, max_duration, limit):
+            FakeMusic.queries.append(query)
+            return [MusicCandidate("fakemusic", "amb-1", "x://amb", "Rain", 30.0, author="someone")]
+
+        def download(self, candidate, output):
+            return _sine(output.with_suffix(".m4a"), seconds=3.0, volume=0.2)
+
+    registry.register(ProviderSpec(kind="music", id="fakemusic", name="FM", offline=True), FakeMusic)
+    settings.defaults["music"] = "fakemusic"
+    created = _create(client)
+    client.patch(
+        f"/api/v2/projects/{created['id']}/shots/{created['shots'][0]['id']}",
+        json={"visual": {"terms": ["city night traffic"]}},
+    )
+    result = client.post(f"/api/v2/projects/{created['id']}/sfx/ambience", json={}).json()
+    assert FakeMusic.queries[-1] == "city night ambience"
+    assert (
+        result["sfx"]["ambience"] in result["assets"]
+        and result["sfx"]["ambience_query"] == "city night ambience"
+    )
+
+
+def test_delivery_platform_encoding_and_safe_area(store, settings):
+    import json
+    import subprocess
+
+    from shotwright.pipeline.render import Renderer, safe_margin, side_margins
+    from shotwright.services import checkup
+
+    shots = [Shot(text="第一句话。", visual=ShotVisual(mode="color"))]
+    project = store.create(
+        Project(voice=VoiceSettings(provider="silent"), shots=shots, loudness=None, delivery="douyin")
+    )
+    assert (
+        safe_margin(project, "bottom", 240) == 1920 * 0.20 + 24 and safe_margin(project, "middle", 10) == 10
+    )
+    assert side_margins(project)[1] > side_margins(project)[0]  # 右侧有点赞、评论按钮
+    result = Renderer(store, settings).render(project.id)
+    video = store.render_dir(project.id, result.render_id) / result.video
+    probe = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=profile",
+            "-of",
+            "json",
+            str(video),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(probe.stdout)["streams"][0]["profile"] == "High"
+
+    project.canvas.aspect = "16:9"
+    assert "platform_aspect" in [issue.code for issue in checkup.check_project(project, settings)]
+
+
+def test_final_render_runs_frame_inspection(store, settings):
+    import json
+
+    from shotwright.pipeline.render import Renderer
+    from shotwright.providers import registry
+    from shotwright.providers.base import ProviderSpec
+
+    registry.register(ProviderSpec(kind="llm", id="seer", name="Seer", offline=True), _Seer)
+    settings.defaults["llm"] = "seer"
+    shots = [
+        Shot(text="第一句话。", visual=ShotVisual(mode="color")),
+        Shot(text="第二句话。", visual=ShotVisual(mode="color")),
+    ]
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=shots, loudness=None))
+    _Seer.prompts.clear()
+    _Seer.replies[:] = ['{"items": [{"index": 1, "issues": []}, {"index": 2, "issues": ["手指畸形", "无"]}]}']
+    result = Renderer(store, settings).render(project.id)
+    assert result.inspection == [{"shot": 2, "issues": ["手指畸形"]}]
+    assert any("成片检查：镜头 2：手指畸形" in warning for warning in result.warnings)
+    assert _Seer.prompts[0][1] == 2  # 每个镜头一帧
+    saved = json.loads(
+        (store.render_dir(project.id, result.render_id) / "render.json").read_text(encoding="utf-8")
+    )
+    assert saved["inspection"][0]["shot"] == 2
+
+    _Seer.prompts.clear()
+    Renderer(store, settings, quality="draft").render(project.id)
+    assert _Seer.prompts == []  # 草稿档不检查

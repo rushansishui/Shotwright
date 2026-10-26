@@ -130,6 +130,7 @@ registry.register(
         paid=True,
         docs_url="https://www.volcengine.com/docs/82379/1541523",
         shared_key_from=(("llm", "doubao"),),
+        prompt_languages=("zh", "en"),
     ),
     _seedream,
 )
@@ -148,6 +149,8 @@ registry.register(
         ),
         capabilities=frozenset({"text_to_image"}),
         paid=True,
+        # 主流的 OpenAI 兼容文生图模型都能直接理解中文。
+        prompt_languages=("en", "zh"),
     ),
     _openai,
 )

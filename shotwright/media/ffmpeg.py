@@ -246,3 +246,149 @@ def cut_segment(source: Path, output: Path, *, start: float, duration: float) ->
             str(output),
         ]
     )
+
+
+def measure_loudness(path: Path, *, timeout: float = 600) -> float | None:
+    """测量音频的整体响度（LUFS，EBU R128）。没有音轨或测不出时返回 None。"""
+    command = [
+        _tools.ffmpeg,
+        "-hide_banner",
+        "-nostdin",
+        "-protocol_whitelist",
+        LOCAL_PROTOCOLS,
+        "-i",
+        str(path),
+        "-vn",
+        "-af",
+        "ebur128=framelog=quiet",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout
+        )
+    except FileNotFoundError as exc:
+        raise MediaError("找不到 ffmpeg，请先安装 FFmpeg") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise MediaError("响度测量超时") from exc
+    if result.returncode != 0:
+        return None
+    value = None
+    for line in (result.stderr or "").splitlines():
+        text = line.strip()
+        if text.startswith("I:") and text.endswith("LUFS"):
+            try:
+                value = float(text[2:-4].strip())
+            except ValueError:
+                continue
+    if value is None or value <= -70:
+        return None
+    return value
+
+
+def loudnorm_stats(path: Path, *, target: float, true_peak: float, timeout: float = 600) -> dict[str, str] | None:
+    """loudnorm 第一遍测量，返回第二遍需要的 measured_* 参数。没有声音（静音）时返回 None。"""
+    command = [
+        _tools.ffmpeg,
+        "-hide_banner",
+        "-nostdin",
+        "-protocol_whitelist",
+        LOCAL_PROTOCOLS,
+        "-i",
+        str(path),
+        "-vn",
+        "-af",
+        f"loudnorm=I={target:g}:TP={true_peak:g}:LRA=11:print_format=json",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout
+        )
+    except FileNotFoundError as exc:
+        raise MediaError("找不到 ffmpeg，请先安装 FFmpeg") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise MediaError("响度测量超时") from exc
+    stderr = result.stderr or ""
+    start, end = stderr.rfind("{"), stderr.rfind("}")
+    if result.returncode != 0 or start < 0 or end <= start:
+        return None
+    try:
+        data = json.loads(stderr[start : end + 1])
+        measured = float(data["input_i"])
+    except (ValueError, KeyError, TypeError):
+        return None
+    if measured <= -70 or measured != measured:  # 静音或 NaN
+        return None
+    return {key: str(data[key]) for key in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")}
+
+
+def extract_frame(source: Path, output: Path, *, at: float | None = None, width: int = 512) -> Path:
+    """取视频的一帧存成 JPEG（缩到 ``width`` 宽）。``at`` 为空时取最后一帧，图片直接缩放。
+
+    看图检查只需要小图；首尾帧衔接取最后一帧时用原始宽度（``width=0``）。
+    """
+    scale = ["-vf", f"scale={width}:-2"] if width else []
+    if at is None:
+        position = ["-sseof", "-0.25"]
+    else:
+        position = ["-ss", f"{max(0.0, at):.3f}"]
+    run_ffmpeg(
+        [
+            "-protocol_whitelist",
+            LOCAL_PROTOCOLS,
+            *position,
+            "-i",
+            str(source),
+            "-frames:v",
+            "1",
+            *scale,
+            "-q:v",
+            "3",
+            str(output),
+        ]
+    )
+    if not output.exists():
+        raise MediaError("没有取到画面")
+    return output
+
+
+def concat_videos(paths: list[Path], output: Path, *, fps: int = 30) -> Path:
+    """把几段视频首尾相接成一段（统一成第一段的尺寸和帧率，只保留画面）。"""
+    if not paths:
+        raise MediaError("没有可拼接的视频")
+    first = probe(paths[0])
+    width, height = first.width or 1080, first.height or 1920
+    args: list[str] = []
+    chains = []
+    for index, path in enumerate(paths):
+        args += ["-protocol_whitelist", LOCAL_PROTOCOLS, "-i", str(path)]
+        chains.append(
+            f"[{index}:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},format=yuv420p[v{index}]"
+        )
+    joined = "".join(f"[v{index}]" for index in range(len(paths)))
+    graph = ";".join([*chains, f"{joined}concat=n={len(paths)}:v=1:a=0[out]"])
+    run_ffmpeg(
+        [
+            *args,
+            "-filter_complex",
+            graph,
+            "-map",
+            "[out]",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "18",
+            "-movflags",
+            "+faststart",
+            str(output),
+        ]
+    )
+    return output

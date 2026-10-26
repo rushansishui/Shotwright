@@ -1,7 +1,10 @@
 import type {
   BgmCandidate,
+  CheckIssue,
+  PlatformInfo,
   BgmSearchResult,
   CostEstimate,
+  FontFamily,
   Job,
   LanguageInfo,
   Project,
@@ -9,12 +12,21 @@ import type {
   Providers,
   RenderResult,
   Shot,
+  ShotRole,
   VersionInfo,
+  VideoType,
   VisualPatch,
   VoiceSettings,
 } from "./types";
 
 import { currentLang, translate } from "./i18n";
+
+/** 生成选项：一次几条、先出几张关键帧、草稿还是成片分辨率。 */
+export interface GenerateOptions {
+  count?: number;
+  keyframes?: number;
+  quality?: "draft" | "final";
+}
 
 const BASE = "/api/v2";
 
@@ -75,17 +87,48 @@ export const api = {
     shots?: number | null;
     /** 目标总时长（秒）；为空时由大模型估算。 */
     duration?: number | null;
+    video_type?: VideoType | null;
   }) => request<Project>("/projects", json("POST", body)),
   updateProject: (
     id: string,
     body: Partial<
       Pick<
         Project,
-        "title" | "language" | "canvas" | "voice" | "subtitle" | "bgm" | "references" | "overlays" | "transition" | "ai_badge"
+        "title" | "video_type" | "look" | "titles" | "chain_frames" | "budget" | "sfx" | "delivery" | "language" | "canvas" | "voice" | "subtitle" | "bgm" | "loudness" | "references" | "overlays" | "transition" | "ai_badge" | "pronunciations"
       >
     >,
   ) =>
     request<Project>(`/projects/${id}`, json("PATCH", body)),
+  /** AI 生成标题：候选大标题、片头副标题、镜头小标题（已有的不覆盖）。 */
+  suggestTitles: (id: string, options: { shot_titles?: boolean; apply_headline?: boolean } = {}) =>
+    request<Project>(`/projects/${id}/titles/suggest`, json("POST", options)),
+  /** AI 检查文案里容易读错的词，追加到读音纠正表。 */
+  suggestPronunciations: (id: string) => request<Project>(`/projects/${id}/pronunciations/suggest`, json("POST", {})),
+  /** 按当前配音设置和读音纠正合成一句试听，返回音频。 */
+  previewVoice: async (id: string, text: string): Promise<Blob> => {
+    const response = await fetch(`${BASE}/projects/${id}/voice/preview`, {
+      ...json("POST", { text }),
+      headers: { "Content-Type": "application/json", "Accept-Language": currentLang() === "zh" ? "zh-CN" : "en" },
+    });
+    if (!response.ok) {
+      let message = translate("common.requestFailed", { status: response.status });
+      try {
+        const data = await response.json();
+        if (typeof data.detail === "string") message = data.detail;
+      } catch {
+        /* 响应不是 JSON */
+      }
+      throw new ApiError(message);
+    }
+    return response.blob();
+  },
+  /** 从镜头的候选素材里删掉一个。 */
+  removeCandidate: (id: string, shotId: string, assetId: string) =>
+    request<Project>(`/projects/${id}/shots/${shotId}/candidates/${assetId}`, json("DELETE")),
+  /** AI 从文案里挑字幕高亮关键词（替换 subtitle.keywords）。 */
+  suggestKeywords: (id: string) => request<Project>(`/projects/${id}/subtitle/keywords`, json("POST", {})),
+  /** 复制成新项目继续编辑（素材、设置、镜头和渲染缓存一起复制）。 */
+  duplicateProject: (id: string, title = "") => request<Project>(`/projects/${id}/duplicate`, json("POST", { title })),
   deleteProject: (id: string) => request<void>(`/projects/${id}`, json("DELETE")),
   addShot: (id: string, after?: string) => request<Project>(`/projects/${id}/shots`, json("POST", { text: "", after })),
   splitShot: (id: string, shotId: string, at: number) =>
@@ -95,15 +138,20 @@ export const api = {
   updateShot: (
     id: string,
     shotId: string,
-    body: { text?: string; duration?: number; clear_duration?: boolean; visual?: VisualPatch },
+    body: { text?: string; title?: string; duration?: number; clear_duration?: boolean; role?: ShotRole; visual?: VisualPatch },
   ) => request<Project>(`/projects/${id}/shots/${shotId}`, json("PATCH", body)),
   deleteShot: (id: string, shotId: string) => request<Project>(`/projects/${id}/shots/${shotId}`, json("DELETE")),
   /** 收费的 AI 生成必须传 confirmCharge=true（用户已确认），否则后端返回 402。 */
-  candidates: (id: string, shotId: string, confirmCharge = false, editSelected = false) =>
+  candidates: (id: string, shotId: string, confirmCharge = false, editSelected = false, options: GenerateOptions = {}) =>
     request<Project>(
       `/projects/${id}/shots/${shotId}/candidates`,
-      json("POST", { confirm_charge: confirmCharge, edit_selected: editSelected }),
+      json("POST", { confirm_charge: confirmCharge, edit_selected: editSelected, ...options }),
     ),
+  /** 单镜头 AI 改写：只改画面描述、运镜和衔接，不生成画面、不收费。 */
+  rewriteShot: (id: string, shotId: string, instruction: string) =>
+    request<Project>(`/projects/${id}/shots/${shotId}/rewrite`, json("POST", { instruction })),
+  /** 一键补全：扩写过短的画面描述、补衔接说明，没有全片设定时一并生成。 */
+  expand: (id: string, onlyShort = true) => request<Project>(`/projects/${id}/expand`, json("POST", { only_short: onlyShort })),
   /** 服务器上正在检索或生成的镜头（页面刷新后用来恢复"生成中"状态）。 */
   inProgress: (id: string) => request<Record<string, { mode: string; seconds: number }>>(`/projects/${id}/in-progress`),
   /** 检索背景音乐候选（只返回元数据+试听地址，不下载）；query 留空时由服务端用大模型提炼。 */
@@ -112,10 +160,15 @@ export const api = {
   /** 下载选中的候选，注册为素材并设为当前背景音乐，返回更新后的项目。 */
   bgmDownload: (id: string, candidate: BgmCandidate) =>
     request<Project>(`/projects/${id}/bgm/download`, json("POST", candidate)),
-  upload: (id: string, file: File) => {
+  /** 上传素材。`asAudio` 用于背景音乐：音乐文件常装在视频容器里，需要按音频登记。 */
+  upload: (id: string, file: File, asAudio = false) => {
     const form = new FormData();
     form.append("file", file);
-    return request<{ id: string; kind: string }>(`/projects/${id}/assets`, { method: "POST", body: form });
+    const query = asAudio ? "?as_audio=true" : "";
+    return request<{ id: string; kind: string }>(`/projects/${id}/assets${query}`, {
+      method: "POST",
+      body: form,
+    });
   },
   /** 导入原片并按画面变化自动切成镜头。 */
   importFootage: (id: string, file: File, replaceShots = false) => {
@@ -129,7 +182,22 @@ export const api = {
   },
   render: (id: string, confirmCharge = false, quality: "draft" | "final" = "final") =>
     request<Job>(`/projects/${id}/renders`, json("POST", { confirm_charge: confirmCharge, quality })),
-  costEstimate: (id: string) => request<CostEstimate>(`/projects/${id}/cost-estimate`),
+  platforms: () => request<PlatformInfo[]>("/platforms"),
+  /** 字体库：内置字体和导入的字体，按字体族分组。 */
+  fonts: () => request<FontFamily[]>("/fonts"),
+  /** 导入自己的字体（.ttf / .otf），所有项目都能用。 */
+  importFont: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<{ file: string; family: string }>("/fonts", { method: "POST", body: form });
+  },
+  deleteFont: (name: string) => request<void>(`/fonts/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  searchAmbience: (id: string, query = "") =>
+    request<Project>(`/projects/${id}/sfx/ambience`, json("POST", { query })),
+  checkup: (id: string, quality: "draft" | "final" = "final") =>
+    request<{ issues: CheckIssue[] }>(`/projects/${id}/checkup?quality=${quality}`),
+  costEstimate: (id: string, quality: "draft" | "final" = "final") =>
+    request<CostEstimate>(`/projects/${id}/cost-estimate?quality=${quality}`),
   job: (jobId: string) => request<Job>(`/renders/${jobId}`),
   cancel: (jobId: string) => request<{ ok: boolean }>(`/renders/${jobId}/cancel`, json("POST")),
   renders: (id: string) =>
@@ -141,11 +209,29 @@ export const renderUrl = (projectId: string, renderId: string, name: string) =>
   `${BASE}/projects/${projectId}/renders/${renderId}/${name}`;
 
 /** 与后端 SilentTTS.estimate_seconds 一致的时长估算。 */
+const PAUSE_MARK = /\[(?:停顿|pause)(?:\s+(\d+(?:\.\d+)?))?\]/gi;
+const EMPHASIS_MARK = /\*([^*\n]{1,60})\*/g;
+
+/** 去掉配音标注（[停顿]、*强调*），和后端 services/speech.plain 一致。 */
+export function plainText(text: string): string {
+  return text.replace(PAUSE_MARK, "").replace(EMPHASIS_MARK, "$1").trim();
+}
+
+/** 标注带来的额外静音（秒）。 */
+function markPauses(text: string): number {
+  let total = 0;
+  for (const match of text.matchAll(PAUSE_MARK)) total += Math.min(3, Math.max(0.1, match[1] ? Number(match[1]) : 0.5));
+  total += 0.12 * (text.match(EMPHASIS_MARK)?.length ?? 0);
+  return total;
+}
+
 export function estimateSeconds(shot: Shot, rate: number): number {
   if (shot.duration) return shot.duration;
-  const cjk = (shot.text.match(/[぀-ヿ㐀-䶿一-鿿가-힯]/g) || []).length;
-  const words = (shot.text.replace(/[぀-ヿ㐀-䶿一-鿿가-힯]/g, " ").match(/[A-Za-z0-9']+/g) || [])
-    .length;
-  const seconds = Math.max(1.5, (cjk / 4.5 + words / 2.6) / Math.max(rate, 0.1));
+  const text = plainText(shot.text);
+  const cjk = (text.match(/[぀-ヿ㐀-䶿一-鿿가-힯]/g) || []).length;
+  const words = (text.replace(/[぀-ヿ㐀-䶿一-鿿가-힯]/g, " ").match(/[A-Za-z0-9']+/g) || []).length;
+  const seconds = Math.max(1.5, (cjk / 4.5 + words / 2.6) / Math.max(rate, 0.1)) + markPauses(shot.text);
   return Math.round((seconds + 0.25) * 10) / 10;
 }
+
+export const fontUrl = (name: string) => `${BASE}/fonts/${encodeURIComponent(name)}`;

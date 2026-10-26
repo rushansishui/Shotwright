@@ -8,6 +8,8 @@ shotwright list                          列出项目
 shotwright show <项目>                   查看镜头
 shotwright shot <项目> <序号> --text …   修改某个镜头
 shotwright render <项目> [--allow-paid]  渲染（只重做有改动的镜头）
+shotwright copy <项目> [--title 标题]    复制成新项目继续编辑
+shotwright bench [--render]              跑质量基准集，结果存档并与上次对比
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ from shotwright.logs import setup_logging
 from shotwright.media import ffmpeg
 from shotwright.pipeline.render import Renderer
 from shotwright.providers import registry
-from shotwright.services import localize, storyboard, visuals
+from shotwright.services import localize, prompting, storyboard, visuals
 
 
 def _store(args) -> tuple:
@@ -51,7 +53,10 @@ def cmd_serve(args) -> int:
 def cmd_new(args) -> int:
     settings, store = _store(args)
     project = Project(
-        subject=args.subject or "", canvas=Canvas(aspect=args.aspect), target_seconds=args.duration
+        subject=args.subject or "",
+        canvas=Canvas(aspect=args.aspect),
+        target_seconds=args.duration,
+        video_type=args.type,
     )
     tts = args.tts or settings.default_provider("tts") or "edge"
     project.voice = VoiceSettings(provider=tts)
@@ -62,14 +67,21 @@ def cmd_new(args) -> int:
         if not args.subject:
             print("使用 --llm 时需要 --subject", file=sys.stderr)
             return 2
-        title, shots = storyboard.generate_storyboard(
-            registry.create("llm", None, settings),
+        board = storyboard.write_storyboard(
+            registry.create("llm", None, settings),  # type: ignore[arg-type]
             args.subject,
             language=languages.get(args.language).prompt_name,
+            prompt_lang=prompting.prompt_language(project),
             shots=args.shots,
             duration=args.duration,
+            video_type=args.type,
+            aspect=args.aspect,
         )
-        project.title, project.shots = title, shots
+        project.title, project.shots, project.look = board.title, board.shots, board.look
+        if args.type:
+            storyboard.suggest_sources(project.shots, visuals.available_sources(settings))
+        for issue in board.issues:
+            print(f"分镜自检：{issue}", file=sys.stderr)
     else:
         script = Path(args.script_file).read_text(encoding="utf-8") if args.script_file else args.script
         if not script:
@@ -161,6 +173,49 @@ def cmd_translate(args) -> int:
     return 0
 
 
+def cmd_copy(args) -> int:
+    from shotwright.services.duplicate import duplicate_project
+
+    _settings, store = _store(args)
+    copy = duplicate_project(store, store.load(args.project), title=args.title)
+    print(f"已复制为新项目：{copy.id}  {copy.title}")
+    return 0
+
+
+def cmd_bench(args) -> int:
+    import json
+    import time
+
+    from shotwright.services import bench
+
+    settings, store = _store(args)
+    if args.offline:
+        settings.auto_fetch_visuals = False
+    root = Path(args.out) if args.out else settings.storage_dir.parent / "bench"
+    previous = None
+    if args.compare:
+        previous = json.loads((Path(args.compare) / "report.json").read_text(encoding="utf-8"))
+    else:
+        runs = sorted(p for p in root.glob("*") if (p / "report.json").exists()) if root.exists() else []
+        if runs:
+            previous = json.loads((runs[-1] / "report.json").read_text(encoding="utf-8"))
+    out_dir = root / time.strftime("%Y%m%d-%H%M%S")
+    report = bench.run_bench(
+        store,
+        settings,
+        out_dir,
+        render=args.render,
+        allow_paid=args.allow_paid,
+        aspects=args.aspect or None,
+        only=args.brief or None,
+    )
+    text = bench.format_report(report.to_dict(), previous)
+    (out_dir / "report.md").write_text(text, encoding="utf-8")
+    print(text)
+    print(f"结果已保存到 {out_dir}")
+    return 1 if report.summary()["failed"] else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="shotwright", description="Shotwright 镜匠：以分镜为核心的短视频生成工具"
@@ -180,6 +235,12 @@ def build_parser() -> argparse.ArgumentParser:
     new.add_argument("--script-file", help="从文件读取文案（UTF-8）")
     new.add_argument("--llm", action="store_true", help="让大模型根据主题写文案并拆镜头")
     new.add_argument("--shots", type=int, default=None, help="期望的镜头数量；默认由大模型决定")
+    new.add_argument(
+        "--type",
+        choices=["product_ad", "brand", "explainer", "talking", "footage"],
+        default=None,
+        help="视频类型：商品广告、品牌宣传、知识科普、口播、原片改造；诉求模板见 docs/BRIEF_TEMPLATES.md",
+    )
     new.add_argument("--duration", type=float, default=None, help="目标总时长（秒）；默认由大模型决定")
     new.add_argument("--aspect", choices=["9:16", "16:9", "1:1"], default="9:16")
     new.add_argument(
@@ -219,6 +280,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="允许为缺画面的 AI 镜头调用收费生成（Seedance、Seedream 等）；默认改用素材检索",
     )
     render.set_defaults(func=cmd_render)
+
+    copy = sub.add_parser("copy", help="把项目复制成新项目（素材、设置、镜头一起复制）")
+    copy.add_argument("project")
+    copy.add_argument("--title", help="新项目的标题；默认「原标题（副本）」")
+    copy.set_defaults(func=cmd_copy)
+
+    bench = sub.add_parser("bench", help="跑质量基准集（固定诉求），结果存档并与上次对比")
+    bench.add_argument("--render", action="store_true", help="同时渲染草稿成片，测量响度和慢放定格占比")
+    bench.add_argument("--allow-paid", action="store_true", help="渲染时允许为 AI 镜头调用收费生成")
+    bench.add_argument("--offline", action="store_true", help="渲染时不检索素材，缺画面的镜头用纯色")
+    bench.add_argument("--aspect", action="append", choices=["9:16", "16:9", "1:1"], help="只跑这些画面比例")
+    bench.add_argument("--brief", action="append", help="只跑这些诉求（briefs.json 里的 id）")
+    bench.add_argument("--out", help="结果目录（默认 storage/bench）")
+    bench.add_argument("--compare", help="与这次结果对比（默认与最近一次对比）")
+    bench.set_defaults(func=cmd_bench)
     return parser
 
 

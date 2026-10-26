@@ -7,14 +7,17 @@ import tempfile
 import time
 from dataclasses import asdict
 from pathlib import Path
+from typing import Literal
 
 from shotwright.config import Settings
 from shotwright.core.fingerprint import fingerprint
-from shotwright.core.models import Asset, AssetFolder, PendingTask, Project, Shot
+from shotwright.core.ids import new_id
+from shotwright.core.models import Asset, AssetFolder, PendingTask, Project, Shot, Take, TakeKind
 from shotwright.core.store import ProjectStore, read_json, write_json
-from shotwright.media.ffmpeg import MediaError, probe
+from shotwright.media.ffmpeg import MediaError, concat_videos, extract_frame, probe
 from shotwright.providers import registry
 from shotwright.providers.base import (
+    BudgetExceeded,
     ChargeConfirmationRequired,
     ImageGenProvider,
     ProviderError,
@@ -23,9 +26,12 @@ from shotwright.providers.base import (
     StockProvider,
     VideoGenProvider,
 )
+from shotwright.services import prompting
 from shotwright.services.durations import estimated_shot_seconds
 
 log = logging.getLogger(__name__)
+
+Quality = Literal["draft", "final"]
 
 SEARCH_CACHE_VERSION = "stock-search-1"
 """检索结果缓存的版本；改检索参数的含义时提升它，让旧缓存失效。"""
@@ -146,24 +152,88 @@ def fetch_stock_candidates(
         found.extend(cached)
         if len(found) >= limit:
             break
+    found = _prefer_resolution(found, project)
     seen = {project.assets[a].meta.get("remote_id") for a in shot.visual.candidates if a in project.assets}
     added: list[str] = []
+    failed = 0
+    last_error = ""
     with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
         for index, candidate in enumerate(found):
             if candidate.remote_id in seen:
                 continue
-            path = provider.download(candidate, Path(temp) / f"c{index}")
-            meta = {**candidate.meta, "remote_id": candidate.remote_id, "preview_url": candidate.preview_url}
-            asset = _register_media(
-                store, project, path, source=candidate.provider, folder="stock", meta=meta
-            )
+            try:
+                path = _download_with_retry(provider, candidate, Path(temp) / f"c{index}")
+                meta = {**candidate.meta, "remote_id": candidate.remote_id, "preview_url": candidate.preview_url}
+                asset = _register_media(
+                    store, project, path, source=candidate.provider, folder="stock", meta=meta
+                )
+            except (ProviderError, MediaError) as exc:
+                # 单个候选下载失败不该拖垮整批：跳过它，继续下一个。
+                failed += 1
+                last_error = str(exc)
+                log.warning("项目 %s：候选 %s 下载失败，跳过：%s", project.id, candidate.remote_id, exc)
+                continue
             added.append(asset.id)
             if len(added) >= limit:
                 break
+    if failed:
+        log.warning(
+            "项目 %s：%d 个候选素材下载失败，已跳过（%s）", project.id, failed, last_error
+        )
     if not added and not shot.visual.candidates:
+        if failed:
+            raise ProviderError(
+                f"素材下载失败（{last_error}）。素材库可能正在限流，请稍等几秒再试"
+            )
         raise ProviderError("没有找到合适的素材，试试换几个检索词")
+    if added and failed:
+        # 有成功也有失败时，在镜头上记一条提示，让用户知道候选不全。
+        shot.error = f"{failed} 个候选下载失败，已跳过"[:200]
+    if len(added) > 1:
+        from shotwright.services import inspect
+
+        added = inspect.rank_stock(store, settings, project, shot, added)
     _attach(shot, added)
     return added
+
+
+LOW_RESOLUTION = 0.6
+"""素材短边不到画布短边的这个比例时，放大后会明显发虚。"""
+
+
+def _prefer_resolution(found: list[StockCandidate], project: Project) -> list[StockCandidate]:
+    """分辨率够的素材排在前面；不够的（短边不到画布的 60%）放到最后，只在没有别的可选时才用。"""
+    needed = min(project.canvas.width, project.canvas.height) * LOW_RESOLUTION
+    sharp = [c for c in found if not c.width or not c.height or min(c.width, c.height) >= needed]
+    soft = [c for c in found if c not in sharp]
+    if soft:
+        log.info("项目 %s：%d 个素材分辨率不足，排到最后", project.id, len(soft))
+    return sharp + soft
+
+
+def _download_with_retry(
+    provider: StockProvider, candidate: StockCandidate, output: Path, *, attempts: int = 2
+) -> Path:
+    """下载单个候选素材。连接被远端掐断时短暂退避后重试一次。
+
+    素材库的 CDN 在短时间内收到大量请求时会直接断开连接（RemoteProtocolError），
+    等几百毫秒往往就恢复了，比让整批失败体验好得多。
+    """
+    last: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            return provider.download(candidate, output)
+        except ProviderError as exc:
+            last = exc
+            message = str(exc)
+            # 只有网络类错误值得重试；HTTP 4xx、文件过大等重试也没用。
+            retryable = any(
+                token in message for token in ("RemoteProtocolError", "ConnectError", "ReadTimeout", "Timeout")
+            )
+            if not retryable or attempt == attempts - 1:
+                raise
+            time.sleep(0.6 * (attempt + 1))
+    raise last or ProviderError("素材下载失败")
 
 
 def _provider_id(settings: Settings, kind: str, shot: Shot) -> str | None:
@@ -194,6 +264,88 @@ def require_charge_confirmation(
 
 
 MAX_CANDIDATES = 30
+MAX_TAKES_PER_BATCH = 3
+"""一次点击最多生成几条 AI 视频 / 几张关键帧，避免误操作花太多钱。"""
+DRAFT_RESOLUTION = "720p"
+"""草稿档 AI 视频的默认分辨率；可在 Provider 配置里用 draft_resolution 修改。"""
+
+
+def check_budget(
+    settings: Settings,
+    project: Project,
+    shot: Shot,
+    kind: str,
+    provider_id: str | None,
+    *,
+    resolution: str = "",
+    seconds: float | None = None,
+) -> None:
+    """项目设了费用上限时，估算本次生成的参考费用，累计会超过上限就拒绝提交。"""
+    if project.budget is None:
+        return
+    from shotwright.services import cost
+
+    amount = cost.generation_cost(
+        settings, project, shot, kind, provider_id or "", resolution=resolution, seconds=seconds
+    )
+    if amount > 0 and project.cost_credits + amount > project.budget + 1e-9:
+        raise BudgetExceeded(
+            f"超出项目费用上限：已花约 {project.cost_credits:.2f} 元，本次约 {amount:.2f} 元，"
+            f"上限 {project.budget:.2f} 元。可以在渲染面板提高上限"
+        )
+
+
+def available_sources(settings: Settings) -> set[str]:
+    """已配置好默认生成服务的画面来源（ai、image），用来给新分镜选默认来源。"""
+    result = set()
+    for kind, mode in (("video_gen", "ai"), ("image_gen", "image")):
+        chosen = settings.default_provider(kind)
+        if not chosen:
+            continue
+        try:
+            if registry.is_configured(registry.spec(kind, chosen), settings):
+                result.add(mode)
+        except KeyError:
+            continue
+    return result
+
+
+def apply_quality(settings: Settings, provider: object, provider_id: str | None, quality: Quality) -> str:
+    """按草稿 / 成片档设置生成分辨率，返回实际使用的分辨率（Provider 不支持时返回空字符串）。
+
+    成片档用配置里的分辨率；草稿档用 ``draft_resolution``（默认 720p），比成片档低时才降。
+    """
+    current = getattr(provider, "resolution", None)
+    if not isinstance(current, str):
+        return ""
+    if quality != "draft":
+        return current
+    config = settings.provider_settings("video_gen", provider_id or "")
+    draft = (config.get("draft_resolution") or DRAFT_RESOLUTION).strip().lower()
+    order = ("480p", "720p", "1080p")
+    if draft in order and current in order and order.index(draft) < order.index(current):
+        provider.resolution = draft  # type: ignore[attr-defined]
+        return draft
+    return current
+
+
+def generate_keyframes(
+    store: ProjectStore,
+    settings: Settings,
+    project: Project,
+    shot: Shot,
+    count: int,
+    *,
+    confirm_charge: bool = False,
+) -> list[str]:
+    """给 AI 视频镜头先出几张关键帧图片（同一批）。选中一张作首帧后再生成视频，更可控也更省钱。"""
+    batch = new_id()
+    added: list[str] = []
+    for _ in range(max(1, min(count, MAX_TAKES_PER_BATCH))):
+        added += generate_image_candidate(
+            store, settings, project, shot, confirm_charge=confirm_charge, keyframe=True, batch=batch
+        )
+    return added
 MAX_FALLBACK_TERM_BYTES = 80
 """视频诉求短于这个长度才拿它当兜底检索词（见 :func:`_fallback_terms`）。"""
 _MODE_KINDS = (("stock", "stock"), ("ai", "video_gen"), ("image", "image_gen"))
@@ -236,6 +388,8 @@ def switch_mode(project: Project, shot: Shot, mode: str) -> None:
     if mode == "ai" and current is not None and current.kind == "image" and visual.first_frame is None:
         visual.first_frame = current.id
     visual.mode = mode  # type: ignore[assignment]
+    # 多选只在同一个画面来源里有意义，换来源时取消。
+    visual.sequence = []
     if mode == "color":
         return
     if current is not None and asset_mode(current) == mode:
@@ -244,20 +398,39 @@ def switch_mode(project: Project, shot: Shot, mode: str) -> None:
     visual.selected = matching[-1] if matching else None
 
 
+def remove_candidate(project: Project, shot: Shot, asset_id: str) -> None:
+    """从镜头的候选素材里删掉一个（素材文件仍留在项目里，别处引用不受影响）。
+
+    删的是选中的素材时，多选里的下一段顶上；没有多选就选同一来源最近的候选，
+    都没有则清空（渲染时再自动检索或生成）。首帧、入出点和生成记录一并清理。
+    """
+    visual = shot.visual
+    if asset_id not in visual.candidates and asset_id not in (visual.selected, visual.first_frame):
+        raise KeyError("候选素材不存在")
+    visual.candidates = [item for item in visual.candidates if item != asset_id]
+    visual.takes = [item for item in visual.takes if item.asset_id != asset_id]
+    if visual.first_frame == asset_id:
+        visual.first_frame = None
+    if visual.edit_asset == asset_id:
+        visual.edit_asset = None
+    visual.sequence = [item for item in visual.sequence if item != asset_id]
+    if visual.selected == asset_id:
+        if visual.sequence:
+            visual.selected = visual.sequence.pop(0)
+        else:
+            mode = visual.mode if visual.mode != "color" else None
+            matching = candidates_for_mode(project, shot, mode) if mode else []
+            visual.selected = matching[-1] if matching else None
+    if visual.selected is None:
+        visual.sequence = []
+
+
 def _first_frame(store: ProjectStore, project: Project, shot: Shot) -> Path | None:
     first = shot.visual.first_frame
     asset = project.assets.get(first) if first else None
     if asset is None or asset.kind != "image":
         return None
     return store.asset_path(project, asset.id)
-
-
-_ROLE_HINTS = {
-    "product": "产品外观参考：保持商品形状、颜色、材质、logo 位置与参考图一致，不要重新设计商品",
-    "person": "人物参考：保持人物的五官、发型、肤色与参考图一致",
-    "logo": "Logo 参考：保持 Logo 的图形与颜色不变，清晰可辨",
-    "style": "风格参考：沿用参考图的色调、光线与画面质感",
-}
 
 
 def reference_assets(project: Project, *, roles: tuple[str, ...] | None = None) -> list:
@@ -275,16 +448,38 @@ def reference_assets(project: Project, *, roles: tuple[str, ...] | None = None) 
     return result
 
 
-def _reference_prompt(project: Project) -> str:
-    """把启用的参考素材写成提示词前缀，让模型知道要参照什么。"""
-    lines = []
-    for ref, _asset in reference_assets(project):
-        hint = _ROLE_HINTS.get(ref.role, "")
-        if hint:
-            lines.append(f"- {hint}" + (f"（{ref.label}）" if ref.label else ""))
-    if not lines:
-        return ""
-    return "参考素材要求：\n" + "\n".join(lines) + "\n\n"
+def _spec(kind: str, provider_id: str | None):
+    return next((s for s in registry.specs(kind) if s.id == provider_id), None)  # type: ignore[arg-type]
+
+
+def build_prompt(settings: Settings, project: Project, shot: Shot, kind: str, provider_id: str | None) -> str:
+    """交给生成模型的完整提示词：全片设定、运镜、衔接拼好，再按模型支持的语言准备。"""
+    target = "image" if kind == "image_gen" else "video"
+    text = prompting.compose(project, shot, target=target)
+    spec = _spec(kind, provider_id)
+    languages = spec.prompt_languages if spec is not None else ("en",)
+    return prompting.for_provider(settings, project, text, languages)
+
+
+def _chained_first_frame(store: ProjectStore, project: Project, shot: Shot) -> tuple[Path | None, str]:
+    """上一个镜头选中的是 AI 视频时，取它的最后一帧登记成图片素材，作为这个镜头的首帧。"""
+    index = next((i for i, item in enumerate(project.shots) if item.id == shot.id), 0)
+    if index == 0:
+        return None, ""
+    previous = project.shots[index - 1]
+    asset = project.assets.get(previous.visual.selected or "")
+    if asset is None or asset.kind != "video" or asset_folder(asset) != "ai-video":
+        return None, ""
+    try:
+        with tempfile.TemporaryDirectory(prefix="shotwright-chain-") as temp:
+            frame = extract_frame(store.asset_path(project, asset.id), Path(temp) / "last.jpg", width=0)
+            image = _register_media(
+                store, project, frame, source="ffmpeg", folder="ai-image", meta={"last_frame_of": asset.id}
+            )
+    except (MediaError, ProviderError) as exc:
+        log.warning("项目 %s：取上一镜头的最后一帧失败，改用其他首帧：%s", project.id, exc)
+        return None, ""
+    return store.asset_path(project, image.id), image.id
 
 
 def _reference_first_frame(store: ProjectStore, project: Project) -> tuple[Path | None, str]:
@@ -302,6 +497,8 @@ def generate_ai_candidate(
     *,
     confirm_charge: bool = False,
     edit_selected: bool = False,
+    quality: Quality = "final",
+    batch: str = "",
 ) -> list[str]:
     """AI 视频。已选中的画面是图片时，把它作为首帧（图生视频）。
 
@@ -316,17 +513,23 @@ def generate_ai_candidate(
     provider_id = _provider_id(settings, "video_gen", shot)
     # 先实例化（只检查配置，不发请求），未配置时报"缺少配置"而不是"需要确认"。
     provider: VideoGenProvider = registry.create("video_gen", provider_id, settings)  # type: ignore[assignment]
+    resolution = apply_quality(settings, provider, provider_id, quality)
     reference_video: Path | None = None
     if edit_selected:
         reference_video = _edit_source(store, project, shot, provider_id)
     require_charge_confirmation(settings, "video_gen", provider_id, confirm_charge)
     first_frame = None if reference_video is not None else _first_frame(store, project, shot)
     frame_source = shot.visual.first_frame or ""
+    if first_frame is None and reference_video is None and project.chain_frames:
+        # 首尾帧衔接：上一个 AI 镜头的最后一帧作为首帧，两个镜头在交界处画面连续。
+        first_frame, frame_source = _chained_first_frame(store, project, shot)
     if first_frame is None and reference_video is None:
         # 没有显式首帧时，优先用产品/人物参考图，保证商品外观不走样。
         first_frame, frame_source = _reference_first_frame(store, project)
-    prompt = _reference_prompt(project) + shot.visual.prompt
-    meta = {"prompt": prompt[:500]}
+    prompt = build_prompt(settings, project, shot, "video_gen", provider_id)
+    meta = {"prompt": prompt[:1500]}
+    if resolution:
+        meta["resolution"] = resolution
     if first_frame is not None:
         meta["first_frame"] = frame_source
     if reference_video is not None:
@@ -346,23 +549,95 @@ def generate_ai_candidate(
             store.save(latest)
             project.revision = latest.revision
 
+    wanted = estimated_shot_seconds(project, shot)
+    longest = _max_duration(provider, provider_id)
+    extend = reference_video is None and longest is not None and wanted > longest + 0.5
+    check_budget(settings, project, shot, "video_gen", provider_id, resolution=resolution)
+    kind: TakeKind = "edit" if reference_video is not None else "extend" if extend else "video"
     with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
-        path = provider.generate(
-            prompt,
-            aspect=project.canvas.aspect,
-            duration=estimated_shot_seconds(project, shot),
-            output=Path(temp) / "gen",
-            first_frame=first_frame,
-            reference_video=reference_video,
-            on_task=remember_task,
-        )
+        work = Path(temp)
+        if not extend:
+            path = provider.generate(
+                prompt,
+                aspect=project.canvas.aspect,
+                duration=wanted,
+                output=work / "gen",
+                first_frame=first_frame,
+                reference_video=reference_video,
+                on_task=remember_task,
+            )
+            spent = [wanted]
+        else:
+            # 末帧续生成：配音比模型最长时长还长时，分段生成，每段从上一段的最后一帧接着生成，
+            # 最后拼成一段。替代慢放、定格和循环；每段单独计费。
+            path, spent = _generate_extended(
+                provider, prompt, project, work, wanted, longest or wanted, first_frame, remember_task
+            )
+            meta["segments"] = str(len(spent))
         asset = _register_media(
             store, project, path, source=provider_id or "video_gen", folder="ai-video", meta=meta
         )
     shot.visual.pending = None
-    record_spend(store, settings, project, shot, "video_gen", provider_id or "")
-    _attach(shot, [asset.id], select=True)
+    for seconds in spent:
+        record_spend(
+            store, settings, project, shot, "video_gen", provider_id or "", resolution=resolution, seconds=seconds
+        )
+    _attach(shot, [asset.id], select=True, take=kind, batch=batch)
     return [asset.id]
+
+
+MAX_EXTEND_PARTS = 4
+"""末帧续生成最多分几段，避免配音特别长时花太多钱；剩下的时长仍按补足方式处理。"""
+
+
+def _max_duration(provider: object, provider_id: str | None) -> float | None:
+    """生成服务一段最长能生成多少秒：优先用 Provider 实例的配置，其次用声明的上限。"""
+    configured = getattr(provider, "max_duration", None)
+    if isinstance(configured, int | float) and configured > 0:
+        return float(configured)
+    spec = _spec("video_gen", provider_id)
+    return spec.max_duration if spec is not None else None
+
+
+def _generate_extended(
+    provider: VideoGenProvider,
+    prompt: str,
+    project: Project,
+    work: Path,
+    wanted: float,
+    longest: float,
+    first_frame: Path | None,
+    remember_task,
+) -> tuple[Path, list[float]]:
+    lang = prompting.prompt_language(project)
+    segments: list[Path] = []
+    spent: list[float] = []
+    remaining = wanted
+    frame = first_frame
+    while remaining > 0.5 and len(segments) < MAX_EXTEND_PARTS:
+        part = len(segments)
+        length = min(remaining, longest)
+        text = prompt if part == 0 else f"{prompting.CONTINUE[lang]}\n{prompt}"
+        path = provider.generate(
+            text,
+            aspect=project.canvas.aspect,
+            duration=length,
+            output=work / f"part{part}",
+            first_frame=frame,
+            on_task=remember_task,
+        )
+        segments.append(path)
+        spent.append(length)
+        try:
+            actual = probe(path).duration or length
+        except MediaError:
+            actual = length
+        remaining -= actual
+        if remaining > 0.5 and len(segments) < MAX_EXTEND_PARTS:
+            frame = extract_frame(path, work / f"part{part}-last.jpg", width=0)
+    if len(segments) == 1:
+        return segments[0], spent
+    return concat_videos(segments, work / "extended.mp4", fps=project.canvas.fps), spent
 
 
 def _edit_source(store: ProjectStore, project: Project, shot: Shot, provider_id: str | None) -> Path:
@@ -383,14 +658,20 @@ def generate_image_candidate(
     shot: Shot,
     *,
     confirm_charge: bool = False,
+    keyframe: bool = False,
+    batch: str = "",
 ) -> list[str]:
-    """AI 图片：渲染时配合慢推镜头；也可以再作为 AI 视频的首帧。"""
-    if not shot.visual.prompt.strip():
+    """AI 图片：渲染时配合慢推镜头；也可以再作为 AI 视频的首帧。
+
+    ``keyframe`` 为真时是给 AI 视频镜头出关键帧：结果放进候选供选作首帧，不改变当前选中的画面。
+    """
+    if not (shot.visual.image_prompt.strip() or shot.visual.prompt.strip()):
         raise ProviderError("这个镜头没有画面提示词")
     provider_id = _provider_id(settings, "image_gen", shot)
     provider: ImageGenProvider = registry.create("image_gen", provider_id, settings)  # type: ignore[assignment]
     require_charge_confirmation(settings, "image_gen", provider_id, confirm_charge)
-    prompt = _reference_prompt(project) + shot.visual.prompt
+    check_budget(settings, project, shot, "image_gen", provider_id)
+    prompt = build_prompt(settings, project, shot, "image_gen", provider_id)
     with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
         path = provider.generate(prompt, aspect=project.canvas.aspect, output=Path(temp) / "gen")
         asset = _register_media(
@@ -399,10 +680,10 @@ def generate_image_candidate(
             path,
             source=provider_id or "image_gen",
             folder="ai-image",
-            meta={"prompt": prompt[:500]},
+            meta={"prompt": prompt[:1500]},
         )
     record_spend(store, settings, project, shot, "image_gen", provider_id or "")
-    _attach(shot, [asset.id], select=True)
+    _attach(shot, [asset.id], select=not keyframe, take="keyframe" if keyframe else "image", batch=batch)
     return [asset.id]
 
 
@@ -414,7 +695,16 @@ def refresh_candidates(
     *,
     confirm_charge: bool = False,
     edit_selected: bool = False,
+    count: int = 1,
+    keyframes: int = 0,
+    quality: Quality = "final",
 ) -> list[str]:
+    """检索或生成候选素材。
+
+    * ``count``：AI 视频一次生成几条（同一批，1–3）；
+    * ``keyframes``：AI 视频镜头先出几张关键帧图片（2–3），选中一张作首帧后再生成视频；
+    * ``quality``：草稿档用较低分辨率生成 AI 视频，更快更省钱。
+    """
     index = next((i for i, s in enumerate(project.shots) if s.id == shot.id), -1) + 1
     log.info(
         "项目 %s 镜头 %d：开始%s（%s）",
@@ -426,10 +716,18 @@ def refresh_candidates(
     try:
         if edit_selected:
             added = generate_ai_candidate(
-                store, settings, project, shot, confirm_charge=confirm_charge, edit_selected=True
+                store, settings, project, shot, confirm_charge=confirm_charge, edit_selected=True, quality=quality
             )
+        elif keyframes and shot.visual.mode == "ai":
+            added = generate_keyframes(store, settings, project, shot, keyframes, confirm_charge=confirm_charge)
         else:
-            added = _refresh(store, settings, project, shot, confirm_charge=confirm_charge)
+            added = _refresh(
+                store, settings, project, shot, confirm_charge=confirm_charge, count=count, quality=quality
+            )
+        if shot.visual.mode in ("ai", "image") or edit_selected:
+            from shotwright.services import inspect
+
+            inspect.inspect_takes(store, settings, project, shot, added)
     except ProviderError as exc:
         log.warning(
             "项目 %s 镜头 %d：%s失败：%s", project.id, index, _ACTIONS.get(shot.visual.mode, "处理"), exc
@@ -449,11 +747,19 @@ def _refresh(
     shot: Shot,
     *,
     confirm_charge: bool,
+    count: int = 1,
+    quality: Quality = "final",
 ) -> list[str]:
     if shot.visual.mode == "stock":
         return fetch_stock_candidates(store, settings, project, shot)
     if shot.visual.mode == "ai":
-        return generate_ai_candidate(store, settings, project, shot, confirm_charge=confirm_charge)
+        batch = new_id()
+        added: list[str] = []
+        for _ in range(max(1, min(count, MAX_TAKES_PER_BATCH))):
+            added += generate_ai_candidate(
+                store, settings, project, shot, confirm_charge=confirm_charge, quality=quality, batch=batch
+            )
+        return added
     if shot.visual.mode == "image":
         return generate_image_candidate(store, settings, project, shot, confirm_charge=confirm_charge)
     raise ProviderError("这个镜头的画面来源不需要检索或生成")
@@ -483,17 +789,27 @@ def resume_pending(store: ProjectStore, settings: Settings, project: Project, sh
         )
     shot.visual.pending = None
     record_spend(store, settings, project, shot, "video_gen", provider_id)
-    _attach(shot, [asset.id], select=True)
+    _attach(shot, [asset.id], select=True, take="video")
     return [asset.id]
 
 
 def record_spend(
-    store: ProjectStore, settings: Settings, project: Project, shot: Shot, kind: str, provider_id: str
+    store: ProjectStore,
+    settings: Settings,
+    project: Project,
+    shot: Shot,
+    kind: str,
+    provider_id: str,
+    *,
+    resolution: str = "",
+    seconds: float | None = None,
 ) -> None:
     """收费生成成功后，把参考费用累加到项目（直接写盘，调用方之后的合并不会覆盖它）。"""
     from shotwright.services import cost
 
-    amount = cost.generation_cost(settings, project, shot, kind, provider_id)
+    amount = cost.generation_cost(
+        settings, project, shot, kind, provider_id, resolution=resolution, seconds=seconds
+    )
     if amount <= 0:
         return
     with store.lock(project.id):
@@ -505,26 +821,69 @@ def record_spend(
     log.info("项目 %s：本次生成参考费用 %.2f 元，累计 %.2f 元", project.id, amount, project.cost_credits)
 
 
-def _attach(shot: Shot, asset_ids: list[str], *, select: bool = False) -> None:
+def _attach(
+    shot: Shot,
+    asset_ids: list[str],
+    *,
+    select: bool = False,
+    take: TakeKind | None = None,
+    batch: str = "",
+) -> None:
+    """把素材加进候选。``take`` 不为空时同时记一条生成版本（同一批共用 ``batch``）。"""
     candidates = list(shot.visual.candidates)
     for asset_id in asset_ids:
         if asset_id not in candidates:
             candidates.append(asset_id)
     shot.visual.candidates = candidates[-MAX_CANDIDATES:]
+    takes = [item for item in shot.visual.takes if item.asset_id in shot.visual.candidates]
+    if take is not None:
+        known = {item.asset_id for item in takes}
+        prompt = shot.visual.image_prompt or shot.visual.prompt if take in ("image", "keyframe") else shot.visual.prompt
+        takes += [
+            Take(asset_id=asset_id, kind=take, batch=batch or new_id(), prompt=prompt)
+            for asset_id in asset_ids
+            if asset_id not in known and asset_id in shot.visual.candidates
+        ]
+    shot.visual.takes = takes
+    if take == "keyframe":
+        # 关键帧只是首帧的备选，不改变当前选中的画面。
+        return
     if asset_ids and (
         select or shot.visual.selected is None or shot.visual.selected not in shot.visual.candidates
     ):
         shot.visual.selected = asset_ids[0]
 
 
-def add_upload(store: ProjectStore, project: Project, path: Path, *, filename: str) -> Asset:
-    """登记用户上传的文件（画面或音频）。"""
+def add_upload(
+    store: ProjectStore, project: Project, path: Path, *, filename: str, prefer_audio: bool = False
+) -> Asset:
+    """登记用户上传的文件（画面或音频）。
+
+    ``prefer_audio`` 用于背景音乐：有些音乐文件装在视频容器里（带封面的 mp4/m4a、
+    MV 片段），按画面登记会变成视频素材，背景音乐那边就选不了。这类文件按要求
+    直接当音频登记，渲染时本来也只取它的音轨。
+    """
     try:
         info = probe(path)
     except MediaError as exc:
         raise ProviderError("无法识别上传的文件，请上传常见的视频、图片或音频格式") from exc
     suffix = Path(filename).suffix.lower()
-    if info.has_video and suffix not in {".mp3", ".m4a", ".wav", ".aac", ".flac", ".ogg"}:
+    audio_suffixes = {".mp3", ".m4a", ".wav", ".aac", ".flac", ".ogg"}
+    if prefer_audio:
+        if not info.has_audio:
+            raise ProviderError("这个文件里没有音轨，无法作为背景音乐")
+        return store.add_asset(
+            project,
+            path,
+            kind="audio",
+            source="upload",
+            suffix=suffix or ".mp3",
+            duration=info.duration,
+            meta={"filename": filename[:200]},
+            move=True,
+            folder="upload",
+        )
+    if info.has_video and suffix not in audio_suffixes:
         return _register_media(
             store, project, path, source="upload", folder="upload", meta={"filename": filename[:200]}
         )

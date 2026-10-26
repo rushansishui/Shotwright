@@ -32,6 +32,10 @@ class ChargeConfirmationRequired(ProviderError):
     """收费操作没有得到用户的明确确认。"""
 
 
+class BudgetExceeded(ProviderError):
+    """本次收费生成会让项目累计费用超过上限。"""
+
+
 class UnconfirmedTaskError(ProviderError):
     """收费任务可能已在远端创建，但本地无法确认结果。不要自动重试，以免重复扣费。"""
 
@@ -74,6 +78,8 @@ class ProviderSpec:
     """支持的参考图数量上限；0 表示不支持参考图。"""
     word_timestamps: bool = False
     """配音服务是否提供逐词时间戳（用于精确字幕对齐）。"""
+    prompt_languages: tuple[str, ...] = ("en",)
+    """生成模型能直接理解的提示词语言（zh / en）。项目语言不在其中时，提交前先用大模型翻译。"""
 
     def missing_fields(self, settings: dict[str, str]) -> list[str]:
         return [f.key for f in self.fields if f.required and not settings.get(f.key)]

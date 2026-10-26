@@ -31,6 +31,9 @@ image_gen = "seedream"  # AI 图片（收费）；也可以用 "openai"
 [providers.llm.doubao]
 api_key = ""
 # model = "doubao-seed-2-1-pro-260915"
+# 看图模型（可选）：填了之后会检查生成的画面（产品是否走样、是否切题）、给素材候选排序、
+# 检查成片里的手指和乱码文字。填控制台里支持图片理解的模型 ID，留空时不检查。
+# vision_model = ""
 
 # DeepSeek：https://platform.deepseek.com
 [providers.llm.deepseek]
@@ -111,7 +114,8 @@ api_key = ""
 [providers.video_gen.seedance]
 # api_key = ""
 # model = "doubao-seedance-2-5-260628"
-# resolution = "1080p"        # 480p / 720p / 1080p，越高越贵
+# resolution = "1080p"        # 480p / 720p / 1080p，越高越贵；成片档使用
+# draft_resolution = "720p"   # 草稿档用的分辨率，更快更省钱
 # min_duration = "4"          # 模型支持的时长范围（秒），镜头时长会向上取整后限制在这个范围内
 # max_duration = "30"
 # generate_audio = "false"    # 是否生成音效（口播视频一般不需要）

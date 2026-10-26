@@ -12,7 +12,9 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,28 +28,51 @@ from shotwright.api import errors
 from shotwright.api.jobs import JobManager
 from shotwright.api.schemas import (
     AddShot,
+    AmbienceSearch,
     BgmDownload,
     BgmSearch,
     CandidatesRequest,
     ChargeConsent,
     CreateProject,
     CreateVersion,
+    DuplicateProject,
+    ExpandRequest,
+    PreviewVoice,
     ReorderShots,
+    RewriteShot,
     SplitShot,
+    SuggestTitles,
     UpdateProject,
     UpdateShot,
 )
 from shotwright.config import ROOT_DIR, Settings, load_settings
-from shotwright.core import languages
+from shotwright.core import languages, platforms
 from shotwright.core.models import Project, Shot, ShotVisual, VoiceSettings, validate_id
 from shotwright.core.store import ProjectNotFound, ProjectStore, read_json
 from shotwright.logs import setup_logging
 from shotwright.media import ffmpeg
+from shotwright.media import fonts as font_lib
+from shotwright.pipeline import voice as voice_stage
+from shotwright.pipeline.render_types import RenderError
+from shotwright.pipeline.shots import MAX_SEQUENCE
 from shotwright.providers import registry
 from shotwright.providers.base import ChargeConfirmationRequired, ProviderError
 from shotwright.providers.tts.edge import VOICES
+from shotwright.services import (
+    checkup,
+    editing,
+    footage,
+    localize,
+    music,
+    prompting,
+    pronounce,
+    rewrite,
+    storyboard,
+    visuals,
+)
 from shotwright.services import cost as cost_service
-from shotwright.services import editing, footage, localize, music, storyboard, visuals
+from shotwright.services import titles as titles_service
+from shotwright.services.duplicate import duplicate_project
 
 log = logging.getLogger("shotwright.api")
 
@@ -159,6 +184,14 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                                     merged.append(asset_id)
                             target.visual.candidates = merged[-visuals.MAX_CANDIDATES :]
                             target.visual.selected = recovered[0]
+                            known = {item.asset_id for item in target.visual.takes}
+                            target.visual.takes = [
+                                item for item in target.visual.takes if item.asset_id in target.visual.candidates
+                            ] + [
+                                item
+                                for item in shot.visual.takes
+                                if item.asset_id in recovered and item.asset_id not in known
+                            ]
                         target.visual.pending = None
                         store.save(latest)
                 except OSError as exc:
@@ -306,6 +339,48 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             for lang in languages.LANGUAGES.values()
         ]
 
+    # ---- 字体 ---------------------------------------------------------------
+
+    @api.get("/fonts")
+    def list_fonts():
+        """按字体族分组的可用字体：内置字体和用户导入的字体。"""
+        return font_lib.families(settings)
+
+    @api.get("/fonts/{name}")
+    def font_file(name: str):
+        """字体文件本身，界面预览用。只返回字体库里的文件。"""
+        face = font_lib.find(settings, name)
+        if face is None:
+            raise HTTPException(404, "找不到这个字体")
+        media_type = "font/otf" if face.path.suffix.lower() == ".otf" else "font/ttf"
+        return FileResponse(face.path, media_type=media_type, headers={"Cache-Control": "max-age=86400"})
+
+    @api.post("/fonts", status_code=201)
+    def import_font(file: UploadFile = File(...)):
+        """导入自己的字体（.ttf / .otf），之后所有项目都能用。请只导入有使用授权的字体。"""
+        filename = Path(file.filename or "font.ttf").name
+        with tempfile.TemporaryDirectory(prefix="shotwright-font-") as temp:
+            path = Path(temp) / ("upload" + Path(filename).suffix.lower()[:5])
+            size = 0
+            with path.open("wb") as handle:
+                while chunk := file.file.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > font_lib.MAX_FONT_BYTES:
+                        raise HTTPException(413, "字体文件超过 40MB")
+                    handle.write(chunk)
+            try:
+                face = font_lib.import_font(settings, path, filename)
+            except font_lib.FontError as exc:
+                raise HTTPException(422, str(exc)) from None
+        return {"file": face.file, "family": face.family}
+
+    @api.delete("/fonts/{name}", status_code=204)
+    def delete_font(name: str):
+        try:
+            font_lib.delete_font(settings, name)
+        except font_lib.FontError as exc:
+            raise HTTPException(422, str(exc)) from None
+
     # ---- 项目 ---------------------------------------------------------------
 
     @api.get("/projects")
@@ -326,7 +401,9 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
     @api.post("/projects", status_code=201)
     def create_project(body: CreateProject):
         lang = languages.get(body.language)
-        project = Project(title=body.title, subject=body.subject, target_seconds=body.duration)
+        project = Project(
+            title=body.title, subject=body.subject, target_seconds=body.duration, video_type=body.video_type
+        )
         if body.canvas:
             project.canvas = body.canvas
         if not body.voice and settings.default_provider("tts"):
@@ -340,15 +417,21 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             if not body.subject.strip():
                 raise HTTPException(422, "请填写视频诉求")
             llm = registry.create("llm", None, settings)
-            title, shots = storyboard.generate_storyboard(
+            board = storyboard.write_storyboard(
                 llm,
                 body.subject.strip(),
                 language=lang.prompt_name,
+                prompt_lang=prompting.prompt_language(project),
                 shots=body.shots,
                 duration=body.duration,
+                video_type=body.video_type,
+                aspect=project.canvas.aspect,
             )
-            project.title = project.title or title
-            project.shots = shots
+            project.title = project.title or board.title
+            project.shots = board.shots
+            project.look = board.look
+            if body.video_type:
+                storyboard.suggest_sources(project.shots, visuals.available_sources(settings))
         elif body.mode == "split":
             if not body.script.strip():
                 raise HTTPException(422, "请填写视频文案")
@@ -370,21 +453,39 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             for name in (
                 "title",
                 "subject",
+                "video_type",
+                "look",
+                "titles",
+                "chain_frames",
                 "target_seconds",
                 "canvas",
                 "voice",
+                "pronunciations",
                 "subtitle",
                 "overlays",
                 "transition",
                 "bgm",
+                "sfx",
+                "delivery",
                 "references",
                 "ai_badge",
             ):
                 value = getattr(body, name)
                 if value is not None:
                     setattr(project, name, value)
+            if "loudness" in body.model_fields_set:
+                project.loudness = body.loudness
+            if "budget" in body.model_fields_set:
+                project.budget = body.budget
+            if project.sfx.ambience and (
+                project.sfx.ambience not in project.assets or project.assets[project.sfx.ambience].kind != "audio"
+            ):
+                raise ValueError("环境声必须是项目里的音频素材")
             if project.bgm.asset_id and project.bgm.asset_id not in project.assets:
                 raise ValueError("背景音乐素材不存在")
+            for item in project.look.subjects:
+                if item.reference and item.reference not in project.assets:
+                    raise ValueError("全片设定引用的参考素材不存在")
             for ref in project.references:
                 asset = project.assets.get(ref.asset_id)
                 if asset is None:
@@ -393,6 +494,78 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     raise ValueError("参考素材必须是图片")
 
         return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/pronunciations/suggest")
+    def suggest_pronunciations(project_id: str):
+        """AI 检查文案里容易读错的词（多音字等），追加到读音纠正表。不收费。"""
+        project = store.load(_id(project_id))
+        llm = registry.create("llm", None, settings)
+        found = pronounce.suggest(llm, project)  # type: ignore[arg-type]
+
+        def change(latest: Project) -> None:
+            known = {item.word for item in latest.pronunciations}
+            latest.pronunciations += [item for item in found if item.word not in known]
+
+        return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/voice/preview")
+    def preview_voice(project_id: str, body: PreviewVoice):
+        """按当前配音设置和读音纠正合成一句试听。"""
+        project = store.load(_id(project_id))
+        try:
+            path = voice_stage.preview_voice(store, settings, project, body.text)
+        except RenderError as exc:
+            raise HTTPException(422, str(exc)) from None
+        except ProviderError as exc:
+            raise HTTPException(502, str(exc)) from None
+        media_type = "audio/mpeg" if path.suffix == ".mp3" else "audio/mp4" if path.suffix == ".m4a" else "audio/wav"
+        return FileResponse(path, media_type=media_type)
+
+    @api.post("/projects/{project_id}/subtitle/keywords")
+    def suggest_keywords(project_id: str):
+        """AI 挑选字幕高亮关键词，替换 subtitle.keywords。不生成画面、不收费。"""
+        project = store.load(_id(project_id))
+        llm = registry.create("llm", None, settings)
+        words = titles_service.suggest_keywords(llm, project)  # type: ignore[arg-type]
+
+        def change(latest: Project) -> None:
+            latest.subtitle.keywords = words
+
+        return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/titles/suggest")
+    def suggest_titles(project_id: str, body: SuggestTitles | None = None):
+        """AI 生成标题：候选大标题存进 titles.candidates，可选地为镜头写小标题。不生成画面、不收费。"""
+        body = body or SuggestTitles()
+        project = store.load(_id(project_id))
+        llm = registry.create("llm", None, settings)
+        headlines, subtitle, shot_titles = titles_service.suggest_titles(llm, project)  # type: ignore[arg-type]
+
+        def change(latest: Project) -> None:
+            latest.titles.candidates = headlines
+            if subtitle and not latest.titles.intro.subtitle:
+                latest.titles.intro.subtitle = subtitle
+            if body.apply_headline:
+                latest.titles.headline.text = headlines[0]
+                latest.titles.headline.enabled = True
+            if body.shot_titles:
+                ids = [shot.id for shot in project.shots]
+                for index, title in shot_titles.items():
+                    try:
+                        target = latest.shot(ids[index - 1])
+                    except (KeyError, IndexError):
+                        continue
+                    if not target.title.strip():
+                        target.title = title
+
+        return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/duplicate", status_code=201)
+    def duplicate(project_id: str, body: DuplicateProject | None = None):
+        """把已有项目复制成新项目（素材、设置、镜头和渲染缓存一起复制），返回新项目。"""
+        with store.lock(_id(project_id)):
+            project = store.load(project_id)
+            return duplicate_project(store, project, title=body.title if body else None)
 
     @api.get("/projects/{project_id}/versions")
     def list_versions(project_id: str):
@@ -474,6 +647,10 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             shot = project.shot(_id(shot_id))
             if body.text is not None:
                 shot.text = body.text
+            if body.role is not None:
+                shot.role = body.role
+            if body.title is not None:
+                shot.title = body.title.strip()
             if body.clear_duration:
                 shot.duration = None
             elif body.duration is not None:
@@ -489,14 +666,24 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 for field in ("selected", "first_frame"):
                     if patch.get(field) and patch[field] not in project.assets:
                         raise ValueError("所选素材不存在")
+                if "sequence" in patch:
+                    sequence = list(dict.fromkeys(patch["sequence"] or []))
+                    if any(item not in project.assets for item in sequence):
+                        raise ValueError("所选素材不存在")
+                    if any(project.assets[item].kind not in ("video", "image") for item in sequence):
+                        raise ValueError("只能多选图片或视频素材")
+                    current = patch.get("candidates", shot.visual.candidates)
+                    missing = [item for item in sequence if item not in current]
+                    if missing:
+                        patch["candidates"] = [*current, *missing][-visuals.MAX_CANDIDATES :]
+                    patch["sequence"] = sequence
                 if patch.get("first_frame") and project.assets[patch["first_frame"]].kind != "image":
                     raise ValueError("首帧必须是图片")
                 if "terms" in patch:
                     patch["terms"] = [t.strip()[:80] for t in patch["terms"] if t.strip()]
-                if patch.get("selected") and patch["selected"] not in shot.visual.candidates:
-                    patch["candidates"] = [*shot.visual.candidates, patch["selected"]][
-                        -visuals.MAX_CANDIDATES :
-                    ]
+                current = patch.get("candidates", shot.visual.candidates)
+                if patch.get("selected") and patch["selected"] not in current:
+                    patch["candidates"] = [*current, patch["selected"]][-visuals.MAX_CANDIDATES :]
                 if patch.pop("clear_trim_end", False):
                     patch["trim_end"] = None
                 mode = patch.pop("mode", None)
@@ -512,8 +699,15 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     if shot.visual.edit_asset != target:
                         patch = {"trim_start": 0.0, "trim_end": None, "focus_x": 0.5, "focus_y": 0.5, **patch}
                     patch["edit_asset"] = target
+                merged = {**shot.visual.model_dump(), **patch}
+                # 选中的素材不重复出现在多选列表里；多选最多 MAX_SEQUENCE 段（含选中的那段）。
+                merged["sequence"] = [
+                    item for item in merged.get("sequence") or [] if item != merged.get("selected")
+                ][: MAX_SEQUENCE - 1]
+                if not merged.get("selected"):
+                    merged["sequence"] = []
                 try:
-                    shot.visual = ShotVisual.model_validate({**shot.visual.model_dump(), **patch})
+                    shot.visual = ShotVisual.model_validate(merged)
                 except ValidationError as exc:
                     # 只把第一条原因（例如「出点必须晚于入点」）返回给界面，便于翻译。
                     message = str(exc.errors()[0].get("msg", exc))
@@ -526,6 +720,22 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
     def delete_shot(project_id: str, shot_id: str):
         def change(project: Project) -> None:
             project.shots.remove(project.shot(_id(shot_id)))
+
+        return _mutate(project_id, change)
+
+    @api.delete("/projects/{project_id}/shots/{shot_id}/candidates/{asset_id}")
+    def remove_candidate(project_id: str, shot_id: str, asset_id: str):
+        """从镜头的候选素材里删掉一个；删的是选中的素材时自动换成下一个。"""
+
+        def change(project: Project) -> None:
+            shot = project.shot(_id(shot_id))
+            if shot.visual.locked:
+                raise HTTPException(409, "镜头已锁定，请先解锁")
+            try:
+                visuals.remove_candidate(project, shot, _id(asset_id))
+            except KeyError:
+                raise HTTPException(404, "候选素材不存在") from None
+            shot.status, shot.error = "draft", None
 
         return _mutate(project_id, change)
 
@@ -573,21 +783,28 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             raise HTTPException(404, "镜头不存在")
         if shot.visual.locked:
             raise HTTPException(409, "镜头已锁定，请先解锁")
-        confirmed = bool(body and body.confirm_charge)
-        edit = bool(body and body.edit_selected)
+        body = body or CandidatesRequest()
+        confirmed = body.confirm_charge
+        edit = body.edit_selected
+        keyframes = body.keyframes if shot.visual.mode == "ai" and not edit else 0
         key = (project_id, shot_id)
         with in_progress_lock:
             if key in in_progress:
                 # 同一个镜头不允许重复提交，避免连点造成重复扣费。
                 raise HTTPException(409, "这个镜头正在生成，请等它完成")
-            in_progress[key] = {"mode": "ai" if edit else shot.visual.mode, "since": time.time()}
-        generated = edit or shot.visual.mode in ("ai", "image")
+            in_progress[key] = {
+                "mode": "image" if keyframes else "ai" if edit else shot.visual.mode,
+                "since": time.time(),
+            }
+        # 关键帧只是候选图片，不改变当前选中的画面。
+        generated = (edit or shot.visual.mode in ("ai", "image")) and not keyframes
 
         def change(latest: Project) -> None:
             for asset_id, asset in project.assets.items():
                 latest.assets.setdefault(asset_id, asset)
             target = latest.shot(shot_id)
             target.visual.candidates = shot.visual.candidates
+            target.visual.takes = shot.visual.takes
             if edit:
                 # 改画面的结果是 AI 视频，切到 AI 视频来源，新画面才会出现在候选里。
                 target.visual.mode = "ai"
@@ -597,7 +814,15 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
         try:
             visuals.refresh_candidates(
-                store, settings, project, shot, confirm_charge=confirmed, edit_selected=edit
+                store,
+                settings,
+                project,
+                shot,
+                confirm_charge=confirmed,
+                edit_selected=edit,
+                count=body.count,
+                keyframes=keyframes,
+                quality=body.quality,
             )
             return _mutate(project_id, change)
         finally:
@@ -605,10 +830,49 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             with in_progress_lock:
                 in_progress.pop(key, None)
 
+    _VISUAL_TEXT = ("prompt", "image_prompt", "camera", "link")
+
+    @api.post("/projects/{project_id}/shots/{shot_id}/rewrite")
+    def rewrite_shot(project_id: str, shot_id: str, body: RewriteShot):
+        """单镜头 AI 改写：按一句要求只改这个镜头的画面，保持全片设定和衔接。不生成画面、不收费。"""
+        project = store.load(_id(project_id))
+        shot = project.shot(_id(shot_id))
+        llm = registry.create("llm", None, settings)
+        rewrite.rewrite_shot(llm, project, shot, body.instruction)  # type: ignore[arg-type]
+
+        def change(latest: Project) -> None:
+            target = latest.shot(shot_id)
+            for name in _VISUAL_TEXT:
+                setattr(target.visual, name, getattr(shot.visual, name))
+
+        return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/expand")
+    def expand_project(project_id: str, body: ExpandRequest | None = None):
+        """一键补全：扩写过短的画面描述、补衔接说明，没有全片设定时一并生成。不生成画面、不收费。"""
+        project = store.load(_id(project_id))
+        llm = registry.create("llm", None, settings)
+        changed = rewrite.expand_project(llm, project, only_short=(body or ExpandRequest()).only_short)  # type: ignore[arg-type]
+
+        def change(latest: Project) -> None:
+            if latest.look.is_empty() and not project.look.is_empty():
+                latest.look = project.look
+            for shot_id in changed:
+                try:
+                    target = latest.shot(shot_id)
+                except KeyError:
+                    continue
+                source = project.shot(shot_id)
+                for name in _VISUAL_TEXT:
+                    setattr(target.visual, name, getattr(source.visual, name))
+
+        return _mutate(project_id, change)
+
     # ---- 素材 ---------------------------------------------------------------
 
     @api.post("/projects/{project_id}/assets", status_code=201)
-    def upload_asset(project_id: str, file: UploadFile = File(...)):
+    def upload_asset(project_id: str, file: UploadFile = File(...), as_audio: bool = False):
+        """上传素材。``as_audio=true`` 时按背景音乐处理（音乐文件常装在视频容器里）。"""
         _id(project_id)
         if not store.exists(project_id):
             raise ProjectNotFound(project_id)
@@ -624,7 +888,9 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     handle.write(chunk)
             with store.lock(project_id):
                 project = store.load(project_id)
-                asset = visuals.add_upload(store, project, path, filename=filename)
+                asset = visuals.add_upload(
+                    store, project, path, filename=filename, prefer_audio=as_audio
+                )
                 store.save(project)
         return asset
 
@@ -658,6 +924,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 result = footage.import_footage(
                     store, settings, project, path, filename=filename, replace_shots=replace_shots
                 )
+                if project.video_type is None:
+                    project.video_type = "footage"
                 store.save(project)
         return {
             "source_asset": result.source_asset,
@@ -728,13 +996,42 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
         return _mutate(project_id, change)
 
+    @api.post("/projects/{project_id}/sfx/ambience")
+    def search_ambience(project_id: str, body: AmbienceSearch | None = None):
+        """自动配环境声：用音乐库按场景检索一段环境声，下载后设为本项目的环境声。"""
+        project = store.load(_id(project_id))
+        query = (body.query if body else "").strip() or music.ambience_query(project)
+        added, used = music.search_bgm(store, settings, project, query=query, limit=1)
+
+        def change(latest: Project) -> None:
+            for asset_id in added:
+                latest.assets.setdefault(asset_id, project.assets[asset_id])
+            latest.sfx.ambience = added[0]
+            latest.sfx.ambience_query = used
+
+        return _mutate(project_id, change)
+
     # ---- 费用预估 ------------------------------------------------------------
 
     @api.get("/projects/{project_id}/cost-estimate")
-    def get_cost_estimate(project_id: str):
-        """估算渲染本项目的费用（元），不实际触发任何 AI 调用。"""
+    def get_cost_estimate(project_id: str, quality: Literal["draft", "final"] = "final"):
+        """估算渲染本项目的费用（元），不实际触发任何 AI 调用。草稿档按草稿分辨率估算。"""
         project = store.load(_id(project_id))
-        return cost_service.estimate_render_cost(project, settings).to_dict()
+        return cost_service.estimate_render_cost(project, settings, quality).to_dict()
+
+    @api.get("/platforms")
+    def list_platforms():
+        """交付平台规格：推荐画面比例和安全区（界面用来画安全区参考线）。"""
+        return [
+            {"id": p.id, "name": p.name, "name_en": p.name_en, "aspects": list(p.aspects), "safe": asdict(p.safe)}
+            for p in platforms.PLATFORMS.values()
+        ]
+
+    @api.get("/projects/{project_id}/checkup")
+    def get_checkup(project_id: str, quality: Literal["draft", "final"] = "final"):
+        """渲染前体检：列出缺画面、素材太短、分辨率不足、文字重叠、超出费用上限等问题。只读。"""
+        project = store.load(_id(project_id))
+        return {"issues": checkup.to_dicts(checkup.check_project(project, settings, quality=quality))}
 
     # ---- 渲染 ---------------------------------------------------------------
 
