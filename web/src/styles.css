@@ -84,7 +84,7 @@ h2 {
 }
 
 .topbar-inner {
-  max-width: 1360px;
+  max-width: 1600px;
   margin: 0 auto;
   padding: 12px 24px;
   display: flex;
@@ -139,7 +139,7 @@ h2 {
 /* ---- 页面布局 ---- */
 
 .page {
-  max-width: 1360px;
+  max-width: 1600px;
   margin: 0 auto;
   padding: 20px 24px 64px;
 }
@@ -621,7 +621,7 @@ input[type="color"] {
     width: 40px;
   }
   .segmented {
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
   }
   .segmented button {
     padding: 0 10px;
@@ -1953,7 +1953,7 @@ input[type="color"] {
 /* ---- 新建视频：步骤、素材、脚本 ---- */
 .flow-steps {
   list-style: none;
-  margin: 18px 0 4px;
+  margin: 2px 0 0;
   padding: 0;
   display: flex;
   gap: 6px;
@@ -2024,14 +2024,18 @@ input[type="color"] {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 18px 12px;
+  gap: 2px;
+  padding: 11px 12px;
   border: 1.5px dashed var(--line);
   border-radius: var(--radius);
   background: var(--field);
   color: var(--text);
   font: inherit;
   cursor: pointer;
+}
+.materials-drop svg {
+  width: 16px;
+  height: 16px;
 }
 .materials-drop:hover:not(:disabled),
 .materials-drop.over {
@@ -2160,9 +2164,10 @@ input[type="color"] {
 /* ---- 首页：左边新建视频，右边最近的项目 ---- */
 .home-layout {
   display: grid;
-  grid-template-columns: minmax(0, 7fr) minmax(300px, 4fr);
+  grid-template-columns: minmax(0, 7fr) minmax(340px, 4fr);
   gap: 20px;
   align-items: start;
+  padding-bottom: 24px;
 }
 .home-create {
   min-width: 0;
@@ -2198,14 +2203,14 @@ input[type="color"] {
   margin: 0;
 }
 .video-settings {
-  margin: 14px 0 6px;
-  padding: 14px 16px 4px;
+  margin: 0;
+  padding: 12px 14px 0;
   border: 1px solid var(--line-soft);
   border-radius: var(--radius);
   background: var(--field);
 }
 .video-settings .field {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 .settings-row {
   display: grid;
@@ -2233,8 +2238,8 @@ input[type="color"] {
   position: sticky;
   bottom: 0;
   z-index: 2;
-  margin: 4px -20px -20px;
-  padding: 14px 20px;
+  margin: 2px -20px -20px;
+  padding: 10px 20px;
   background: color-mix(in srgb, var(--card) 92%, transparent);
   backdrop-filter: blur(6px);
   border-top: 1px solid var(--line-soft);
