@@ -9,6 +9,7 @@ export const zh = {
   "common.loading": "加载中…",
   "common.seconds": "{n} 秒",
   "common.paidSuffix": "（收费）",
+  "common.serverOutdated": "后台服务还是旧版本，和页面对不上。请关闭 Shotwright 窗口后运行 restart.bat 重启，再刷新页面。",
   "common.requestFailed": "请求失败（HTTP {status}）",
 
   "home.newVideo": "新建视频",
@@ -538,6 +539,7 @@ export const en: Record<MessageKey, string> = {
   "common.loading": "Loading…",
   "common.seconds": "{n}s",
   "common.paidSuffix": " (paid)",
+  "common.serverOutdated": "The server is running an older version than this page. Close the Shotwright window, run restart.bat, then refresh.",
   "common.requestFailed": "Request failed (HTTP {status})",
 
   "home.newVideo": "New video",
