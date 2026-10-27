@@ -293,6 +293,19 @@ export interface SfxSettings {
 /** 视频类型：商品广告、品牌宣传、知识科普、口播、原片改造。 */
 export type VideoType = "product_ad" | "brand" | "explainer" | "talking" | "footage";
 
+export type MaterialKind = "image" | "video" | "audio";
+/** 素材用途：产品图、人物照片、Logo、风格参考、画面素材（直接当镜头画面）、背景音乐。 */
+export type MaterialRole = "product" | "person" | "logo" | "style" | "footage" | "bgm";
+
+/** 新建视频时交给后端的素材说明；上传后带上 asset_id。 */
+export interface MaterialNote {
+  kind: MaterialKind;
+  role: MaterialRole;
+  name?: string;
+  note?: string;
+  asset_id?: string;
+}
+
 /** 读音纠正：配音时把 word 换成读音相同的 say，字幕仍显示 word。 */
 export interface Pronunciation {
   word: string;
@@ -304,6 +317,10 @@ export interface Project {
   id: string;
   title: string;
   subject: string;
+  /** 用户最初随手写的想法（创作记录）。 */
+  idea?: string;
+  /** 生成分镜时用的脚本，每段一个镜头（创作记录，之后改镜头文案不影响）。 */
+  script?: string[];
   video_type?: VideoType | null;
   look?: Look;
   /** 标题：常驻大标题、片头标题卡、镜头小标题样式。 */

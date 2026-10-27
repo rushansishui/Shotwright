@@ -120,11 +120,14 @@ test.describe("Shotwright 主流程", () => {
 
   test("诉求模板：选类型、填模板，提交前提醒没填的内容", async ({ page }) => {
     await page.goto("/");
+    await page.evaluate(() => localStorage.removeItem("shotwright.newVideoDraft"));
+    await page.reload();
     await page.getByRole("radio", { name: /口播|Talking head/ }).click();
-    await expect(page.locator("#subject")).toHaveAttribute("placeholder", /视频号|YouTube Shorts/);
-    await page.getByRole("button", { name: /使用模板|Use template/ }).click();
+    await expect(page.locator("#idea")).toHaveAttribute("placeholder", /视频号|talking-head/);
+    // 自己写诉求：直接进入第 2 步，按所选类型填好模板。
+    await page.getByRole("button", { name: /自己写诉求|write the brief/ }).click();
     await expect(page.locator("#subject")).toHaveValue(/主讲人|Presenter/);
-    await page.getByRole("button", { name: /生成分镜|Create storyboard/ }).click();
+    await page.getByRole("button", { name: /直接生成分镜|Skip the script/ }).click();
     await expect(page.getByRole("alert")).toContainText(/没有填写|unfilled/);
     await expect(page.getByRole("button", { name: /仍然生成|Create anyway/ })).toBeVisible();
     // 填入例子后不再提醒。
@@ -196,6 +199,6 @@ test.describe("Shotwright 主流程", () => {
     await expect(page.locator("#title")).toHaveValue(/（副本）|\(copy\)/);
     await expect(page.locator("article.shot")).toHaveCount(count);
     await page.goto("/");
-    await expect(page.locator(".project-list li").first()).toContainText(/（副本）|\(copy\)/);
+    await expect(page.locator(".project-grid li").first()).toContainText(/（副本）|\(copy\)/);
   });
 });

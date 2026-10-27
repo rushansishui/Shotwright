@@ -29,6 +29,7 @@ from shotwright.api.jobs import JobManager
 from shotwright.api.schemas import (
     AddShot,
     AmbienceSearch,
+    ApplyMaterials,
     BgmDownload,
     BgmSearch,
     CandidatesRequest,
@@ -37,10 +38,13 @@ from shotwright.api.schemas import (
     CreateVersion,
     DuplicateProject,
     ExpandRequest,
+    NormalizeBrief,
     PreviewVoice,
     ReorderShots,
     RewriteShot,
+    ScriptRequest,
     SplitShot,
+    StoryboardRequest,
     SuggestTitles,
     UpdateProject,
     UpdateShot,
@@ -58,6 +62,7 @@ from shotwright.pipeline.shots import MAX_SEQUENCE
 from shotwright.providers import registry
 from shotwright.providers.base import ChargeConfirmationRequired, ProviderError
 from shotwright.providers.tts.edge import VOICES
+from shotwright.services import brief as brief_service
 from shotwright.services import (
     checkup,
     editing,
@@ -497,7 +502,11 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
     def create_project(body: CreateProject):
         lang = languages.get(body.language)
         project = Project(
-            title=body.title, subject=body.subject, target_seconds=body.duration, video_type=body.video_type
+            title=body.title,
+            subject=body.subject,
+            idea=body.idea,
+            target_seconds=body.duration,
+            video_type=body.video_type,
         )
         if body.canvas:
             project.canvas = body.canvas
@@ -531,8 +540,101 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             if not body.script.strip():
                 raise HTTPException(422, "请填写视频文案")
             project.shots = storyboard.split_script(body.script)
+        # 创作记录：生成分镜时的文案，之后改镜头不影响。
+        project.script = [shot.text for shot in project.shots if shot.text.strip()][:60]
         project.title = project.title or body.subject[:40] or "未命名项目"
         return store.create(project)
+
+    def _materials(items) -> list[brief_service.Material]:
+        return [
+            brief_service.Material(kind=item.kind, role=item.role, name=item.name, note=item.note, asset_id=item.asset_id)
+            for item in items
+        ]
+
+    @api.post("/brief/normalize")
+    def normalize_brief(body: NormalizeBrief):
+        """把用户随手写的想法按视频类型的模板整理成完整诉求。不建项目、不收费。"""
+        lang = languages.get(body.language)
+        llm = registry.create("llm", None, settings)
+        text = brief_service.normalize_brief(
+            llm,  # type: ignore[arg-type]
+            body.idea,
+            template=body.template,
+            video_type=body.video_type,
+            language=lang.prompt_name,
+            aspect=body.aspect,
+            duration=body.duration,
+            materials=_materials(body.materials),
+        )
+        return {"brief": text}
+
+    @api.post("/brief/script")
+    def write_script(body: ScriptRequest):
+        """按诉求写口播脚本（每段一个镜头），交给用户修改。不建项目、不收费。"""
+        lang = languages.get(body.language)
+        llm = registry.create("llm", None, settings)
+        title, lines = brief_service.write_script(
+            llm,  # type: ignore[arg-type]
+            body.brief,
+            video_type=body.video_type,
+            language=lang.prompt_name,
+            aspect=body.aspect,
+            duration=body.duration,
+            materials=_materials(body.materials),
+        )
+        return {"title": title, "lines": lines, "seconds": brief_service.script_seconds(lines)}
+
+    @api.post("/projects/{project_id}/storyboard")
+    def project_storyboard(project_id: str, body: StoryboardRequest):
+        """给项目写分镜：有定稿脚本时按脚本一段一个镜头，只配画面；再把上传的素材放到该放的地方。"""
+        project = store.load(_id(project_id))
+        materials = _materials(body.materials)
+        for item in materials:
+            if item.asset_id is not None and _id(item.asset_id) not in project.assets:
+                raise HTTPException(404, "素材不存在")
+        lang = languages.get(project.language)
+        llm = registry.create("llm", None, settings)
+        board = storyboard.write_storyboard(
+            llm,  # type: ignore[arg-type]
+            body.subject.strip(),
+            language=lang.prompt_name,
+            prompt_lang=prompting.prompt_language(project),
+            duration=body.duration,
+            video_type=project.video_type,
+            aspect=project.canvas.aspect,
+            script=body.script,
+            materials=brief_service.describe_materials(materials),
+        )
+
+        def change(latest: Project) -> None:
+            latest.subject = body.subject.strip()
+            if body.idea.strip():
+                latest.idea = body.idea.strip()
+            latest.script = [shot.text for shot in board.shots if shot.text.strip()][:60]
+            if body.duration:
+                latest.target_seconds = body.duration
+            if not latest.title or latest.title == "未命名项目":
+                latest.title = board.title or body.subject[:40]
+            latest.shots = board.shots
+            latest.look = board.look
+            if latest.video_type:
+                storyboard.suggest_sources(latest.shots, visuals.available_sources(settings), latest.look)
+            brief_service.apply_materials(latest, materials, board.footage)
+
+        return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/materials")
+    def apply_materials(project_id: str, body: ApplyMaterials):
+        """把新建时上传的素材放到该放的地方（不调用大模型）。"""
+
+        def change(latest: Project) -> None:
+            materials = _materials(body.materials)
+            for item in materials:
+                if item.asset_id is None or item.asset_id not in latest.assets:
+                    raise KeyError(item.asset_id)
+            brief_service.apply_materials(latest, materials)
+
+        return _mutate(project_id, change)
 
     @api.get("/projects/{project_id}")
     def get_project(project_id: str):
@@ -548,6 +650,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             for name in (
                 "title",
                 "subject",
+                "idea",
+                "script",
                 "video_type",
                 "look",
                 "titles",

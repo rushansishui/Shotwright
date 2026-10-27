@@ -757,6 +757,11 @@ class Project(_Model):
     title: str = ""
     subject: str = ""
     """视频诉求：用户想要的内容。最多 4096 字节（UTF-8）。"""
+    idea: str = Field("", max_length=4000)
+    """用户最初随手写的想法（新建时 AI 据此整理出 ``subject``），留作记录，方便以后改了重新创作。"""
+    script: list[str] = Field(default_factory=list, max_length=60)
+    """生成分镜时用的脚本（每段一个镜头）：用户定稿的脚本，或 AI 写的文案、粘贴的文案拆出的段落。
+    之后改镜头文案不影响这里，留作创作记录。"""
     video_type: VideoType | None = None
     """视频类型；为空表示没选（旧项目或只按文案拆镜头）。"""
     titles: TitleSettings = Field(default_factory=TitleSettings)
@@ -804,6 +809,11 @@ class Project(_Model):
     @classmethod
     def _check_subject(cls, value: str) -> str:
         return check_subject(value)
+
+    @field_validator("script")
+    @classmethod
+    def _check_script(cls, value: list[str]) -> list[str]:
+        return [line.strip()[:500] for line in value if line.strip()]
 
     @field_validator("group")
     @classmethod

@@ -18,6 +18,7 @@ import { TitleSection } from "./editor/TitleSection";
 import { TextStyleEditor } from "./editor/TextStyleEditor";
 import { KeywordField } from "./editor/KeywordField";
 import { PronunciationSection } from "./editor/PronunciationSection";
+import { OriginRecord } from "./editor/OriginRecord";
 
 export function Editor({ projectId }: { projectId: string }) {
   const {
@@ -148,6 +149,8 @@ export function Editor({ projectId }: { projectId: string }) {
             {error}
           </p>
         )}
+
+        <OriginRecord project={project} run={(action) => run(action)} />
 
         <Section
           step={1}

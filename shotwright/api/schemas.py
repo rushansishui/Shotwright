@@ -37,6 +37,8 @@ class _Body(BaseModel):
 class CreateProject(_Body):
     subject: str = ""
     """视频诉求：想要什么内容。上限 4096 字节。"""
+    idea: str = Field("", max_length=4000)
+    """用户最初随手写的想法，留作创作记录。"""
     script: str = Field("", max_length=20000)
     title: str = Field("", max_length=120)
     mode: Literal["llm", "split", "empty"] = "split"
@@ -60,6 +62,20 @@ class CreateProject(_Body):
 
 class UpdateProject(_Body):
     title: str | None = Field(None, max_length=120)
+    idea: str | None = Field(None, max_length=4000)
+    """创作记录：原始想法。"""
+    script: list[str] | None = Field(None, max_length=60)
+    """创作记录：分镜脚本，每段一个镜头；整体替换，不改现有镜头。"""
+
+    @field_validator("idea")
+    @classmethod
+    def _clean_idea(cls, value: str | None) -> str | None:
+        return None if value is None else value.strip()
+
+    @field_validator("script")
+    @classmethod
+    def _clean_script(cls, value: list[str] | None) -> list[str] | None:
+        return None if value is None else [line.strip()[:500] for line in value if line.strip()]
     language: str | None = Field(None, max_length=40)
     """切换视频语言：同时换成该语言的默认配音声音和字幕字体（文案不变）。"""
     subject: str | None = None
@@ -237,3 +253,55 @@ class BgmDownload(_Body):
     author: str = Field("", max_length=200)
     duration: float = Field(0.0, ge=0)
     meta: dict[str, str] = Field(default_factory=dict)
+
+
+class MaterialNote(_Body):
+    """新建视频时上传的一份素材：类型、用途、文件名、说明；已上传到项目时带上素材 id。"""
+
+    kind: Literal["image", "video", "audio"]
+    role: Literal["product", "person", "logo", "style", "footage", "bgm"]
+    name: str = Field("", max_length=200)
+    note: str = Field("", max_length=300)
+    asset_id: str | None = None
+
+
+class NormalizeBrief(_Body):
+    idea: str = Field(min_length=1, max_length=4000)
+    """用户随手写的想法。"""
+    template: str = Field("", max_length=6000)
+    """所选视频类型的诉求模板（界面语言版本）。"""
+    video_type: VideoType | None = None
+    language: str = Field("zh-CN", max_length=40)
+    aspect: str | None = Field(None, max_length=8)
+    duration: float | None = Field(None, gt=0, le=1800)
+    materials: list[MaterialNote] = Field(default_factory=list, max_length=30)
+
+
+class ScriptRequest(_Body):
+    brief: str = Field(min_length=1, max_length=8000)
+    video_type: VideoType | None = None
+    language: str = Field("zh-CN", max_length=40)
+    aspect: str | None = Field(None, max_length=8)
+    duration: float | None = Field(None, gt=0, le=1800)
+    materials: list[MaterialNote] = Field(default_factory=list, max_length=30)
+
+
+class StoryboardRequest(_Body):
+    """给已建好的（空）项目写分镜：诉求 + 可选的定稿脚本 + 已上传的素材。"""
+
+    subject: str = Field(min_length=1)
+    idea: str = Field("", max_length=4000)
+    """用户最初随手写的想法，留作创作记录。"""
+    script: list[str] | None = Field(None, max_length=60)
+    """用户确认过的脚本，每段一个镜头；为空时由大模型写文案。"""
+    duration: float | None = Field(None, gt=0, le=1800)
+    materials: list[MaterialNote] = Field(default_factory=list, max_length=30)
+
+    @field_validator("subject")
+    @classmethod
+    def _subject_within_limit(cls, value: str) -> str:
+        return check_subject(value)
+
+
+class ApplyMaterials(_Body):
+    materials: list[MaterialNote] = Field(default_factory=list, max_length=30)
