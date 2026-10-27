@@ -1637,3 +1637,325 @@ input[type="color"] {
 .pron-add {
   margin-top: 6px;
 }
+
+/* ---- 首页项目列表：带封面的卡片网格 ---- */
+.projects-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.projects-head h2 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.projects-count {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  background: var(--bg);
+  border-radius: 999px;
+  padding: 1px 9px;
+}
+.projects-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--field);
+  color: var(--muted);
+  width: min(260px, 100%);
+}
+.projects-search:focus-within {
+  border-color: var(--accent);
+}
+.projects-search input {
+  border: none;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+}
+.project-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 18px 16px;
+}
+.project-card {
+  position: relative;
+  min-width: 0;
+}
+.project-card.busy {
+  opacity: 0.55;
+  pointer-events: none;
+}
+.project-link {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--text);
+  text-decoration: none;
+}
+.project-cover {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #22252b;
+  border: 1px solid var(--line-soft);
+  transition: box-shadow 0.15s, transform 0.15s;
+}
+.project-link:hover .project-cover,
+.project-link:focus-visible .project-cover {
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
+  transform: translateY(-1px);
+}
+.project-link:focus-visible {
+  outline: none;
+}
+.project-link:focus-visible .project-cover {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.cover-blur {
+  position: absolute;
+  inset: -12px;
+  width: calc(100% + 24px);
+  height: calc(100% + 24px);
+  object-fit: cover;
+  filter: blur(14px) brightness(0.7);
+}
+.cover-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.cover-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.45);
+}
+.cover-empty svg {
+  width: 30px;
+  height: 30px;
+}
+.project-status,
+.project-aspect {
+  position: absolute;
+  font-size: 11.5px;
+  line-height: 1;
+  padding: 4px 7px;
+  border-radius: 6px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  white-space: nowrap;
+}
+.project-status {
+  left: 8px;
+  bottom: 8px;
+  max-width: calc(100% - 16px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.project-status.done {
+  background: rgba(29, 122, 58, 0.9);
+}
+.project-status.edited {
+  background: rgba(138, 90, 0, 0.9);
+}
+.project-aspect {
+  left: 8px;
+  top: 8px;
+}
+.project-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0 2px;
+  min-width: 0;
+}
+.project-card .project-title {
+  font-weight: 600;
+  font-size: 14.5px;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.project-link:hover .project-title {
+  color: var(--accent-ink);
+}
+.project-meta {
+  font-size: 12.5px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0 2px;
+}
+.project-meta .tag {
+  margin-right: 5px;
+  font-size: 11px;
+  padding: 0 5px;
+}
+.project-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.project-card:hover .project-actions,
+.project-card:focus-within .project-actions {
+  opacity: 1;
+}
+@media (hover: none) {
+  .project-actions {
+    opacity: 1;
+  }
+}
+.project-action {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+.project-action:hover:not(:disabled) {
+  background: #fff;
+  color: var(--accent-ink);
+}
+.project-action.danger:hover:not(:disabled) {
+  background: var(--danger);
+  color: #fff;
+}
+.projects-more {
+  display: block;
+  margin: 18px auto 0;
+}
+@media (max-width: 520px) {
+  .project-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px 10px;
+  }
+}
+/* 紧凑项目列表：一行一个项目 */
+.projects.compact .project-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+}
+.projects.compact .project-card {
+  border-radius: 10px;
+}
+.projects.compact .project-card:hover,
+.projects.compact .project-card:focus-within {
+  background: var(--bg);
+}
+.projects.compact .project-link {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+}
+.projects.compact .project-cover {
+  flex: none;
+  width: 64px;
+  height: 64px;
+  aspect-ratio: auto;
+  border-radius: 8px;
+}
+.projects.compact .project-link:hover .project-cover {
+  transform: none;
+  box-shadow: none;
+}
+.projects.compact .cover-empty svg {
+  width: 20px;
+  height: 20px;
+}
+.projects.compact .project-info {
+  flex: 1;
+  padding: 0;
+  padding-right: 70px;
+}
+.projects.compact .project-card .project-title {
+  font-size: 14px;
+}
+.projects.compact .project-actions {
+  top: 50%;
+  transform: translateY(-50%);
+  right: 10px;
+}
+.projects.compact .project-action {
+  width: 28px;
+  height: 28px;
+  box-shadow: none;
+  border: 1px solid var(--line);
+}
+.project-duration {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  font-size: 10.5px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+}
+.status-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 6px;
+}
+.status-dot::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.status-dot.done::before {
+  background: var(--ok);
+}
+.status-dot.edited::before {
+  background: #d08a00;
+}
+.project-meta-aspect {
+  margin-right: 6px;
+}
+.project-meta-aspect::after {
+  content: " ·";
+}
+.projects.compact .projects-head {
+  margin-bottom: 8px;
+}
+.projects.compact .projects-search {
+  width: 100%;
+}

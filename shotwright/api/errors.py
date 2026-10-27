@@ -27,6 +27,8 @@ EN: dict[str, str] = {
     "主体不存在": "Subject not found",
     "场所不需要定妆图": "Places don't need a reference image",
     "试听的文字为空": "Nothing to preview",
+    "项目还没有画面": "This project has no picture yet",
+    "封面生成失败": "Could not create the cover",
     "读音纠正的词不能为空": "Pronunciation entries cannot be empty",
     "路径越界": "Path escapes the project directory",
     "项目路径越界": "Project path escapes the storage directory",

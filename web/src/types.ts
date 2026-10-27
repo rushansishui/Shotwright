@@ -372,6 +372,11 @@ export interface ProjectSummary {
   language: string;
   group: string;
   updated_at: number;
+  created_at?: number;
+  /** 最近一次成片；stale 表示成片之后项目又改过。 */
+  render?: { id: string; duration: number | null; created_at: number; stale: boolean } | null;
+  /** 封面图片地址（最近的成片或第一个有画面的镜头）；没有画面时为空。 */
+  cover?: string | null;
 }
 
 export interface ProviderInfo {

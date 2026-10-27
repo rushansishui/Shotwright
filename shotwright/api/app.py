@@ -405,18 +405,92 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
     @api.get("/projects")
     def list_projects():
-        return [
-            {
-                "id": p.id,
-                "title": p.title or p.subject or "未命名项目",
-                "shots": len(p.shots),
-                "aspect": p.canvas.aspect,
-                "language": languages.normalize(p.language),
-                "group": p.group or p.id,
-                "updated_at": p.updated_at,
-            }
-            for p in store.list()
-        ]
+        result = []
+        for p in store.list():
+            latest = _latest_render(p.id)
+            source = _cover_source(p)
+            result.append(
+                {
+                    "id": p.id,
+                    "title": p.title or p.subject or "未命名项目",
+                    "shots": len(p.shots),
+                    "aspect": p.canvas.aspect,
+                    "language": languages.normalize(p.language),
+                    "group": p.group or p.id,
+                    "updated_at": p.updated_at,
+                    "created_at": p.created_at,
+                    # 最近一次成片：时长、生成时间，以及之后有没有再改过项目。
+                    "render": (
+                        {
+                            "id": latest["render_id"],
+                            "duration": latest.get("duration"),
+                            "created_at": latest["created_at"],
+                            "stale": latest.get("revision") != p.revision,
+                        }
+                        if latest
+                        else None
+                    ),
+                    # 封面：最近的成片或第一个有画面的镜头；地址带上来源，换了来源浏览器会重新取。
+                    "cover": f"/api/v2/projects/{p.id}/cover?k={source[1]}" if source else None,
+                }
+            )
+        return result
+
+    def _latest_render(project_id: str) -> dict | None:
+        directory = store.project_dir(project_id) / "renders"
+        best: dict | None = None
+        if directory.is_dir():
+            for child in directory.iterdir():
+                video = child / "video.mp4"
+                if not video.is_file():
+                    continue
+                created = video.stat().st_mtime
+                if best is not None and created <= best["created_at"]:
+                    continue
+                data = read_json(child / "render.json")
+                if data and data.get("render_id"):
+                    best = {**data, "created_at": created}
+        return best
+
+    def _cover_source(project: Project) -> tuple[Path, str] | None:
+        """封面取自哪个文件：最近的成片，没有成片时用第一个有画面的镜头。返回（文件, 缓存键）。"""
+        latest = _latest_render(project.id)
+        if latest:
+            video = store.project_dir(project.id) / "renders" / latest["render_id"] / "video.mp4"
+            return video, f"r{latest['render_id']}"
+        for shot in project.shots:
+            visual = shot.visual
+            asset = project.assets.get(visual.selected or "") if visual.mode != "color" else None
+            if asset is not None and asset.kind in ("image", "video"):
+                path = store.asset_path(project, asset.id)
+                if path.is_file():
+                    return path, f"a{asset.id}"
+        return None
+
+    @api.get("/projects/{project_id}/cover")
+    def project_cover(project_id: str):
+        """项目封面（480 像素宽的 JPEG），按来源缓存。"""
+        project = store.load(_id(project_id))
+        source = _cover_source(project)
+        if source is None:
+            raise HTTPException(404, "项目还没有画面")
+        path, key = source
+        target = store.cache_dir(project.id, "cover") / f"{key}.jpg"
+        if not target.is_file():
+            scale = "scale='min(480,iw)':-2"
+            temp = target.with_suffix(".tmp.jpg")
+            attempts = [["-ss", "1", "-i", str(path)], ["-i", str(path)]] if path.suffix != ".png" else [["-i", str(path)]]
+            for inputs in attempts:
+                try:
+                    ffmpeg.run_ffmpeg([*inputs, "-frames:v", "1", "-vf", scale, "-q:v", "4", str(temp)])
+                except Exception:  # noqa: BLE001 —— 短视频从第 1 秒取不到帧时退回第一帧
+                    continue
+                if temp.is_file() and temp.stat().st_size > 0:
+                    temp.replace(target)
+                    break
+            if not target.is_file():
+                raise HTTPException(404, "封面生成失败")
+        return FileResponse(target, media_type="image/jpeg", headers={"Cache-Control": "max-age=86400"})
 
     @api.post("/projects", status_code=201)
     def create_project(body: CreateProject):
