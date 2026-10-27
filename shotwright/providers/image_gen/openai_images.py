@@ -36,22 +36,35 @@ class OpenAIImages:
         self.proxy = settings.get("proxy") or None
         self.timeout = float(settings.get("timeout") or 180)
 
-    def build_payload(self, prompt: str, aspect: str) -> dict:
+    def build_payload(self, prompt: str, aspect: str, references: list[Path] | None = None) -> dict:
         payload = {
             "model": self.model,
             "prompt": prompt.strip(),
             "size": self.size_override or self.sizes.get(aspect, self.sizes["9:16"]),
             "response_format": "url",
         }
+        if references:
+            # 方舟 Seedream 4.0 起支持参考图（图生图 / 多图参考）：Base64 data URI，一张传字符串、多张传数组。
+            images = [_data_uri(path) for path in references[:MAX_REFERENCES]]
+            payload["image"] = images[0] if len(images) == 1 else images
         if self.extra_watermark:
             # 方舟 Seedream 默认不开组图，一次只生成一张；5.0 pro / flash 不支持组图参数，所以不传。
             payload["watermark"] = self.watermark
         return payload
 
-    def generate(self, prompt: str, *, aspect: str, output: Path) -> Path:
+    def generate(self, prompt: str, *, aspect: str, output: Path, references: list[Path] | None = None) -> Path:
+        """``references`` 是主体参考图（产品实拍、人物照片），只有 Seedream 会带上。"""
         paid_task.log.info("%s 提交生图请求：模型 %s", self.label, self.model)
+        refs = list(references or []) if self.extra_watermark else []
         try:
-            path = self._generate(prompt, aspect=aspect, output=output)
+            try:
+                path = self._generate(prompt, aspect=aspect, output=output, references=refs)
+            except ProviderError as exc:
+                if not refs or isinstance(exc, UnconfirmedTaskError):
+                    raise
+                # 请求被拒绝（4xx）不扣费：多半是模型不支持参考图（例如 3.0 文生图），去掉参考图再试一次。
+                paid_task.log.warning("%s 不接受参考图，改为只用文字生成：%s", self.label, exc)
+                path = self._generate(prompt, aspect=aspect, output=output)
         except UnconfirmedTaskError as exc:
             paid_task.log.error("%s 生图结果无法确认，可能已扣费：%s", self.label, exc)
             raise
@@ -61,7 +74,7 @@ class OpenAIImages:
         paid_task.log.info("%s 生图完成：%s", self.label, path.name)
         return path
 
-    def _generate(self, prompt: str, *, aspect: str, output: Path) -> Path:
+    def _generate(self, prompt: str, *, aspect: str, output: Path, references: list[Path] | None = None) -> Path:
         if not prompt.strip():
             raise ProviderError("缺少画面提示词")
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
@@ -69,7 +82,7 @@ class OpenAIImages:
         with httpx.Client(timeout=self.timeout, proxy=self.proxy) as client:
             # 同步接口：一次请求就是一次扣费，同样不自动重试。
             try:
-                response = client.post(url, json=self.build_payload(prompt, aspect), headers=headers)
+                response = client.post(url, json=self.build_payload(prompt, aspect, references), headers=headers)
             except httpx.HTTPError as exc:
                 raise UnconfirmedTaskError(
                     f"{self.label} 请求没有收到响应，可能已经扣费，请到服务商控制台确认（{type(exc).__name__}）"
@@ -101,6 +114,19 @@ class OpenAIImages:
             url = str(item.get("url") or "")
             suffix = ".jpg" if url.split("?")[0].lower().endswith((".jpg", ".jpeg")) else ".png"
             return paid_task.download(client, url, output.with_suffix(suffix), label=self.label)
+
+
+MAX_REFERENCES = 4
+"""一次最多带几张参考图。"""
+MAX_REFERENCE_BYTES = 8 * 1024 * 1024
+
+
+def _data_uri(path: Path) -> str:
+    data = path.read_bytes()
+    if len(data) > MAX_REFERENCE_BYTES:
+        raise ProviderError(f"参考图 {path.name} 超过 8MB，请换一张小一点的图片")
+    kind = paid_task.sniff_image_type(data) or "image/png"
+    return f"data:{kind};base64,{base64.b64encode(data).decode()}"
 
 
 def _seedream(settings: dict[str, str]) -> OpenAIImages:

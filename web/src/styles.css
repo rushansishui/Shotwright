@@ -1865,6 +1865,89 @@ input[type="color"] {
     gap: 14px 10px;
   }
 }
+/* ---- 全片设定：主体参考图 ---- */
+.look-images {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.look-image {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--field);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.look-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.look-image .remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 14px;
+  line-height: 17px;
+  cursor: pointer;
+}
+.look-image .remove:hover {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+.look-image-main {
+  position: absolute;
+  left: 3px;
+  bottom: 3px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+}
+.look-image-add {
+  height: 72px;
+  min-width: 72px;
+  padding: 0 12px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--field);
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  cursor: pointer;
+}
+.look-image-add span {
+  font-size: 20px;
+  line-height: 1;
+}
+.look-image-add:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.look-image-hint {
+  flex: 1 1 220px;
+}
 /* 紧凑项目列表：一行一个项目 */
 .projects.compact .project-grid {
   grid-template-columns: minmax(0, 1fr);
@@ -1958,4 +2041,89 @@ input[type="color"] {
 }
 .projects.compact .projects-search {
   width: 100%;
+}
+.look-image-add.ai {
+  border-style: solid;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+}
+.look-image-add:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.look-image-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 72px;
+}
+.look-image-label {
+  width: 72px;
+  padding: 2px 6px;
+  font-size: 12px;
+  height: 24px;
+}
+.look-image .make-main {
+  position: absolute;
+  left: 3px;
+  bottom: 3px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 11px;
+  line-height: 17px;
+  cursor: pointer;
+}
+.look-image .make-main:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.look-variants-hint {
+  flex-basis: 100%;
+  margin: 2px 0 0;
+}
+.shot-refs .candidate.ref {
+  position: relative;
+}
+.shot-refs .ref-tag {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  bottom: 2px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.link-btn {
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.link-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.look-describe {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  flex-wrap: wrap;
 }

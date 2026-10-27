@@ -71,6 +71,7 @@ from shotwright.services import (
     visuals,
 )
 from shotwright.services import cost as cost_service
+from shotwright.services import inspect as inspect_service
 from shotwright.services import titles as titles_service
 from shotwright.services.duplicate import duplicate_project
 
@@ -525,7 +526,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             project.shots = board.shots
             project.look = board.look
             if body.video_type:
-                storyboard.suggest_sources(project.shots, visuals.available_sources(settings))
+                storyboard.suggest_sources(project.shots, visuals.available_sources(settings), project.look)
         elif body.mode == "split":
             if not body.script.strip():
                 raise HTTPException(422, "请填写视频文案")
@@ -578,8 +579,12 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             if project.bgm.asset_id and project.bgm.asset_id not in project.assets:
                 raise ValueError("背景音乐素材不存在")
             for item in project.look.subjects:
-                if item.reference and item.reference not in project.assets:
-                    raise ValueError("全片设定引用的参考素材不存在")
+                for image in item.images:
+                    asset = project.assets.get(image)
+                    if asset is None:
+                        raise ValueError("全片设定引用的参考素材不存在")
+                    if asset.kind != "image":
+                        raise ValueError("参考素材必须是图片")
             for ref in project.references:
                 asset = project.assets.get(ref.asset_id)
                 if asset is None:
@@ -588,6 +593,37 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     raise ValueError("参考素材必须是图片")
 
         return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/look/{code}/image")
+    def subject_image(project_id: str, code: str, body: ChargeConsent | None = None):
+        """给全片设定里的主体生成定妆图（AI 图片，收费，需要 confirm_charge）。"""
+        project = store.load(_id(project_id))
+        if not any(s.code == code for s in project.look.subjects):
+            raise HTTPException(404, "主体不存在")
+        asset_id = visuals.generate_subject_image(
+            store, settings, project, code, confirm_charge=(body or ChargeConsent()).confirm_charge
+        )
+
+        def change(latest: Project) -> None:
+            latest.assets.setdefault(asset_id, project.assets[asset_id])
+            latest.cost_credits = max(latest.cost_credits, project.cost_credits)
+            subject = next((s for s in latest.look.subjects if s.code == code), None)
+            if subject is None:
+                raise KeyError(code)
+            if asset_id not in subject.images:
+                subject.images.append(asset_id)
+
+        return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/look/{code}/describe")
+    def describe_subject(project_id: str, code: str):
+        """看主体的参考图写外观描述（领型、有无帽子、拉链、缝线、Logo 位置），只返回文字，不保存。不收费。"""
+        project = store.load(_id(project_id))
+        try:
+            text = inspect_service.describe_subject(settings, store, project, code)
+        except KeyError:
+            raise HTTPException(404, "主体不存在") from None
+        return {"appearance": text}
 
     @api.post("/projects/{project_id}/pronunciations/suggest")
     def suggest_pronunciations(project_id: str):
@@ -773,6 +809,13 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     patch["sequence"] = sequence
                 if patch.get("first_frame") and project.assets[patch["first_frame"]].kind != "image":
                     raise ValueError("首帧必须是图片")
+                if "refs" in patch:
+                    refs = list(dict.fromkeys(patch["refs"] or []))
+                    if any(item not in project.assets for item in refs):
+                        raise ValueError("所选素材不存在")
+                    if any(project.assets[item].kind != "image" for item in refs):
+                        raise ValueError("参考素材必须是图片")
+                    patch["refs"] = refs
                 if "terms" in patch:
                     patch["terms"] = [t.strip()[:80] for t in patch["terms"] if t.strip()]
                 current = patch.get("candidates", shot.visual.candidates)

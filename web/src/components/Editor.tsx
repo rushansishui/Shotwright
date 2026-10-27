@@ -238,7 +238,7 @@ export function Editor({ projectId }: { projectId: string }) {
         </Section>
 
         <Section step={2} title={t("look.section")}>
-          <LookSection project={project} run={run} />
+          <LookSection project={project} run={run} setError={setError} />
           <div className="divider" />
           <ReferencesSection project={project} run={run} setError={setError} />
         </Section>

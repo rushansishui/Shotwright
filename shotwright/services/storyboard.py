@@ -247,15 +247,24 @@ def _parse_look(raw) -> Look:
     )
 
 
-def suggest_sources(shots: list[Shot], available: set[str]) -> None:
+def suggest_sources(shots: list[Shot], available: set[str], look: Look | None = None) -> None:
     """按镜头类型给每个镜头选默认画面来源。``available`` 是已配置的来源（ai、image）。
 
+    画面里出现全片设定中的产品、人物、物品时改用 AI 生成：图库素材里的人和物每个镜头都不一样，
+    只有 AI 能参照同一组主体照片，让各镜头保持一致。
     只是默认值：AI 来源仍然要用户确认收费才会生成，没确认时渲染会改用素材检索。
     """
+    codes = {s.code for s in (look.subjects if look else []) if s.kind != "place"}
     for shot in shots:
         wanted = ROLE_SOURCES.get(shot.role or "", "stock")
+        if wanted == "stock" and codes and _mentions(shot.visual.prompt, codes):
+            wanted = "ai"
         if wanted in available:
             shot.visual.mode = wanted  # type: ignore[assignment]
+
+
+def _mentions(text: str, codes: set[str]) -> bool:
+    return any(re.search(rf"(?<![A-Za-z0-9_]){re.escape(code)}(?![A-Za-z0-9_])", text) for code in codes)
 
 
 def check_storyboard(

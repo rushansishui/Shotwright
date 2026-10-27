@@ -12,7 +12,16 @@ from typing import Literal
 from shotwright.config import Settings
 from shotwright.core.fingerprint import fingerprint
 from shotwright.core.ids import new_id
-from shotwright.core.models import Asset, AssetFolder, PendingTask, Project, Shot, Take, TakeKind
+from shotwright.core.models import (
+    MAX_SUBJECT_IMAGES,
+    Asset,
+    AssetFolder,
+    PendingTask,
+    Project,
+    Shot,
+    Take,
+    TakeKind,
+)
 from shotwright.core.store import ProjectStore, read_json, write_json
 from shotwright.media.ffmpeg import MediaError, concat_videos, extract_frame, probe
 from shotwright.providers import registry
@@ -22,6 +31,7 @@ from shotwright.providers.base import (
     ImageGenProvider,
     ProviderError,
     ProviderNotConfigured,
+    ReferenceImagesUnsupported,
     StockCandidate,
     StockProvider,
     VideoGenProvider,
@@ -452,10 +462,24 @@ def _spec(kind: str, provider_id: str | None):
     return next((s for s in registry.specs(kind) if s.id == provider_id), None)  # type: ignore[arg-type]
 
 
-def build_prompt(settings: Settings, project: Project, shot: Shot, kind: str, provider_id: str | None) -> str:
-    """交给生成模型的完整提示词：全片设定、运镜、衔接拼好，再按模型支持的语言准备。"""
+def build_prompt(
+    settings: Settings,
+    project: Project,
+    shot: Shot,
+    kind: str,
+    provider_id: str | None,
+    *,
+    ref_limit: int = 4,
+    refs: list[prompting.ShotRef] | None = None,
+    frame_ref: prompting.ShotRef | None = None,
+) -> str:
+    """交给生成模型的完整提示词：全片设定、运镜、衔接拼好，再按模型支持的语言准备。
+
+    ``refs`` 是这次真正发给模型的参考图：提示词里的编号按它来写，和图片一一对应。
+    ``frame_ref`` 是用作首帧的那张主体照片（服务不支持参考图时），写进提示词让模型照着画。
+    """
     target = "image" if kind == "image_gen" else "video"
-    text = prompting.compose(project, shot, target=target)
+    text = prompting.compose(project, shot, target=target, limit=ref_limit, refs=refs, frame_ref=frame_ref)
     spec = _spec(kind, provider_id)
     languages = spec.prompt_languages if spec is not None else ("en",)
     return prompting.for_provider(settings, project, text, languages)
@@ -482,11 +506,70 @@ def _chained_first_frame(store: ProjectStore, project: Project, shot: Shot) -> t
     return store.asset_path(project, image.id), image.id
 
 
-def _reference_first_frame(store: ProjectStore, project: Project) -> tuple[Path | None, str]:
-    """没有显式首帧时，用第一张产品/人物参考图作为首帧，保证商品外观不走样。"""
-    for _ref, asset in reference_assets(project, roles=("product", "person")):
-        return store.asset_path(project, asset.id), asset.id
-    return None, ""
+def subject_images(project: Project, shot: Shot, *, target: str = "video", limit: int = 4) -> list[str]:
+    """这个镜头该参考的主体图片（素材 id，按顺序），见 :func:`prompting.shot_references`。"""
+    refs = prompting.shot_references(project, shot, target=target, limit=limit)  # type: ignore[arg-type]
+    return [ref.asset_id for ref in refs]
+
+
+def _reference_first_frame(
+    store: ProjectStore, project: Project, shot: Shot
+) -> tuple[Path | None, prompting.ShotRef | None]:
+    """没有显式首帧时，用这个镜头主体的第一张参考图作为首帧，保证商品外观不走样。
+
+    连同这张图属于哪个主体一起返回：提示词里要写明「第一帧就是这个主体」，
+    否则模型只会把它当成一个普通开头画面，外观仍然自己发挥。
+    """
+    for ref in prompting.shot_references(project, shot):
+        path = store.asset_path(project, ref.asset_id)
+        if path.is_file():
+            return path, ref
+    return None, None
+
+
+REFERENCE_WIDTH = 1536
+"""交给生图模型的参考图缩到这么宽（手机原图太大，请求会超限）。"""
+
+
+def _reference_files(
+    store: ProjectStore, project: Project, shot: Shot, work: Path, limit: int = 4, *, target: str = "image"
+) -> tuple[list[Path], list[prompting.ShotRef]]:
+    """把参考图读成缩小后的 JPEG，返回（文件, 对应的参考图说明）。
+
+    两者一一对应、顺序相同：提示词里「参考图 1」必须就是第一张真正发出去的图片。
+    读不出来的图片连同它的说明一起跳过，不能让编号错位。
+    """
+    paths: list[Path] = []
+    used: list[prompting.ShotRef] = []
+    for ref in prompting.shot_references(project, shot, target=target, limit=limit):  # type: ignore[arg-type]
+        source = store.asset_path(project, ref.asset_id)
+        if not source.is_file():
+            log.warning("项目 %s：参考图 %s 不存在，跳过", project.id, ref.asset_id)
+            continue
+        try:
+            path = extract_frame(source, work / f"ref{len(paths)}.jpg", at=0.0, width=REFERENCE_WIDTH)
+        except MediaError as exc:
+            log.warning("项目 %s：参考图 %s 无法读取，跳过：%s", project.id, ref.asset_id, exc)
+            continue
+        paths.append(path)
+        used.append(ref)
+    return paths, used
+
+
+def _reference_limit(provider) -> int:
+    """生成服务一次最多接受几张参考图（Seedance 2.x 9 张）；没说明时按 4 张。"""
+    value = getattr(provider, "max_reference_images", 4)
+    return value if isinstance(value, int) and value > 0 else 4
+
+
+def _accepts_references(provider, name: str = "references") -> bool:
+    """生成服务的 generate 是否接受参考图参数（图片用 references，视频用 reference_images）。"""
+    import inspect
+
+    try:
+        return name in inspect.signature(provider.generate).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def generate_ai_candidate(
@@ -520,14 +603,22 @@ def generate_ai_candidate(
     require_charge_confirmation(settings, "video_gen", provider_id, confirm_charge)
     first_frame = None if reference_video is not None else _first_frame(store, project, shot)
     frame_source = shot.visual.first_frame or ""
+    frame_ref: prompting.ShotRef | None = None
     if first_frame is None and reference_video is None and project.chain_frames:
         # 首尾帧衔接：上一个 AI 镜头的最后一帧作为首帧，两个镜头在交界处画面连续。
         first_frame, frame_source = _chained_first_frame(store, project, shot)
-    if first_frame is None and reference_video is None:
-        # 没有显式首帧时，优先用产品/人物参考图，保证商品外观不走样。
-        first_frame, frame_source = _reference_first_frame(store, project)
-    prompt = build_prompt(settings, project, shot, "video_gen", provider_id)
-    meta = {"prompt": prompt[:1500]}
+    use_references = (
+        first_frame is None
+        and reference_video is None
+        and _accepts_references(provider, "reference_images")
+        and bool(subject_images(project, shot))
+    )
+    if first_frame is None and reference_video is None and not use_references:
+        # 生成服务不支持参考图时，用这个镜头主体的照片作为首帧，保证人物、产品外观不走样。
+        first_frame, frame_ref = _reference_first_frame(store, project, shot)
+        frame_source = frame_ref.asset_id if frame_ref is not None else ""
+    ref_limit = _reference_limit(provider) if use_references else 0
+    meta: dict[str, str] = {}
     if resolution:
         meta["resolution"] = resolution
     if first_frame is not None:
@@ -556,23 +647,72 @@ def generate_ai_candidate(
     kind: TakeKind = "edit" if reference_video is not None else "extend" if extend else "video"
     with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
         work = Path(temp)
-        if not extend:
-            path = provider.generate(
-                prompt,
-                aspect=project.canvas.aspect,
-                duration=wanted,
-                output=work / "gen",
-                first_frame=first_frame,
-                reference_video=reference_video,
-                on_task=remember_task,
-            )
-            spent = [wanted]
-        else:
+        # 主体照片作为参考图：各镜头的人物、产品保持一致，构图不受限制（不支持时上面已改用首帧）。
+        # 先读出真正能用的图片，再按它们拼提示词，「参考图 1/2」与实际发出的图片一一对应。
+        references, used_refs = (
+            _reference_files(store, project, shot, work, ref_limit, target="video") if use_references else ([], [])
+        )
+        if use_references and not references:
+            # 参考图一张都读不出来时不要继续：没有参考图模型只能按文字自己画，钱花了款式也不对。
+            raise ProviderError("这个镜头的参考图都无法读取，已停止生成；请在全片设定里重新上传参考图后再试")
+        prompt = build_prompt(
+            settings,
+            project,
+            shot,
+            "video_gen",
+            provider_id,
+            ref_limit=ref_limit,
+            refs=used_refs,
+            frame_ref=frame_ref,
+        )
+        meta["prompt"] = prompt[:3000]
+        if references:
+            meta["references"] = ",".join(ref.asset_id for ref in used_refs)
+        extra = {"reference_images": references} if references else {}
+
+        def generate_once(text: str, frame: Path | None, kwargs: dict) -> tuple[Path, list[float]]:
+            if not extend:
+                path = provider.generate(
+                    text,
+                    aspect=project.canvas.aspect,
+                    duration=wanted,
+                    output=work / "gen",
+                    first_frame=frame,
+                    reference_video=reference_video,
+                    on_task=remember_task,
+                    **kwargs,
+                )
+                return path, [wanted]
             # 末帧续生成：配音比模型最长时长还长时，分段生成，每段从上一段的最后一帧接着生成，
             # 最后拼成一段。替代慢放、定格和循环；每段单独计费。
-            path, spent = _generate_extended(
-                provider, prompt, project, work, wanted, longest or wanted, first_frame, remember_task
+            # 参考图只跟第一段走，后面几段要去掉按编号写的参考图要求。
+            tail = text if not kwargs else build_prompt(
+                settings, project, shot, "video_gen", provider_id, ref_limit=0, refs=[]
             )
+            return _generate_extended(
+                provider, text, project, work, wanted, longest or wanted, frame, remember_task, kwargs, tail
+            )
+
+        try:
+            path, spent = generate_once(prompt, first_frame, extra)
+        except ReferenceImagesUnsupported as exc:
+            # 服务不接受参考图（4xx，未扣费）：改用第一张参考图作首帧重新提交。
+            # 提示词必须重拼——里面按编号写的「参考图 1/2」已经不成立了，留着会让模型张冠李戴；
+            # 改成写明「第一帧就是这个主体的照片」，模型才会照着它画。
+            if not references:
+                raise
+            log.warning(
+                "项目 %s 镜头 %s：生成服务不接受参考图，改用第一张参考图作为首帧：%s", project.id, shot.id, exc
+            )
+            first_frame = references[0]
+            prompt = build_prompt(
+                settings, project, shot, "video_gen", provider_id, ref_limit=0, refs=[], frame_ref=used_refs[0]
+            )
+            meta["prompt"] = prompt[:3000]
+            meta["first_frame"] = used_refs[0].asset_id
+            meta.pop("references", None)
+            path, spent = generate_once(prompt, first_frame, {})
+        if extend:
             meta["segments"] = str(len(spent))
         asset = _register_media(
             store, project, path, source=provider_id or "video_gen", folder="ai-video", meta=meta
@@ -608,7 +748,14 @@ def _generate_extended(
     longest: float,
     first_frame: Path | None,
     remember_task,
+    extra: dict | None = None,
+    tail_prompt: str | None = None,
 ) -> tuple[Path, list[float]]:
+    """``extra`` 只用于第一段（例如参考图）；后面的段从上一段最后一帧接着生成。
+
+    参考图只能和第一段一起发出去（后面几段用的是上一段的末帧）。``tail_prompt`` 是后面几段的
+    提示词，调用方要去掉参考图编号——否则后面的段会让模型去找并不存在的「参考图 2」。
+    """
     lang = prompting.prompt_language(project)
     segments: list[Path] = []
     spent: list[float] = []
@@ -617,7 +764,10 @@ def _generate_extended(
     while remaining > 0.5 and len(segments) < MAX_EXTEND_PARTS:
         part = len(segments)
         length = min(remaining, longest)
-        text = prompt if part == 0 else f"{prompting.CONTINUE[lang]}\n{prompt}"
+        if part == 0:
+            text = prompt
+        else:
+            text = f"{prompting.CONTINUE[lang]}\n{tail_prompt if tail_prompt is not None else prompt}"
         path = provider.generate(
             text,
             aspect=project.canvas.aspect,
@@ -625,6 +775,7 @@ def _generate_extended(
             output=work / f"part{part}",
             first_frame=frame,
             on_task=remember_task,
+            **((extra or {}) if part == 0 else {}),
         )
         segments.append(path)
         spent.append(length)
@@ -671,20 +822,86 @@ def generate_image_candidate(
     provider: ImageGenProvider = registry.create("image_gen", provider_id, settings)  # type: ignore[assignment]
     require_charge_confirmation(settings, "image_gen", provider_id, confirm_charge)
     check_budget(settings, project, shot, "image_gen", provider_id)
-    prompt = build_prompt(settings, project, shot, "image_gen", provider_id)
+    ref_limit = _reference_limit(provider) if _accepts_references(provider) else 0
     with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
-        path = provider.generate(prompt, aspect=project.canvas.aspect, output=Path(temp) / "gen")
+        work = Path(temp)
+        meta: dict[str, str] = {}
+        references, used_refs = (
+            _reference_files(store, project, shot, work, ref_limit, target="image") if ref_limit else ([], [])
+        )
+        # 提示词按实际读出来的图片编号，和发出去的图片一一对应。
+        prompt = build_prompt(settings, project, shot, "image_gen", provider_id, ref_limit=ref_limit, refs=used_refs)
+        meta["prompt"] = prompt[:1500]
+        if ref_limit and not references and subject_images(project, shot, target="image"):
+            raise ProviderError("这个镜头的参考图都无法读取，已停止生成；请在全片设定里重新上传参考图后再试")
+        if references:
+            meta["references"] = ",".join(ref.asset_id for ref in used_refs)
+            path = provider.generate(
+                prompt, aspect=project.canvas.aspect, output=work / "gen", references=references
+            )
+        else:
+            path = provider.generate(prompt, aspect=project.canvas.aspect, output=work / "gen")
         asset = _register_media(
             store,
             project,
             path,
             source=provider_id or "image_gen",
             folder="ai-image",
-            meta={"prompt": prompt[:1500]},
+            meta=meta,
         )
     record_spend(store, settings, project, shot, "image_gen", provider_id or "")
     _attach(shot, [asset.id], select=not keyframe, take="keyframe" if keyframe else "image", batch=batch)
     return [asset.id]
+
+
+def generate_subject_image(
+    store: ProjectStore, settings: Settings, project: Project, code: str, *, confirm_charge: bool = False
+) -> str:
+    """给全片设定里的主体生成一张定妆图（AI 图片，收费），加到主体图片的最后；返回素材 id。
+
+    之后生成用到这个主体的 AI 画面时会参照它，人物、产品在各镜头保持一致。
+    """
+    subject = next((s for s in project.look.subjects if s.code == code), None)
+    if subject is None:
+        raise KeyError(code)
+    if subject.kind == "place":
+        raise ProviderError("场所不需要定妆图")
+    if len(subject.images) >= MAX_SUBJECT_IMAGES:
+        raise ProviderError(f"每个主体最多 {MAX_SUBJECT_IMAGES} 张图片，请先删掉一张")
+    provider_id = settings.default_provider("image_gen")
+    provider: ImageGenProvider = registry.create("image_gen", provider_id, settings)  # type: ignore[assignment]
+    require_charge_confirmation(settings, "image_gen", provider_id, confirm_charge)
+    stand_in = Shot(text="")  # 费用按一张图片估算，与镜头无关
+    check_budget(settings, project, stand_in, "image_gen", provider_id)
+    text = prompting.subject_portrait_prompt(project, code)
+    spec = _spec("image_gen", provider_id)
+    prompt = prompting.for_provider(settings, project, text, spec.prompt_languages if spec else ("en",))
+    with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
+        work = Path(temp)
+        # 已经有照片时（例如一张产品图）也带上，让定妆图和它一致。张数按服务能接受的上限来。
+        references: list[Path] = []
+        if subject.images and _accepts_references(provider):
+            for index, image in enumerate(subject.images[:_reference_limit(provider)]):
+                source = store.asset_path(project, image)
+                if not source.is_file():
+                    continue
+                try:
+                    references.append(
+                        extract_frame(source, work / f"ref{index}.jpg", at=0.0, width=REFERENCE_WIDTH)
+                    )
+                except MediaError as exc:
+                    log.warning("项目 %s：参考图 %s 无法读取，跳过：%s", project.id, image, exc)
+        if references:
+            path = provider.generate(prompt, aspect="1:1", output=work / "gen", references=references)
+        else:
+            path = provider.generate(prompt, aspect="1:1", output=work / "gen")
+        asset = _register_media(
+            store, project, path, source=provider_id or "image_gen", folder="reference",
+            meta={"prompt": prompt[:1500], "subject": code},
+        )
+    record_spend(store, settings, project, stand_in, "image_gen", provider_id or "")
+    subject.images.append(asset.id)
+    return asset.id
 
 
 def refresh_candidates(

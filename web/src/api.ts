@@ -104,6 +104,12 @@ export const api = {
   /** AI 生成标题：候选大标题、片头副标题、镜头小标题（已有的不覆盖）。 */
   suggestTitles: (id: string, options: { shot_titles?: boolean; apply_headline?: boolean } = {}) =>
     request<Project>(`/projects/${id}/titles/suggest`, json("POST", options)),
+  /** 给全片设定里的主体生成定妆图（AI 图片，收费，调用前要让用户确认）。 */
+  subjectImage: (id: string, code: string) =>
+    request<Project>(`/projects/${id}/look/${encodeURIComponent(code)}/image`, json("POST", { confirm_charge: true })),
+  /** 看主体的参考图写外观描述（领型、有无帽子等），只返回文字。 */
+  describeSubject: (id: string, code: string) =>
+    request<{ appearance: string }>(`/projects/${id}/look/${encodeURIComponent(code)}/describe`, json("POST", {})),
   /** AI 检查文案里容易读错的词，追加到读音纠正表。 */
   suggestPronunciations: (id: string) => request<Project>(`/projects/${id}/pronunciations/suggest`, json("POST", {})),
   /** 按当前配音设置和读音纠正合成一句试听，返回音频。 */

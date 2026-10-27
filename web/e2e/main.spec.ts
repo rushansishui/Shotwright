@@ -143,6 +143,17 @@ test.describe("Shotwright 主流程", () => {
     await expect(page.locator(".look").getByRole("textbox", { name: /外观|Appearance/ }).first()).toHaveValue(
       "哑光白色圆柱形机身",
     );
+    // 给主体上传一张实拍图，刷新后还在，也能删掉。
+    const photo = join(mkdtempSync(join(tmpdir(), "shotwright-look-")), "product.png");
+    execFileSync("ffmpeg", ["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=400x400:rate=1", "-frames:v", "1", photo]);
+    const chooser = page.waitForEvent("filechooser");
+    await page.locator(".look .look-image-add").first().click();
+    await (await chooser).setFiles(photo);
+    await expect(page.locator(".look .look-image img")).toHaveCount(1);
+    await page.reload();
+    await expect(page.locator(".look .look-image img")).toHaveCount(1);
+    await page.locator(".look .look-image .remove").first().click();
+    await expect(page.locator(".look .look-image")).toHaveCount(0);
   });
 
   test("分镜多选：一个镜头选两段素材，依次播放", async ({ page }) => {

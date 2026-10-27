@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from shotwright.core.models import (
+    MAX_SUBJECT_IMAGES,
     BgmSettings,
     CameraMove,
     Canvas,
@@ -112,6 +113,8 @@ class VisualPatch(_Body):
     sequence: list[str] | None = Field(None, max_length=10)
     """多选：在选中的素材之后依次播放的其他素材（按顺序）；传空列表取消多选。"""
     first_frame: str | None = None
+    refs: list[str] | None = Field(None, max_length=MAX_SUBJECT_IMAGES)
+    """这个镜头用哪些主体参考图；传空列表恢复默认（各主体的主图）。"""
     clear_first_frame: bool = False
     """为真时取消首帧，改为纯文字生成视频。"""
     color: str | None = None

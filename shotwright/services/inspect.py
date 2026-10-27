@@ -53,12 +53,10 @@ def reference_images(store: ProjectStore, project: Project, shot: Shot) -> list[
     from shotwright.services import prompting
 
     result: list[tuple[str, Path]] = []
-    codes = prompting.used_codes(project, shot.visual.prompt)
-    for subject in project.look.subjects:
-        if subject.reference and (not codes or subject.code in codes):
-            asset = project.assets.get(subject.reference)
-            if asset is not None and asset.kind == "image":
-                result.append((subject.name or subject.code, store.asset_path(project, asset.id)))
+    for ref in prompting.shot_references(project, shot):
+        if ref.subject is not None:
+            name = ref.subject.name or ref.subject.code
+            result.append((f"{name}（{ref.label}）" if ref.label else name, store.asset_path(project, ref.asset_id)))
     for ref in project.references:
         if not ref.enabled or ref.role not in ("product", "person"):
             continue
@@ -250,3 +248,61 @@ def inspect_final(
                 if issues and 1 <= shot <= len(frames):
                     found.append({"shot": shot, "issues": issues})
     return found
+
+
+DESCRIBE_PROMPT = """这是同一件{kind}「{name}」的 {count} 张照片{variants}。
+请看图写一段外观描述，供 AI 视频模型照着生成，重点写清楚款式结构，模型最容易画错的就是这些：
+- 整体形状、长短、版型；
+- 领型，有没有帽子（没有就明确写「无帽」）；
+- 门襟、拉链或扣子；口袋（有没有、在哪）；
+- 面料质感、绗缝或缝线的走向和形状；
+- 袖口、下摆的做法；
+- Logo、印字、图案的位置和样子。
+{color_rule}只写图里看得到的，不写卖点、价格、尺码，不超过 90 个字。
+只输出 JSON：{{"appearance": "..."}}"""
+
+KIND_NAMES = {"product": "产品", "object": "物品", "person": "人物", "place": "场景"}
+
+
+def describe_subject(settings: Settings, store: ProjectStore, project: Project, code: str) -> str:
+    """看主体的参考图写外观描述（领型、有无帽子、拉链口袋、缝线、Logo 位置），不收费。
+
+    外观描述和参考图不一致时（比如描述里没写「无帽」），视频模型会按常见款式自行补上帽子之类的部件。
+    """
+    subject = next((s for s in project.look.subjects if s.code == code), None)
+    if subject is None:
+        raise KeyError(code)
+    images = [image for image in subject.images if image in project.assets and project.assets[image].kind == "image"][:6]
+    if not images:
+        raise ProviderError("这个主体还没有参考图，先上传图片")
+    llm = vision_llm(settings)
+    if llm is None:
+        raise ProviderError("没有配置看图模型：在设置里给大模型填上 vision_model（例如豆包的视觉模型）后再试")
+    labels = [subject.image_labels.get(image, "") for image in images]
+    variants = ""
+    if len(images) > 1:
+        named = [label for label in labels if label]
+        variants = f"，是不同颜色的同一款（{'、'.join(named)}）" if named else "，可能是不同颜色的同一款"
+    color_rule = "颜色不用写，每张图的颜色另有标注。" if len(images) > 1 else "写上颜色。"
+    prompt = DESCRIBE_PROMPT.format(
+        kind=KIND_NAMES.get(subject.kind, "物品"), name=subject.name or code, count=len(images),
+        variants=variants, color_rule=color_rule,
+    )
+    with tempfile.TemporaryDirectory(prefix="shotwright-describe-") as temp:
+        paths = []
+        for index, image in enumerate(images):
+            try:
+                paths.append(extract_frame(store.asset_path(project, image), Path(temp) / f"{index}.jpg", width=1024))
+            except MediaError as exc:
+                log.warning("项目 %s：参考图 %s 无法读取，跳过：%s", project.id, image, exc)
+        if not paths:
+            raise ProviderError("参考图无法读取")
+        reply = llm.see(prompt, paths)
+    match = re.search(r"\{.*\}", reply, re.S)
+    try:
+        text = str(json.loads(match.group(0) if match else reply).get("appearance", "")).strip()
+    except (ValueError, AttributeError):
+        text = reply.strip()
+    if not text:
+        raise ProviderError("看图模型没有返回描述，请重试")
+    return text[:300]

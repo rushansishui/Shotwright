@@ -94,6 +94,7 @@ def check_project(project: Project, settings: Settings, *, quality: str = "final
         )
     if ai_shots >= 2 and project.look.is_empty():
         issues.append(CheckIssue("no_look", "有多个 AI 镜头但没有全片设定，人物和产品在各镜头可能不一致", None, {}))
+    issues += _consistency_issues(project)
     if project.budget is not None:
         from shotwright.services import cost
 
@@ -110,6 +111,50 @@ def check_project(project: Project, settings: Settings, *, quality: str = "final
                         "budget": f"{project.budget:.2f}",
                         "spent": f"{project.cost_credits:.2f}",
                     },
+                )
+            )
+    return issues
+
+
+def _consistency_issues(project: Project) -> list[CheckIssue]:
+    """同一个人物、产品在各镜头是否能保持一致。
+
+    - 出现在 AI 镜头里、却没有参考图的主体：只靠文字描述，各镜头生成的样子会不一样；
+    - 画面里有人物、产品、物品，却用素材库画面的镜头：素材里是别的人、别的东西。
+    """
+    from shotwright.services import prompting
+
+    issues: list[CheckIssue] = []
+    subjects = [s for s in project.look.subjects if s.kind != "place"]
+    if not subjects:
+        return issues
+    used_by_ai: set[str] = set()
+    for index, shot in enumerate(project.shots, start=1):
+        visual = shot.visual
+        codes = prompting.used_codes(project, visual.image_prompt or visual.prompt if visual.mode == "image" else visual.prompt)
+        codes = [code for code in codes if any(s.code == code for s in subjects)]
+        if visual.mode in ("ai", "image"):
+            used_by_ai.update(codes or [s.code for s in subjects])
+        elif visual.mode == "stock" and codes:
+            names = "、".join(codes)
+            issues.append(
+                CheckIssue(
+                    "subject_in_stock",
+                    f"镜头 {index} 的画面里有 {names}，但用的是素材库画面，里面是别的人或东西，和其他镜头对不上；建议改用 AI 视频",
+                    index,
+                    {"n": index, "codes": names},
+                )
+            )
+    for subject in subjects:
+        if subject.code in used_by_ai and not subject.images:
+            name = subject.name or subject.code
+            issues.append(
+                CheckIssue(
+                    "subject_no_image",
+                    f"主体 {subject.code}（{name}）没有参考图，各镜头生成的样子可能不一样；"
+                    "请在全片设定里上传照片或生成定妆图",
+                    None,
+                    {"code": subject.code, "name": name},
                 )
             )
     return issues

@@ -359,31 +359,34 @@ def loudnorm_stats(path: Path, *, target: float, true_peak: float, timeout: floa
     return {key: str(data[key]) for key in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")}
 
 
+IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tif", ".tiff", ".heic"})
+
+
 def extract_frame(source: Path, output: Path, *, at: float | None = None, width: int = 512) -> Path:
     """取视频的一帧存成 JPEG（缩到 ``width`` 宽）。``at`` 为空时取最后一帧，图片直接缩放。
 
     看图检查只需要小图；首尾帧衔接取最后一帧时用原始宽度（``width=0``）。
+    图片不能带 ``-ss`` / ``-sseof``：普通 JPEG 走 image2 读取时一定位就一帧也取不到
+    （ffmpeg 正常退出但不输出文件），参考图会被全部跳过。
     """
     scale = ["-vf", f"scale={width}:-2"] if width else []
-    if at is None:
+    if source.suffix.lower() in IMAGE_SUFFIXES or (at is not None and at <= 0):
+        position: list[str] = []
+    elif at is None:
         position = ["-sseof", "-0.25"]
     else:
-        position = ["-ss", f"{max(0.0, at):.3f}"]
-    run_ffmpeg(
-        [
-            "-protocol_whitelist",
-            LOCAL_PROTOCOLS,
-            *position,
-            "-i",
-            str(source),
-            "-frames:v",
-            "1",
-            *scale,
-            "-q:v",
-            "3",
-            str(output),
-        ]
-    )
+        position = ["-ss", f"{at:.3f}"]
+
+    def grab(seek: list[str]) -> None:
+        run_ffmpeg(
+            ["-protocol_whitelist", LOCAL_PROTOCOLS, *seek, "-i", str(source), "-frames:v", "1", *scale, "-q:v", "3", str(output)]
+        )
+
+    output.unlink(missing_ok=True)
+    grab(position)
+    if not output.exists() and position:
+        # 定位后没取到画面（时长探测不准的视频）：退回取第一帧。
+        grab([])
     if not output.exists():
         raise MediaError("没有取到画面")
     return output
