@@ -88,7 +88,7 @@ cd web && npm install && npm run build && cd ..
 shotwright serve
 ```
 
-打开 <http://127.0.0.1:8000> 即可使用。Windows 上可以直接双击 `start.bat` 启动、双击 `restart.bat` 重启（会先关闭占用 8000 端口的旧服务）。开发前端时可以另开终端运行 `cd web && npm run dev`，访问 <http://localhost:5173>。
+打开 <http://127.0.0.1:8000> 即可使用（加 `--open` 会自动打开浏览器）。8000 端口被其他程序占用或被系统保留时（Windows 上常见的 WinError 10013），会自动改用后面一个可用的端口，并在窗口里打印实际地址。Windows 上可以直接双击 `start.bat` 启动（自动打开浏览器）、双击 `restart.bat` 重启（会先关闭旧服务）。开发前端时可以另开终端运行 `cd web && npm run dev`，访问 <http://localhost:5173>。
 
 ### Docker
 

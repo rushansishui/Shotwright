@@ -57,17 +57,18 @@ if defined NEED_WEB (
   )
 )
 
-netstat -ano | findstr /r /c:":8000 .*LISTENING" >nul
+rem An older Shotwright server from this folder is still running: don't start a second one.
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\running.ps1" >nul 2>nul
 if not errorlevel 1 (
-  echo [Shotwright] Port 8000 is already in use - an older Shotwright window is probably still running.
-  echo [Shotwright] Close that window first ^(or press Ctrl+C in it^), then run start.bat again.
+  echo [Shotwright] Shotwright is already running - an older window is probably still open.
+  echo [Shotwright] Close that window first ^(or run restart.bat^), then run start.bat again.
   pause
   exit /b 1
 )
 
-echo [Shotwright] Starting at http://127.0.0.1:8000  (press Ctrl+C to stop)
-start "" "http://127.0.0.1:8000"
-".venv\Scripts\shotwright.exe" serve
+rem Port 8000 is preferred; if Windows has reserved it or another program uses it, the next free port is used.
+echo [Shotwright] Starting... the browser opens automatically  (press Ctrl+C to stop)
+".venv\Scripts\shotwright.exe" serve --open
 pause
 exit /b 0
 
