@@ -40,6 +40,14 @@ class UnconfirmedTaskError(ProviderError):
     """收费任务可能已在远端创建，但本地无法确认结果。不要自动重试，以免重复扣费。"""
 
 
+class ReferenceImagesUnsupported(ProviderError):
+    """生成服务不接受参考图（4xx，远端已明确拒绝、没有扣费）。
+
+    调用方可以去掉参考图重试一次，但提示词里按参考图编号写的那些要求必须一并去掉，
+    否则模型会把编号指向并不存在的图片。
+    """
+
+
 @dataclass(frozen=True)
 class ConfigField:
     key: str
@@ -167,6 +175,9 @@ class VideoGenProvider(Protocol):
 
 class ImageGenProvider(Protocol):
     def generate(self, prompt: str, *, aspect: str, output: Path) -> Path: ...
+
+    # 支持参考图的服务另外接受 ``references: list[Path]``（主体的产品图、人物照片），
+    # 调用方按签名判断（见 visuals.generate_image_candidate）。
 
 
 @dataclass

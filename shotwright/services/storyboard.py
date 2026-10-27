@@ -148,6 +148,14 @@ class Storyboard:
     look: Look = field(default_factory=Look)
     issues: list[str] = field(default_factory=list)
     """自检后仍然存在的问题（已经让大模型重写过一次）。"""
+    footage: dict[int, str] = field(default_factory=dict)
+    """镜头序号（从 0 开始）→ 大模型建议直接使用的用户素材编号（M1、M2…）。"""
+
+
+SCRIPT_RULE = (
+    "文案已经定稿，见用户消息里的「定稿脚本」：按顺序每段对应一个镜头，镜头数等于段数，"
+    "text 原样照抄那一段，不要改写、合并、拆分或增删段落；下面关于文案长度和句数的要求以定稿脚本为准。"
+)
 
 
 def _prompt_size(text: str, lang: str) -> int:
@@ -163,6 +171,8 @@ def _user_message(
     aspect: str | None,
     duration: float | None,
     references: list[tuple[str, str]] | None,
+    script: list[str] | None = None,
+    materials: list[str] | None = None,
 ) -> str:
     lines = []
     kind = VIDEO_TYPE_NAMES.get(video_type or "")
@@ -175,7 +185,17 @@ def _user_message(
     if references:
         lines.append("主体库（已上传参考图，外观以参考图为准）：")
         lines += [f"- {_ROLE_NAMES.get(role, role)}：{label or '未写说明'}" for role, label in references]
+    if materials:
+        lines.append("用户上传的素材（编号、类型、用途、说明）：")
+        lines += [f"- {item}" for item in materials]
+        lines.append(
+            "用途是「画面素材」的，如果某个镜头适合直接用它当画面，就在这个镜头加字段 "
+            '"footage": "素材编号"（例如 "M2"），并让画面描述和它一致；不适合就不加。'
+        )
     lines.append(f"诉求原文：\n{subject}")
+    if script:
+        lines.append("定稿脚本（每段一个镜头，text 原样照抄）：")
+        lines += [f"{index}. {line}" for index, line in enumerate(script, start=1)]
     return "\n".join(lines)
 
 
@@ -208,7 +228,27 @@ def _parse(data: dict, subject: str) -> Storyboard:
         )
     if not result:
         raise ProviderError("大模型没有返回任何镜头")
-    return Storyboard(title=title, shots=result, look=look)
+    footage: dict[int, str] = {}
+    index = 0
+    for item in data.get("shots") or []:
+        if not isinstance(item, dict) or not str(item.get("text") or "").strip():
+            continue
+        code = str(item.get("footage") or "").strip().upper()
+        if re.fullmatch(r"M\d{1,2}", code):
+            footage[index] = code
+        index += 1
+    return Storyboard(title=title, shots=result, look=look, footage=footage)
+
+
+def _apply_script(board: Storyboard, script: list[str]) -> None:
+    """镜头文案换成定稿脚本：一段一个镜头。大模型多给的镜头去掉，少给的补上只有文案的镜头。"""
+    shots = board.shots[: len(script)]
+    while len(shots) < len(script):
+        shots.append(Shot(text="", visual=ShotVisual(mode="stock")))
+    for shot, line in zip(shots, script, strict=True):
+        shot.text = line[:500]
+    board.shots = shots
+    board.footage = {index: code for index, code in board.footage.items() if index < len(shots)}
 
 
 def _parse_look(raw) -> Look:
@@ -247,15 +287,24 @@ def _parse_look(raw) -> Look:
     )
 
 
-def suggest_sources(shots: list[Shot], available: set[str]) -> None:
+def suggest_sources(shots: list[Shot], available: set[str], look: Look | None = None) -> None:
     """按镜头类型给每个镜头选默认画面来源。``available`` 是已配置的来源（ai、image）。
 
+    画面里出现全片设定中的产品、人物、物品时改用 AI 生成：图库素材里的人和物每个镜头都不一样，
+    只有 AI 能参照同一组主体照片，让各镜头保持一致。
     只是默认值：AI 来源仍然要用户确认收费才会生成，没确认时渲染会改用素材检索。
     """
+    codes = {s.code for s in (look.subjects if look else []) if s.kind != "place"}
     for shot in shots:
         wanted = ROLE_SOURCES.get(shot.role or "", "stock")
+        if wanted == "stock" and codes and _mentions(shot.visual.prompt, codes):
+            wanted = "ai"
         if wanted in available:
             shot.visual.mode = wanted  # type: ignore[assignment]
+
+
+def _mentions(text: str, codes: set[str]) -> bool:
+    return any(re.search(rf"(?<![A-Za-z0-9_]){re.escape(code)}(?![A-Za-z0-9_])", text) for code in codes)
 
 
 def check_storyboard(
@@ -295,16 +344,21 @@ def write_storyboard(
     video_type: str | None = None,
     aspect: str | None = None,
     references: list[tuple[str, str]] | None = None,
+    script: list[str] | None = None,
+    materials: list[str] | None = None,
 ) -> Storyboard:
     """根据诉求写分镜：全片设定 + 文案 + 每个镜头的画面描述、运镜和衔接。
 
+    给了 ``script``（用户确认过的脚本，每段一个镜头）时文案不再由大模型写，只配画面。
+    ``materials`` 是用户上传素材的说明（每条以 M1、M2… 编号开头）。
     出稿后自检一次，不合格时带着问题让大模型重写一次；重写后仍有问题就保留
     问题列表返回，不再重试（避免无限花钱）。
     """
+    script = [line.strip() for line in script or [] if line.strip()] or None
     lang = prompt_lang if prompt_lang in _PROMPT_LANG else "en"
     system = SYSTEM_PROMPT.format(
         language=language,
-        length_rule=_length_rule(shots, duration),
+        length_rule=SCRIPT_RULE if script else _length_rule(shots, duration),
         plang=_PROMPT_LANG[lang],
         prompt_len=_PROMPT_LEN[lang],
         still_len=_STILL_LEN[lang],
@@ -315,13 +369,23 @@ def write_storyboard(
         {
             "role": "user",
             "content": _user_message(
-                subject, video_type=video_type, aspect=aspect, duration=duration, references=references
+                subject,
+                video_type=video_type,
+                aspect=aspect,
+                duration=duration,
+                references=references,
+                script=script,
+                materials=materials,
             ),
         },
     ]
+    # 定稿脚本的时长由用户决定，不再按目标时长检查。
+    target = None if script else duration
     reply = llm.complete(messages, json_mode=True)
     board = _parse(_extract_json(reply), subject)
-    board.issues = check_storyboard(board, lang=lang, duration=duration, video_type=video_type)
+    if script:
+        _apply_script(board, script)
+    board.issues = check_storyboard(board, lang=lang, duration=target, video_type=video_type)
     if not board.issues:
         return board
     log.info("分镜自检发现 %d 个问题，让大模型重写一次", len(board.issues))
@@ -339,7 +403,9 @@ def write_storyboard(
     except ProviderError as exc:
         log.warning("分镜重写失败，保留第一版：%s", exc)
         return board
-    second.issues = check_storyboard(second, lang=lang, duration=duration, video_type=video_type)
+    if script:
+        _apply_script(second, script)
+    second.issues = check_storyboard(second, lang=lang, duration=target, video_type=video_type)
     return second if len(second.issues) <= len(board.issues) else board
 
 

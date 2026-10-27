@@ -131,7 +131,10 @@ export interface LookSubject {
   name: string;
   kind: SubjectKind;
   appearance: string;
-  reference?: string | null;
+  /** 参考图（素材 id）：产品实拍、人物照片，生成 AI 画面时作为参考。 */
+  images?: string[];
+  /** 参考图的颜色/款式（素材 id → 「浅粉色」这类说明），写进提示词，让模型照着这一款的颜色画。 */
+  image_labels?: Record<string, string>;
 }
 
 /** 全片设定：主体代号与外观、场景、视觉风格、禁止项，生成每个镜头时自动拼进提示词。 */
@@ -201,6 +204,8 @@ export interface ShotVisual {
   /** 多选：在选中的素材之后依次播放的其他素材。 */
   sequence?: string[];
   first_frame: string | null;
+  /** 这个镜头用哪些主体参考图；为空时用各主体的主图（第一张）。 */
+  refs?: string[];
   color: string;
   fit: FitMode;
   /** 铺满裁切时的取景中心，0–1。 */
@@ -288,6 +293,19 @@ export interface SfxSettings {
 /** 视频类型：商品广告、品牌宣传、知识科普、口播、原片改造。 */
 export type VideoType = "product_ad" | "brand" | "explainer" | "talking" | "footage";
 
+export type MaterialKind = "image" | "video" | "audio";
+/** 素材用途：产品图、人物照片、Logo、风格参考、画面素材（直接当镜头画面）、背景音乐。 */
+export type MaterialRole = "product" | "person" | "logo" | "style" | "footage" | "bgm";
+
+/** 新建视频时交给后端的素材说明；上传后带上 asset_id。 */
+export interface MaterialNote {
+  kind: MaterialKind;
+  role: MaterialRole;
+  name?: string;
+  note?: string;
+  asset_id?: string;
+}
+
 /** 读音纠正：配音时把 word 换成读音相同的 say，字幕仍显示 word。 */
 export interface Pronunciation {
   word: string;
@@ -299,6 +317,10 @@ export interface Project {
   id: string;
   title: string;
   subject: string;
+  /** 用户最初随手写的想法（创作记录）。 */
+  idea?: string;
+  /** 生成分镜时用的脚本，每段一个镜头（创作记录，之后改镜头文案不影响）。 */
+  script?: string[];
   video_type?: VideoType | null;
   look?: Look;
   /** 标题：常驻大标题、片头标题卡、镜头小标题样式。 */
@@ -372,6 +394,11 @@ export interface ProjectSummary {
   language: string;
   group: string;
   updated_at: number;
+  created_at?: number;
+  /** 最近一次成片；stale 表示成片之后项目又改过。 */
+  render?: { id: string; duration: number | null; created_at: number; stale: boolean } | null;
+  /** 封面图片地址（最近的成片或第一个有画面的镜头）；没有画面时为空。 */
+  cover?: string | null;
 }
 
 export interface ProviderInfo {

@@ -7,6 +7,7 @@ import type {
   FontFamily,
   Job,
   LanguageInfo,
+  MaterialNote,
   Project,
   ProjectSummary,
   Providers,
@@ -45,6 +46,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     try {
       const data = await response.json();
       if (typeof data.detail === "string") message = data.detail;
+      // 页面已经是新版、后台服务还是旧版时，新接口会落到静态文件上，返回这两种通用错误。
+      if (["Method Not Allowed", "Not Found", "接口不存在", "No such API endpoint"].includes(data.detail)) message = translate("common.serverOutdated");
       else if (Array.isArray(data.detail)) message = data.detail.map((d: { msg: string }) => d.msg).join("; ");
     } catch {
       /* 响应不是 JSON */
@@ -78,6 +81,8 @@ export const api = {
   getProject: (id: string) => request<Project>(`/projects/${id}`),
   createProject: (body: {
     mode: "llm" | "split" | "empty";
+    title?: string;
+    idea?: string;
     language?: string;
     subject?: string;
     script?: string;
@@ -94,7 +99,7 @@ export const api = {
     body: Partial<
       Pick<
         Project,
-        "title" | "video_type" | "look" | "titles" | "chain_frames" | "budget" | "sfx" | "delivery" | "language" | "canvas" | "voice" | "subtitle" | "bgm" | "loudness" | "references" | "overlays" | "transition" | "ai_badge" | "pronunciations"
+        "title" | "video_type" | "look" | "titles" | "chain_frames" | "budget" | "sfx" | "delivery" | "language" | "canvas" | "voice" | "subtitle" | "bgm" | "loudness" | "references" | "overlays" | "transition" | "idea" | "script" | "subject" | "ai_badge" | "pronunciations"
       >
     >,
   ) =>
@@ -102,6 +107,30 @@ export const api = {
   /** AI 生成标题：候选大标题、片头副标题、镜头小标题（已有的不覆盖）。 */
   suggestTitles: (id: string, options: { shot_titles?: boolean; apply_headline?: boolean } = {}) =>
     request<Project>(`/projects/${id}/titles/suggest`, json("POST", options)),
+  /** 把随手写的想法按视频类型的模板整理成完整诉求（不建项目、不收费）。 */
+  normalizeBrief: (body: {
+    idea: string;
+    template: string;
+    video_type: VideoType;
+    language: string;
+    aspect: string;
+    duration: number;
+    materials: MaterialNote[];
+  }) => request<{ brief: string }>("/brief/normalize", json("POST", body)),
+  /** 按诉求写口播脚本，每段一个镜头（不建项目、不收费）。 */
+  writeScript: (body: { brief: string; video_type: VideoType; language: string; aspect: string; duration: number; materials: MaterialNote[] }) =>
+    request<{ title: string; lines: string[]; seconds: number }>("/brief/script", json("POST", body)),
+  /** 给项目写分镜：有定稿脚本时一段一个镜头；上传的素材放进主体、主体库、镜头和背景音乐。 */
+  storyboard: (id: string, body: { subject: string; idea?: string; script: string[] | null; duration: number; materials: MaterialNote[] }) =>
+    request<Project>(`/projects/${id}/storyboard`, json("POST", body)),
+  /** 把新建时上传的素材放到该放的地方（不调用大模型）。 */
+  applyMaterials: (id: string, materials: MaterialNote[]) => request<Project>(`/projects/${id}/materials`, json("POST", { materials })),
+  /** 给全片设定里的主体生成定妆图（AI 图片，收费，调用前要让用户确认）。 */
+  subjectImage: (id: string, code: string) =>
+    request<Project>(`/projects/${id}/look/${encodeURIComponent(code)}/image`, json("POST", { confirm_charge: true })),
+  /** 看主体的参考图写外观描述（领型、有无帽子等），只返回文字。 */
+  describeSubject: (id: string, code: string) =>
+    request<{ appearance: string }>(`/projects/${id}/look/${encodeURIComponent(code)}/describe`, json("POST", {})),
   /** AI 检查文案里容易读错的词，追加到读音纠正表。 */
   suggestPronunciations: (id: string) => request<Project>(`/projects/${id}/pronunciations/suggest`, json("POST", {})),
   /** 按当前配音设置和读音纠正合成一句试听，返回音频。 */
@@ -115,6 +144,7 @@ export const api = {
       try {
         const data = await response.json();
         if (typeof data.detail === "string") message = data.detail;
+        if (["Method Not Allowed", "Not Found", "接口不存在", "No such API endpoint"].includes(data.detail)) message = translate("common.serverOutdated");
       } catch {
         /* 响应不是 JSON */
       }

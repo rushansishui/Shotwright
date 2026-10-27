@@ -29,6 +29,7 @@ from shotwright.api.jobs import JobManager
 from shotwright.api.schemas import (
     AddShot,
     AmbienceSearch,
+    ApplyMaterials,
     BgmDownload,
     BgmSearch,
     CandidatesRequest,
@@ -37,10 +38,13 @@ from shotwright.api.schemas import (
     CreateVersion,
     DuplicateProject,
     ExpandRequest,
+    NormalizeBrief,
     PreviewVoice,
     ReorderShots,
     RewriteShot,
+    ScriptRequest,
     SplitShot,
+    StoryboardRequest,
     SuggestTitles,
     UpdateProject,
     UpdateShot,
@@ -58,6 +62,7 @@ from shotwright.pipeline.shots import MAX_SEQUENCE
 from shotwright.providers import registry
 from shotwright.providers.base import ChargeConfirmationRequired, ProviderError
 from shotwright.providers.tts.edge import VOICES
+from shotwright.services import brief as brief_service
 from shotwright.services import (
     checkup,
     editing,
@@ -71,6 +76,7 @@ from shotwright.services import (
     visuals,
 )
 from shotwright.services import cost as cost_service
+from shotwright.services import inspect as inspect_service
 from shotwright.services import titles as titles_service
 from shotwright.services.duplicate import duplicate_project
 
@@ -405,24 +411,102 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
     @api.get("/projects")
     def list_projects():
-        return [
-            {
-                "id": p.id,
-                "title": p.title or p.subject or "未命名项目",
-                "shots": len(p.shots),
-                "aspect": p.canvas.aspect,
-                "language": languages.normalize(p.language),
-                "group": p.group or p.id,
-                "updated_at": p.updated_at,
-            }
-            for p in store.list()
-        ]
+        result = []
+        for p in store.list():
+            latest = _latest_render(p.id)
+            source = _cover_source(p)
+            result.append(
+                {
+                    "id": p.id,
+                    "title": p.title or p.subject or "未命名项目",
+                    "shots": len(p.shots),
+                    "aspect": p.canvas.aspect,
+                    "language": languages.normalize(p.language),
+                    "group": p.group or p.id,
+                    "updated_at": p.updated_at,
+                    "created_at": p.created_at,
+                    # 最近一次成片：时长、生成时间，以及之后有没有再改过项目。
+                    "render": (
+                        {
+                            "id": latest["render_id"],
+                            "duration": latest.get("duration"),
+                            "created_at": latest["created_at"],
+                            "stale": latest.get("revision") != p.revision,
+                        }
+                        if latest
+                        else None
+                    ),
+                    # 封面：最近的成片或第一个有画面的镜头；地址带上来源，换了来源浏览器会重新取。
+                    "cover": f"/api/v2/projects/{p.id}/cover?k={source[1]}" if source else None,
+                }
+            )
+        return result
+
+    def _latest_render(project_id: str) -> dict | None:
+        directory = store.project_dir(project_id) / "renders"
+        best: dict | None = None
+        if directory.is_dir():
+            for child in directory.iterdir():
+                video = child / "video.mp4"
+                if not video.is_file():
+                    continue
+                created = video.stat().st_mtime
+                if best is not None and created <= best["created_at"]:
+                    continue
+                data = read_json(child / "render.json")
+                if data and data.get("render_id"):
+                    best = {**data, "created_at": created}
+        return best
+
+    def _cover_source(project: Project) -> tuple[Path, str] | None:
+        """封面取自哪个文件：最近的成片，没有成片时用第一个有画面的镜头。返回（文件, 缓存键）。"""
+        latest = _latest_render(project.id)
+        if latest:
+            video = store.project_dir(project.id) / "renders" / latest["render_id"] / "video.mp4"
+            return video, f"r{latest['render_id']}"
+        for shot in project.shots:
+            visual = shot.visual
+            asset = project.assets.get(visual.selected or "") if visual.mode != "color" else None
+            if asset is not None and asset.kind in ("image", "video"):
+                path = store.asset_path(project, asset.id)
+                if path.is_file():
+                    return path, f"a{asset.id}"
+        return None
+
+    @api.get("/projects/{project_id}/cover")
+    def project_cover(project_id: str):
+        """项目封面（480 像素宽的 JPEG），按来源缓存。"""
+        project = store.load(_id(project_id))
+        source = _cover_source(project)
+        if source is None:
+            raise HTTPException(404, "项目还没有画面")
+        path, key = source
+        target = store.cache_dir(project.id, "cover") / f"{key}.jpg"
+        if not target.is_file():
+            scale = "scale='min(480,iw)':-2"
+            temp = target.with_suffix(".tmp.jpg")
+            attempts = [["-ss", "1", "-i", str(path)], ["-i", str(path)]] if path.suffix != ".png" else [["-i", str(path)]]
+            for inputs in attempts:
+                try:
+                    ffmpeg.run_ffmpeg([*inputs, "-frames:v", "1", "-vf", scale, "-q:v", "4", str(temp)])
+                except Exception:  # noqa: BLE001 —— 短视频从第 1 秒取不到帧时退回第一帧
+                    continue
+                if temp.is_file() and temp.stat().st_size > 0:
+                    temp.replace(target)
+                    break
+            if not target.is_file():
+                raise HTTPException(404, "封面生成失败")
+        return FileResponse(target, media_type="image/jpeg", headers={"Cache-Control": "max-age=86400"})
 
     @api.post("/projects", status_code=201)
     def create_project(body: CreateProject):
         lang = languages.get(body.language)
         project = Project(
-            title=body.title, subject=body.subject, target_seconds=body.duration, video_type=body.video_type
+            title=body.title,
+            subject=body.subject,
+            idea=body.idea,
+            target_seconds=body.duration,
+            video_type=body.video_type,
         )
         if body.canvas:
             project.canvas = body.canvas
@@ -451,13 +535,106 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             project.shots = board.shots
             project.look = board.look
             if body.video_type:
-                storyboard.suggest_sources(project.shots, visuals.available_sources(settings))
+                storyboard.suggest_sources(project.shots, visuals.available_sources(settings), project.look)
         elif body.mode == "split":
             if not body.script.strip():
                 raise HTTPException(422, "请填写视频文案")
             project.shots = storyboard.split_script(body.script)
+        # 创作记录：生成分镜时的文案，之后改镜头不影响。
+        project.script = [shot.text for shot in project.shots if shot.text.strip()][:60]
         project.title = project.title or body.subject[:40] or "未命名项目"
         return store.create(project)
+
+    def _materials(items) -> list[brief_service.Material]:
+        return [
+            brief_service.Material(kind=item.kind, role=item.role, name=item.name, note=item.note, asset_id=item.asset_id)
+            for item in items
+        ]
+
+    @api.post("/brief/normalize")
+    def normalize_brief(body: NormalizeBrief):
+        """把用户随手写的想法按视频类型的模板整理成完整诉求。不建项目、不收费。"""
+        lang = languages.get(body.language)
+        llm = registry.create("llm", None, settings)
+        text = brief_service.normalize_brief(
+            llm,  # type: ignore[arg-type]
+            body.idea,
+            template=body.template,
+            video_type=body.video_type,
+            language=lang.prompt_name,
+            aspect=body.aspect,
+            duration=body.duration,
+            materials=_materials(body.materials),
+        )
+        return {"brief": text}
+
+    @api.post("/brief/script")
+    def write_script(body: ScriptRequest):
+        """按诉求写口播脚本（每段一个镜头），交给用户修改。不建项目、不收费。"""
+        lang = languages.get(body.language)
+        llm = registry.create("llm", None, settings)
+        title, lines = brief_service.write_script(
+            llm,  # type: ignore[arg-type]
+            body.brief,
+            video_type=body.video_type,
+            language=lang.prompt_name,
+            aspect=body.aspect,
+            duration=body.duration,
+            materials=_materials(body.materials),
+        )
+        return {"title": title, "lines": lines, "seconds": brief_service.script_seconds(lines)}
+
+    @api.post("/projects/{project_id}/storyboard")
+    def project_storyboard(project_id: str, body: StoryboardRequest):
+        """给项目写分镜：有定稿脚本时按脚本一段一个镜头，只配画面；再把上传的素材放到该放的地方。"""
+        project = store.load(_id(project_id))
+        materials = _materials(body.materials)
+        for item in materials:
+            if item.asset_id is not None and _id(item.asset_id) not in project.assets:
+                raise HTTPException(404, "素材不存在")
+        lang = languages.get(project.language)
+        llm = registry.create("llm", None, settings)
+        board = storyboard.write_storyboard(
+            llm,  # type: ignore[arg-type]
+            body.subject.strip(),
+            language=lang.prompt_name,
+            prompt_lang=prompting.prompt_language(project),
+            duration=body.duration,
+            video_type=project.video_type,
+            aspect=project.canvas.aspect,
+            script=body.script,
+            materials=brief_service.describe_materials(materials),
+        )
+
+        def change(latest: Project) -> None:
+            latest.subject = body.subject.strip()
+            if body.idea.strip():
+                latest.idea = body.idea.strip()
+            latest.script = [shot.text for shot in board.shots if shot.text.strip()][:60]
+            if body.duration:
+                latest.target_seconds = body.duration
+            if not latest.title or latest.title == "未命名项目":
+                latest.title = board.title or body.subject[:40]
+            latest.shots = board.shots
+            latest.look = board.look
+            if latest.video_type:
+                storyboard.suggest_sources(latest.shots, visuals.available_sources(settings), latest.look)
+            brief_service.apply_materials(latest, materials, board.footage)
+
+        return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/materials")
+    def apply_materials(project_id: str, body: ApplyMaterials):
+        """把新建时上传的素材放到该放的地方（不调用大模型）。"""
+
+        def change(latest: Project) -> None:
+            materials = _materials(body.materials)
+            for item in materials:
+                if item.asset_id is None or item.asset_id not in latest.assets:
+                    raise KeyError(item.asset_id)
+            brief_service.apply_materials(latest, materials)
+
+        return _mutate(project_id, change)
 
     @api.get("/projects/{project_id}")
     def get_project(project_id: str):
@@ -473,6 +650,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             for name in (
                 "title",
                 "subject",
+                "idea",
+                "script",
                 "video_type",
                 "look",
                 "titles",
@@ -504,8 +683,12 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             if project.bgm.asset_id and project.bgm.asset_id not in project.assets:
                 raise ValueError("背景音乐素材不存在")
             for item in project.look.subjects:
-                if item.reference and item.reference not in project.assets:
-                    raise ValueError("全片设定引用的参考素材不存在")
+                for image in item.images:
+                    asset = project.assets.get(image)
+                    if asset is None:
+                        raise ValueError("全片设定引用的参考素材不存在")
+                    if asset.kind != "image":
+                        raise ValueError("参考素材必须是图片")
             for ref in project.references:
                 asset = project.assets.get(ref.asset_id)
                 if asset is None:
@@ -514,6 +697,37 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     raise ValueError("参考素材必须是图片")
 
         return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/look/{code}/image")
+    def subject_image(project_id: str, code: str, body: ChargeConsent | None = None):
+        """给全片设定里的主体生成定妆图（AI 图片，收费，需要 confirm_charge）。"""
+        project = store.load(_id(project_id))
+        if not any(s.code == code for s in project.look.subjects):
+            raise HTTPException(404, "主体不存在")
+        asset_id = visuals.generate_subject_image(
+            store, settings, project, code, confirm_charge=(body or ChargeConsent()).confirm_charge
+        )
+
+        def change(latest: Project) -> None:
+            latest.assets.setdefault(asset_id, project.assets[asset_id])
+            latest.cost_credits = max(latest.cost_credits, project.cost_credits)
+            subject = next((s for s in latest.look.subjects if s.code == code), None)
+            if subject is None:
+                raise KeyError(code)
+            if asset_id not in subject.images:
+                subject.images.append(asset_id)
+
+        return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/look/{code}/describe")
+    def describe_subject(project_id: str, code: str):
+        """看主体的参考图写外观描述（领型、有无帽子、拉链、缝线、Logo 位置），只返回文字，不保存。不收费。"""
+        project = store.load(_id(project_id))
+        try:
+            text = inspect_service.describe_subject(settings, store, project, code)
+        except KeyError:
+            raise HTTPException(404, "主体不存在") from None
+        return {"appearance": text}
 
     @api.post("/projects/{project_id}/pronunciations/suggest")
     def suggest_pronunciations(project_id: str):
@@ -699,6 +913,13 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     patch["sequence"] = sequence
                 if patch.get("first_frame") and project.assets[patch["first_frame"]].kind != "image":
                     raise ValueError("首帧必须是图片")
+                if "refs" in patch:
+                    refs = list(dict.fromkeys(patch["refs"] or []))
+                    if any(item not in project.assets for item in refs):
+                        raise ValueError("所选素材不存在")
+                    if any(project.assets[item].kind != "image" for item in refs):
+                        raise ValueError("参考素材必须是图片")
+                    patch["refs"] = refs
                 if "terms" in patch:
                     patch["terms"] = [t.strip()[:80] for t in patch["terms"] if t.strip()]
                 current = patch.get("candidates", shot.visual.candidates)
@@ -1108,6 +1329,11 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
     app.include_router(api)
 
     if WEB_DIST.is_dir():
+        @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
+        def unknown_api(path: str):
+            # 不存在的接口返回 JSON 404，不要落到下面的静态文件上（那里只会返回 405 Method Not Allowed）。
+            raise HTTPException(404, "接口不存在")
+
         app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")
 
     return app

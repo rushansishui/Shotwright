@@ -155,6 +155,21 @@ export function ShotCard(props: {
   // AI 视频的首帧可以从这个镜头的任意图片里选（AI 图片或上传的图片）。
   const frameChoices = visual.mode === "ai" ? visual.candidates.filter((id) => project.assets[id]?.kind === "image") : [];
   const firstFrame = visual.mode === "ai" && !!visual.first_frame && !!project.assets[visual.first_frame];
+  // 主体参考图：画面里提到的主体（没提到就是所有非场景主体）的全部参考图，供这个镜头挑颜色、款式。
+  const refSubjects = (() => {
+    if (visual.mode !== "ai" && visual.mode !== "image") return [];
+    const subjects = (project.look?.subjects ?? []).filter((s) => s.kind !== "place" && (s.images ?? []).some((id) => project.assets[id]));
+    const text = `${visual.prompt} ${visual.image_prompt ?? ""}`;
+    const named = subjects.filter((s) => new RegExp(`(^|[^A-Za-z0-9_])${s.code}(?![A-Za-z0-9_])`).test(text));
+    return named.length ? named : subjects;
+  })();
+  const refChoices = refSubjects.flatMap((s) => (s.images ?? []).filter((id) => project.assets[id]).map((id) => ({ id, subject: s })));
+  const customRefs = (visual.refs ?? []).filter((id) => project.assets[id]);
+  const activeRefs = customRefs.length ? customRefs : refSubjects.map((s) => (s.images ?? []).find((id) => project.assets[id])!).filter(Boolean);
+  const toggleRef = (id: string) => {
+    const next = activeRefs.includes(id) ? activeRefs.filter((other) => other !== id) : [...activeRefs, id];
+    props.onUpdate({ visual: { refs: next } });
+  };
   const emptyHint: Partial<Record<VisualMode, string>> = {
     stock: t("shot.empty.stock"),
     ai: t("shot.empty.ai"),
@@ -516,6 +531,40 @@ export function ShotCard(props: {
               ))}
             </div>
             <span className="muted small">{firstFrame ? t("shot.firstFrameOn") : t("shot.firstFrameOff")}</span>
+          </div>
+        )}
+
+        {refChoices.length > 1 && (
+          <div className="first-frame shot-refs">
+            <span className="label">{t("shot.refs")}</span>
+            <div className="candidates small" role="group" aria-label={t("shot.refsLabel")}>
+              {refChoices.map(({ id, subject }) => {
+                const label = subject.image_labels?.[id];
+                const on = activeRefs.includes(id);
+                return (
+                  <button
+                    type="button"
+                    key={id}
+                    aria-pressed={on}
+                    className={`candidate ref ${on ? "on" : ""}`}
+                    disabled={visual.locked || props.busy}
+                    onClick={() => toggleRef(id)}
+                    title={`${subject.code} ${subject.name}${label ? ` · ${label}` : ""}`}
+                  >
+                    <Thumb project={project} assetId={id} color={visual.color} className="candidate-media" />
+                    <span className="ref-tag">{label || subject.code}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <span className="muted small">
+              {customRefs.length ? t("shot.refsCustom") : t("shot.refsDefault")}
+              {customRefs.length > 0 && (
+                <button type="button" className="link-btn" disabled={visual.locked || props.busy} onClick={() => props.onUpdate({ visual: { refs: [] } })}>
+                  {t("shot.refsReset")}
+                </button>
+              )}
+            </span>
           </div>
         )}
 

@@ -320,6 +320,10 @@ class PendingTask(_Model):
         return value
 
 
+MAX_SUBJECT_IMAGES = 10
+"""每个主体最多几张参考图（产品实拍常有好几种颜色、角度）。一次生成只用其中的几张，见 prompting.MAX_REFERENCES。"""
+
+
 class LookSubject(_Model):
     """全片设定里的一个主体（产品、人物、物品、场所），各镜头用同一个代号指代它。"""
 
@@ -330,8 +334,39 @@ class LookSubject(_Model):
     kind: SubjectKind = "object"
     appearance: str = ""
     """外观：颜色、材质、形状、尺寸、服装、发型等，越具体各镜头越一致。"""
-    reference: str | None = None
-    """对应主体库里的参考图（素材 id）；为空表示没有。"""
+    images: list[str] = Field(default_factory=list, max_length=MAX_SUBJECT_IMAGES)
+    """这个主体的参考图（素材 id，例如产品实拍图、模特照片）。生成用到这个主体的 AI 画面时
+    默认只参照第一张（主图）；镜头可以改选别的图（例如另一种颜色），见 :attr:`ShotVisual.refs`。"""
+    image_labels: dict[str, str] = Field(default_factory=dict)
+    """参考图的说明（素材 id → 颜色 / 款式，例如「浅粉色」），写进提示词，让模型按这一款生成。"""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_reference(cls, data):
+        # 旧版本只有一张参考图（reference 字段），并入 images。
+        if isinstance(data, dict) and "reference" in data:
+            data = dict(data)
+            reference = data.pop("reference")
+            if reference and reference not in (data.get("images") or []):
+                data["images"] = [reference, *(data.get("images") or [])]
+        return data
+
+    @field_validator("images")
+    @classmethod
+    def _check_images(cls, value: list[str]) -> list[str]:
+        seen: list[str] = []
+        for item in value:
+            item = validate_id(item)
+            if item not in seen:
+                seen.append(item)
+        return seen
+
+    @field_validator("image_labels")
+    @classmethod
+    def _check_labels(cls, value: dict[str, str], info) -> dict[str, str]:
+        # 只保留现有图片的说明，去掉空说明（images 在前面声明，这里已经校验过）。
+        images = info.data.get("images") or []
+        return {key: text.strip()[:30] for key, text in value.items() if key in images and text.strip()}
 
     @field_validator("code")
     @classmethod
@@ -349,11 +384,6 @@ class LookSubject(_Model):
     @classmethod
     def _check_appearance(cls, value: str) -> str:
         return value[:600]
-
-    @field_validator("reference")
-    @classmethod
-    def _check_reference(cls, value: str | None) -> str | None:
-        return None if value is None else validate_id(value)
 
 
 class Look(_Model):
@@ -458,6 +488,10 @@ class ShotVisual(_Model):
     """多选：在选中的素材之后依次播放的其他素材（按选择顺序）；为空时只播放选中的素材。"""
     first_frame: str | None = None
     """ai 模式的首帧图片（图生视频）；为空时纯文字生成。"""
+    refs: list[str] = Field(default_factory=list, max_length=MAX_SUBJECT_IMAGES)
+    """这个镜头用哪些主体参考图（素材 id，按顺序）；为空时用画面里各主体的主图。
+    例如商品有几种颜色，这个镜头想展示粉色款，就选粉色那张。
+    这里是可选的上限；一次生成实际发几张由生成服务的上限决定（见 prompting.shot_references）。"""
     color: str = "#1F2937"
     """color 模式或没有可用素材时的纯色画面。"""
     fit: FitMode = "cover"
@@ -480,7 +514,7 @@ class ShotVisual(_Model):
     takes: list[Take] = Field(default_factory=list)
     """生成版本记录（按时间先后），与候选素材对应；候选被挤掉时一并清理。"""
 
-    @field_validator("candidates", "sequence")
+    @field_validator("candidates", "sequence", "refs")
     @classmethod
     def _check_candidates(cls, value: list[str]) -> list[str]:
         return [validate_id(item) for item in value]
@@ -723,6 +757,11 @@ class Project(_Model):
     title: str = ""
     subject: str = ""
     """视频诉求：用户想要的内容。最多 4096 字节（UTF-8）。"""
+    idea: str = Field("", max_length=4000)
+    """用户最初随手写的想法（新建时 AI 据此整理出 ``subject``），留作记录，方便以后改了重新创作。"""
+    script: list[str] = Field(default_factory=list, max_length=60)
+    """生成分镜时用的脚本（每段一个镜头）：用户定稿的脚本，或 AI 写的文案、粘贴的文案拆出的段落。
+    之后改镜头文案不影响这里，留作创作记录。"""
     video_type: VideoType | None = None
     """视频类型；为空表示没选（旧项目或只按文案拆镜头）。"""
     titles: TitleSettings = Field(default_factory=TitleSettings)
@@ -770,6 +809,11 @@ class Project(_Model):
     @classmethod
     def _check_subject(cls, value: str) -> str:
         return check_subject(value)
+
+    @field_validator("script")
+    @classmethod
+    def _check_script(cls, value: list[str]) -> list[str]:
+        return [line.strip()[:500] for line in value if line.strip()]
 
     @field_validator("group")
     @classmethod

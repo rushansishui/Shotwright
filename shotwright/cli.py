@@ -39,14 +39,70 @@ def _store(args) -> tuple:
     return settings, store
 
 
+PORT_TRIES = 50
+"""首选端口用不了时，往后再试这么多个端口。"""
+
+
+def bind_port(host: str, port: int, tries: int = PORT_TRIES):
+    """绑定首选端口；被占用或被系统保留（Windows 的 WinError 10013）时依次试后面的端口。
+
+    返回已经绑定好的 socket，直接交给 uvicorn，避免「先探测、再绑定」之间被别的程序抢走。
+    都不行时让系统分配一个空闲端口。
+    """
+    import socket
+
+    candidates = [port + offset for offset in range(tries + 1) if port + offset < 65536] + [0]
+    last_error: OSError | None = None
+    for candidate in candidates:
+        sock = socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET, socket.SOCK_STREAM)
+        if sys.platform == "win32":
+            # 独占绑定：Windows 上默认允许别的程序抢同一个端口，独占后被占用时会直接报错。
+            sock.setsockopt(socket.SOL_SOCKET, getattr(socket, "SO_EXCLUSIVEADDRUSE", -5), 1)
+        else:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, candidate))
+        except OSError as exc:
+            sock.close()
+            last_error = exc
+            continue
+        sock.listen(2048)
+        sock.set_inheritable(True)
+        return sock
+    raise OSError(f"找不到可用的端口：{last_error}")
+
+
 def cmd_serve(args) -> int:
+    import threading
+    import webbrowser
+
     import uvicorn
 
     from shotwright.api.app import create_app
 
     app = create_app(load_settings(args.config))
-    print(f"Shotwright 已启动：http://{args.host}:{args.port}")
-    uvicorn.run(app, host=args.host, port=args.port)
+    try:
+        sock = bind_port(args.host, args.port)
+    except OSError as exc:
+        print(f"Shotwright 启动失败：{exc}")
+        return 1
+    port = sock.getsockname()[1]
+    if port != args.port:
+        print(f"端口 {args.port} 无法使用（被其他程序占用或被系统保留），改用端口 {port}")
+    url = f"http://{args.host}:{port}"
+    print(f"Shotwright 已启动：{url}")
+    server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=port))
+    if args.open:
+
+        def open_when_ready() -> None:
+            for _ in range(300):
+                if server.started:
+                    webbrowser.open(url)
+                    return
+                threading.Event().wait(0.1)
+
+        threading.Thread(target=open_when_ready, daemon=True).start()
+    server.run(sockets=[sock])
     return 0
 
 
@@ -79,7 +135,7 @@ def cmd_new(args) -> int:
         )
         project.title, project.shots, project.look = board.title, board.shots, board.look
         if args.type:
-            storyboard.suggest_sources(project.shots, visuals.available_sources(settings))
+            storyboard.suggest_sources(project.shots, visuals.available_sources(settings), project.look)
         for issue in board.issues:
             print(f"分镜自检：{issue}", file=sys.stderr)
     else:
@@ -226,7 +282,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     serve = sub.add_parser("serve", help="启动 API 和网页界面")
     serve.add_argument("--host", default="127.0.0.1")
-    serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument("--port", type=int, default=8000, help="首选端口；用不了时自动换后面的端口")
+    serve.add_argument("--open", action="store_true", help="启动后用浏览器打开界面")
     serve.set_defaults(func=cmd_serve)
 
     new = sub.add_parser("new", help="新建项目")

@@ -18,6 +18,7 @@ import { TitleSection } from "./editor/TitleSection";
 import { TextStyleEditor } from "./editor/TextStyleEditor";
 import { KeywordField } from "./editor/KeywordField";
 import { PronunciationSection } from "./editor/PronunciationSection";
+import { OriginRecord } from "./editor/OriginRecord";
 
 export function Editor({ projectId }: { projectId: string }) {
   const {
@@ -149,6 +150,8 @@ export function Editor({ projectId }: { projectId: string }) {
           </p>
         )}
 
+        <OriginRecord project={project} run={(action) => run(action)} />
+
         <Section
           step={1}
           title={t("editor.shots")}
@@ -238,7 +241,7 @@ export function Editor({ projectId }: { projectId: string }) {
         </Section>
 
         <Section step={2} title={t("look.section")}>
-          <LookSection project={project} run={run} />
+          <LookSection project={project} run={run} setError={setError} />
           <div className="divider" />
           <ReferencesSection project={project} run={run} setError={setError} />
         </Section>

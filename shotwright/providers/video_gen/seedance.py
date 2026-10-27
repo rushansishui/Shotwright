@@ -1,4 +1,7 @@
-"""火山方舟 Seedance：文生视频 / 首帧图生视频（收费）。
+"""火山方舟 Seedance：文生视频 / 首帧图生视频 / 参考图生视频（收费）。
+
+参考图（``reference_images``）用来保持人物、产品在各镜头一致：模型参照它们的外观，
+但构图和开头画面不受限制；首帧（``first_frame``）则规定视频的第一帧。
 
 接口文档：https://www.volcengine.com/docs/82379/1520757
 与豆包大模型用同一个方舟 API Key：本节没填 ``api_key`` 时，会借用
@@ -12,18 +15,27 @@ from __future__ import annotations
 
 import base64
 import math
+import re
 from collections.abc import Callable
 from pathlib import Path
 
 import httpx
 
 from shotwright.providers import paid_task, registry
-from shotwright.providers.base import ConfigField, ProviderError, ProviderSpec
+from shotwright.providers.base import (
+    ConfigField,
+    ProviderError,
+    ProviderSpec,
+    ReferenceImagesUnsupported,
+    UnconfirmedTaskError,
+)
 from shotwright.providers.paid_task import sniff_image_type
 
 LABEL = "Seedance"
 ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 MAX_FIRST_FRAME = 30 * 1024 * 1024
+MAX_REFERENCE_IMAGES = 9
+"""Seedance 2.x 一次最多带几张参考图（主体照片）；更早的模型最多 4 张。"""
 MAX_REFERENCE_VIDEO = 60 * 1024 * 1024
 """参考视频上限；超过时提示用户先用原片导入切短，而不是静默失败。"""
 _RATIOS = {"9:16": "9:16", "16:9": "16:9", "1:1": "1:1"}
@@ -93,6 +105,12 @@ class SeedanceVideo:
         return httpx.Client(timeout=self.timeout, proxy=self.proxy, headers={"User-Agent": "Shotwright/0.2"})
 
     @property
+    def max_reference_images(self) -> int:
+        """这个模型一次最多接受几张参考图：Seedance 2.x 起 9 张，更早的 4 张。"""
+        match = re.search(r"seedance-(\d+)", self.model.lower())
+        return MAX_REFERENCE_IMAGES if match and int(match.group(1)) >= 2 else 4
+
+    @property
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
@@ -104,8 +122,14 @@ class SeedanceVideo:
         duration: float,
         first_frame: Path | None,
         reference_video: Path | None = None,
+        reference_images: list[Path] | None = None,
     ) -> dict:
         content: list[dict] = [{"type": "text", "text": prompt.strip()}]
+        for path in reference_images or []:
+            # 参考图：保持人物、产品外观一致，不规定第一帧（Seedance 2.x 多模态参考）。
+            content.append(
+                {"type": "image_url", "image_url": {"url": image_data_url(path)}, "role": "reference_image"}
+            )
         if first_frame is not None:
             content.append(
                 {
@@ -144,22 +168,39 @@ class SeedanceVideo:
         output: Path,
         first_frame: Path | None = None,
         reference_video: Path | None = None,
+        reference_images: list[Path] | None = None,
         on_task: Callable[[str], None] | None = None,
     ) -> Path:
+        """``reference_images`` 是主体照片（人物、产品），模型参照外观生成。
+
+        不支持参考图的模型会拒绝请求（4xx，不扣费）。这里只抛
+        :class:`ReferenceImagesUnsupported`，由调用方去掉提示词里的参考图要求、改用首帧重试——
+        提示词是调用方拼的，只有它知道该删哪几行。"""
         if not prompt.strip():
             raise ProviderError("缺少画面提示词")
+        refs = list(reference_images or [])[: self.max_reference_images] if first_frame is None and reference_video is None else []
         payload = self.build_payload(
             prompt,
             aspect=aspect,
             duration=duration,
             first_frame=first_frame,
             reference_video=reference_video,
+            reference_images=refs,
         )
         tasks_url = f"{self.base_url}/contents/generations/tasks"
         with self._client() as client:
-            task_id = paid_task.submit(
-                client, tasks_url, payload, headers=self._headers, label=LABEL, secret=self.api_key
-            )
+            try:
+                task_id = paid_task.submit(
+                    client, tasks_url, payload, headers=self._headers, label=LABEL, secret=self.api_key
+                )
+            except UnconfirmedTaskError:
+                raise
+            except ProviderError as exc:
+                if not refs:
+                    raise
+                # 远端明确拒绝（4xx，没扣费）：多数是不支持参考图。交给调用方去掉提示词里的参考图
+                # 要求后再提交，这里不自己重试——提示词里的「参考图 1/2」由调用方拼的。
+                raise ReferenceImagesUnsupported(str(exc)) from exc
             if on_task is not None:
                 on_task(task_id)
             return self._finish(client, task_id, output)
