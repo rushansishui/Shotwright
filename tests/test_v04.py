@@ -335,3 +335,55 @@ def test_paid_generation_adds_to_project_cost(store, settings):
         assert project.cost_credits == pytest.approx(2.0)
     finally:
         del cost._VIDEO_GEN_PRICE["seedance-fake"]
+
+
+def test_long_single_take_footage_is_split_instead_of_failing(settings, store, tmp_path):
+    """一镜到底超过 2 分钟的原片曾因镜头时长超过上限直接报 500，现在按 60 秒一段切开。"""
+    from shotwright.services.footage import _split_long
+
+    assert _split_long([0.0], 130.0) == [0.0, 43.333, 86.667]
+    assert _split_long([0.0, 10.0], 70.0) == [0.0, 10.0]
+    long_take = tmp_path / "long.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:size=180x320:rate=5:duration=130",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(long_take),
+        ],
+        check=True,
+    )
+    project = _project(store)
+    with _client(settings, store) as client, long_take.open("rb") as handle:
+        r = client.post(
+            f"/api/v2/projects/{project.id}/footage?replace_shots=true", files={"file": ("long.mp4", handle, "video/mp4")}
+        )
+    assert r.status_code == 201, r.text
+    shots = store.load(project.id).shots
+    assert len(shots) == 3 and all(shot.duration <= 60 for shot in shots)
+    assert shots[-1].visual.trim_end == 130.0
+
+
+def test_product_switches_on_white_background_are_detected(tmp_path):
+    """白底商品视频：换一件商品整体画面变化分数只有 0.04 左右，固定阈值 0.35 会漏掉。"""
+    from shotwright.media.ffmpeg import detect_scenes, pick_cuts
+
+    colors = ["pink", "lightsteelblue", "black"]
+    inputs: list[str] = []
+    for _color in colors:
+        inputs += ["-f", "lavfi", "-i", "color=white:size=360x640:rate=30:duration=2"]
+    chains = "".join(
+        f"[{index}:v]drawbox=x=60:y=140:w=240:h=360:color={color}:t=fill[v{index}];" for index, color in enumerate(colors)
+    )
+    joined = tmp_path / "products.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", *inputs, "-filter_complex", chains + "[v0][v1][v2]concat=n=3:v=1:a=0[v]",
+         "-map", "[v]", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(joined)],
+        check=True,
+    )
+    assert detect_scenes(joined) == [0.0, 2.0, 4.0]
+    # 持续运动（平移、抖动）分数一直偏高，不算切镜；突出的一帧才算。
+    steady = [(i / 30, 0.08) for i in range(60)]
+    assert pick_cuts(steady, 0.35) == []
+    assert pick_cuts([*steady[:30], (1.0, 0.06), *steady[31:]], 0.35) == []
+    calm = [(i / 30, 0.001) for i in range(60)]
+    calm[30] = (1.0, 0.045)
+    assert pick_cuts(calm, 0.35) == [1.0]

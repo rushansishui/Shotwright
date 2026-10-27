@@ -31,6 +31,12 @@ MAX_SHOTS = 30
 MIN_SEGMENT = 0.8
 """短于这个秒数的片段并入下一段。"""
 
+MAX_SEGMENT = 60.0
+"""一个镜头最长多少秒：长时间没有切换画面的原片按这个长度切开（镜头时长上限是 120 秒）。"""
+
+MAX_FOOTAGE = 30 * 60.0
+"""原片最长多少秒。"""
+
 
 @dataclass
 class ImportResult:
@@ -50,6 +56,17 @@ def _merge_short_starts(starts: list[float], total: float) -> list[float]:
     while len(kept) > 1 and total - kept[-1] < MIN_SEGMENT:
         kept.pop()
     return kept
+
+
+def _split_long(starts: list[float], total: float, longest: float = MAX_SEGMENT) -> list[float]:
+    """把超过 ``longest`` 秒的片段平均切开，例如一镜到底的 3 分钟原片。"""
+    result: list[float] = []
+    bounds = [*starts, total]
+    for begin, end in zip(bounds[:-1], bounds[1:], strict=True):
+        pieces = max(1, int((end - begin) // longest) + (1 if (end - begin) % longest > 1e-6 else 0))
+        step = (end - begin) / pieces
+        result += [round(begin + step * index, 3) for index in range(pieces)]
+    return result
 
 
 def _limit_shots(starts: list[float], total: float, limit: int) -> list[float]:
@@ -84,6 +101,8 @@ def import_footage(
     total = info.duration or 0.0
     if total < MIN_SEGMENT:
         raise MediaError("原片太短，至少要 1 秒")
+    if total > MAX_FOOTAGE:
+        raise MediaError(f"原片太长（{total / 60:.0f} 分钟），最长 {MAX_FOOTAGE / 60:.0f} 分钟，请先剪短")
 
     # 1. 原片本身登记为素材，方便日后重新切。
     source = _register_media(
@@ -99,6 +118,7 @@ def import_footage(
         starts = [0.0]
     starts = _merge_short_starts(starts, total)
     starts = _limit_shots(starts, total, max_shots)
+    starts = _split_long(starts, total)
 
     # 3. 每段一个镜头，引用原片的一段。
     shot_ids: list[str] = []

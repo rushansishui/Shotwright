@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import threading
@@ -172,10 +173,41 @@ def filter_path(path: Path) -> str:
     return text
 
 
+SPIKE_MIN = 0.03
+"""画面变化分数至少到这个值，才可能算作切镜（低于它基本是压缩噪声）。"""
+SPIKE_RATIO = 5.0
+"""分数是前后画面平均变化的几倍时算作切镜。"""
+SPIKE_WINDOW = 15
+"""和前后各多少帧比较。"""
+
+
+def pick_cuts(scores: list[tuple[float, float]], threshold: float) -> list[float]:
+    """从每帧的 (时间, 画面变化分数) 里挑出切镜点。
+
+    分数超过 ``threshold`` 的一定算；此外，比前后画面的变化明显突出的一帧也算——商品视频常是
+    白底、固定机位、字幕位置不变，换一件商品整体分数只有 0.04 左右，固定阈值会漏掉。
+    """
+    cuts: list[float] = []
+    values = [score for _time, score in scores]
+    for index, (seconds, score) in enumerate(scores):
+        if seconds <= 0:
+            continue
+        if score >= threshold:
+            cuts.append(seconds)
+            continue
+        if score < SPIKE_MIN:
+            continue
+        around = values[max(0, index - SPIKE_WINDOW) : index] + values[index + 1 : index + 1 + SPIKE_WINDOW]
+        baseline = sum(around) / len(around) if around else 0.0
+        if score >= SPIKE_RATIO * max(baseline, 0.002):
+            cuts.append(seconds)
+    return cuts
+
+
 def detect_scenes(path: Path, *, threshold: float = 0.35, timeout: float = 600) -> list[float]:
     """按画面变化检测切镜点，返回每个镜头的起始秒数（第一个总是 0）。
 
-    用 ffmpeg 的 scene 分数：超过阈值的帧被选中，``showinfo`` 打印它的 ``pts_time``。
+    ffmpeg 的 ``scene`` 滤镜给每帧打一个画面变化分数，由 :func:`pick_cuts` 挑出切镜点。
     """
     command = [
         _tools.ffmpeg,
@@ -186,7 +218,7 @@ def detect_scenes(path: Path, *, threshold: float = 0.35, timeout: float = 600) 
         "-i",
         str(path),
         "-filter:v",
-        f"select='gt(scene,{threshold:.2f})',showinfo",
+        "select='gte(scene,0)',metadata=print:key=lavfi.scene_score",
         "-an",
         "-f",
         "null",
@@ -203,18 +235,18 @@ def detect_scenes(path: Path, *, threshold: float = 0.35, timeout: float = 600) 
     if result.returncode != 0:
         tail = "\n".join((result.stderr or "").strip().splitlines()[-5:])
         raise MediaError(f"切镜检测失败：{tail}")
-    starts = [0.0]
+    scores: list[tuple[float, float]] = []
+    current: float | None = None
     for line in (result.stderr or "").splitlines():
-        marker = "pts_time:"
-        position = line.find(marker)
-        if position < 0:
+        time_match = re.search(r"pts_time:(-?[0-9.]+)", line)
+        if time_match:
+            current = float(time_match.group(1))
             continue
-        try:
-            seconds = float(line[position + len(marker) :].split()[0])
-        except (ValueError, IndexError):
-            continue
-        if seconds > 0:
-            starts.append(round(seconds, 3))
+        score_match = re.search(r"lavfi\.scene_score=([0-9.]+)", line)
+        if score_match and current is not None:
+            scores.append((current, float(score_match.group(1))))
+            current = None
+    starts = [0.0, *(round(seconds, 3) for seconds in pick_cuts(scores, threshold))]
     return sorted(set(starts))
 
 
