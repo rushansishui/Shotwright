@@ -298,8 +298,8 @@ export function Home() {
             {settings}
 
             {step === 1 && (
-              <>
-                <div className="field">
+              <div className="flow-body">
+                <div className="field grow">
                   <div className="field-row">
                     <label htmlFor="idea">{t("flow.idea")}</label>
                     <span className="muted small">{t("flow.ideaHint")}</span>
@@ -333,12 +333,12 @@ export function Home() {
                     {t("flow.writeMyself")}
                   </button>
                 </div>
-              </>
+              </div>
             )}
 
             {step === 2 && (
-              <>
-                <div className="field">
+              <div className="flow-body">
+                <div className="field grow">
                   <div className="field-row">
                     <label htmlFor="subject">{t("home.subject")}</label>
                     <span className={`muted small ${tooLong ? "bad" : ""}`}>
@@ -422,16 +422,16 @@ export function Home() {
                     {t("flow.back")}
                   </button>
                 </div>
-              </>
+              </div>
             )}
 
             {step === 3 && (
-              <>
-                <div className="field">
+              <div className="flow-body">
+                <div className="field grow">
                   <label htmlFor="title">{t("flow.title")}</label>
                   <input id="title" className="input" maxLength={120} value={title} onChange={(e) => setTitle(e.target.value)} />
                 </div>
-                <div className="field">
+                <div className="field grow">
                   <div className="field-row">
                     <span className="label">{t("flow.script")}</span>
                     <span className={`muted small ${Math.abs(scriptSeconds - duration) > Math.max(5, duration * 0.3) ? "bad" : ""}`}>
@@ -495,7 +495,7 @@ export function Home() {
                     {t("flow.back")}
                   </button>
                 </div>
-              </>
+              </div>
             )}
           </>
         )}
