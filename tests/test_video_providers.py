@@ -122,6 +122,111 @@ def test_wan_shares_the_qwen_key(settings):
     assert registry.create("video_gen", "wan", settings).api_key == "qwen-key"
 
 
+# ---- 可灵 ---------------------------------------------------------------------
+
+
+def _kling_server(reject=False):
+    def submit(request):
+        if reject and b"image_list" in request.content:
+            return httpx.Response(400, json={"code": 1201, "message": "model not supported"})
+        return httpx.Response(200, json={"code": 0, "message": "SUCCEED", "data": {"task_id": "kt1", "task_status": "submitted"}})
+
+    done = {"code": 0, "data": {"task_status": "succeed", "task_result": {"videos": [{"url": "https://cdn.example/k.mp4"}]}}}
+    return Server(
+        {
+            ("POST", "/v1/videos/"): submit,
+            ("GET", "/kt1"): httpx.Response(200, json=done),
+        }
+    )
+
+
+def test_kling_token_is_a_valid_hs256_jwt():
+    import base64
+    import hashlib
+    import hmac
+
+    from shotwright.providers.video_gen.kling import make_token
+
+    token = make_token("ak", "sk", lifetime=1800, now=1_000_000)
+    header, payload, signature = token.split(".")
+    decoded = json.loads(base64.urlsafe_b64decode(payload + "=="))
+    assert decoded == {"iss": "ak", "exp": 1_001_800, "nbf": 999_995}
+    expected = base64.urlsafe_b64encode(hmac.new(b"sk", f"{header}.{payload}".encode(), hashlib.sha256).digest())
+    assert signature == expected.rstrip(b"=").decode()
+
+
+def test_kling_text_and_first_frame(settings, tmp_path):
+    settings.providers["video_gen"] = {"kling": {"access_key": "ak", "secret_key": "sk"}}
+    server = _kling_server()
+    kling = _provider("kling", settings, server)
+    tasks = []
+    kling.generate("产品特写", aspect="9:16", duration=4.2, output=tmp_path / "v", on_task=tasks.append)
+    assert tasks == ["text2video:kt1"] and "/v1/videos/text2video" in str(server.requests[0].url)
+    body = server.bodies()[0]
+    assert body == {"prompt": "产品特写", "mode": "pro", "model_name": "kling-v3", "duration": "5", "sound": "off", "aspect_ratio": "9:16"}
+    assert server.requests[0].headers["Authorization"].startswith("Bearer ey")
+    assert "/v1/videos/text2video/kt1" in str(server.requests[1].url)
+
+    image = make_image(tmp_path / "p.png")
+    kling.generate("x", aspect="9:16", duration=5, output=tmp_path / "w", reference_images=[image])
+    second = server.bodies()[1]
+    assert "/image2video" in str(server.requests[3].url) and not second["image"].startswith("data:")  # 参考图作为首帧
+    assert kling.resume("image2video:kt1", output=tmp_path / "r").read_bytes() == b"mp4-bytes"
+
+
+def test_kling_multi_image_reference_and_fallback(settings, tmp_path):
+    settings.providers["video_gen"] = {"kling": {"access_key": "ak", "secret_key": "sk", "reference_model": "kling-v1-6"}}
+    images = [make_image(tmp_path / f"{i}.png", size=f"{320 + i}x320") for i in range(5)]
+    server = _kling_server()
+    kling = _provider("kling", settings, server)
+    assert kling.max_reference_images == 4
+    kling.generate("x", aspect="9:16", duration=7, output=tmp_path / "v", reference_images=images)
+    body = server.bodies()[0]
+    assert body["model_name"] == "kling-v1-6" and len(body["image_list"]) == 4 and body["duration"] == "10"
+    from shotwright.providers.base import ReferenceImagesUnsupported
+
+    rejected = _kling_server(reject=True)
+    kling = _provider("kling", settings, rejected)
+    with pytest.raises(ReferenceImagesUnsupported):  # 交给调用方重拼提示词、改用首帧
+        kling.generate("x", aspect="9:16", duration=5, output=tmp_path / "w", reference_images=images)
+    assert len(rejected.requests) == 1
+
+
+def test_kling_business_error_is_a_rejection(settings, tmp_path):
+    settings.providers["video_gen"] = {"kling": {"access_key": "ak", "secret_key": "sk"}}
+    server = Server({("POST", "/v1/videos/"): httpx.Response(200, json={"code": 1102, "message": "账户余额不足"})})
+    with pytest.raises(ProviderError, match="余额不足"):
+        _provider("kling", settings, server).generate("x", aspect="9:16", duration=5, output=tmp_path / "v")
+
+
+def test_kling_accepts_single_api_key_and_new_result_shape(settings, tmp_path):
+    """可灵新的单密钥鉴权（Bearer API Key）和新结构的查询结果（status / outputs[]）。"""
+    from shotwright.providers.video_gen.kling import KlingVideo
+
+    spec = registry.spec("video_gen", "kling")
+    assert not registry.is_configured(spec, settings)
+    settings.providers["video_gen"] = {"kling": {"access_key": "ak"}}
+    assert not registry.is_configured(spec, settings)  # 只有 Access Key 不够
+    settings.providers["video_gen"] = {"kling": {"api_key": "key-123"}}
+    assert registry.is_configured(spec, settings)
+
+    clip = make_clip(tmp_path / "clip.mp4").read_bytes()
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        if request.method == "POST":
+            return httpx.Response(200, json={"id": "t9", "status": "queued"})
+        if "/text2video/t9" in str(request.url):
+            return httpx.Response(200, json={"id": "t9", "status": "succeeded", "outputs": [{"type": "video", "url": "https://cdn.example/v.mp4"}]})
+        return httpx.Response(200, content=clip)
+
+    provider = KlingVideo({"api_key": "key-123", "poll_interval": "0"})
+    provider._client = lambda: httpx.Client(transport=httpx.MockTransport(handler))  # type: ignore[method-assign]
+    path = provider.generate("P1 在雪地", aspect="9:16", duration=5, output=tmp_path / "out")
+    assert path.exists() and seen[0].headers["Authorization"] == "Bearer key-123"
+
+
 def test_wan_base_url_is_normalized_and_bare_404_names_the_url(tmp_path):
     """base_url 少写 /api/v1 或贴了完整地址都能用；没有说明的 404 提示检查地址，而不是去开通模型。"""
     from shotwright.providers.video_gen.wan import WanVideo, api_base

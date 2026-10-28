@@ -141,6 +141,33 @@ base_url = "https://dashscope.aliyuncs.com/api/v1"
 # generate_audio = "false"    # 镜匠自己配音，默认不要模型生成的声音
 # price = ""                  # 留空用参考价：1080p 1.2、720p 0.6、480p 0.3 元/秒
 
+# ---- 其他 AI 视频服务（都收费）：配好几家时，每个镜头可以单独选用哪一家 ----------
+# 单价都是参考价，会过时；price 填上自己账户的实际单价（元/秒），费用估算和预算控制更准。
+
+# 通义万相（阿里云百炼）：https://help.aliyun.com/zh/model-studio/video-generate-edit-model/
+# api_key 留空时使用 [providers.llm.qwen] 的百炼 Key；地址、模型、Key 要属于同一地域。
+[providers.video_gen.wan]
+# api_key = ""
+# model = "wan3.0-video"      # 文生、首帧、参考图（最多 10 张）都支持，2～30 秒；更快的 wan3.0-video-prime
+base_url = "https://dashscope.aliyuncs.com/api/v1"
+# 阿里云建议改用业务空间专属地址（更稳定）：https://{业务空间ID}.cn-beijing.maas.aliyuncs.com/api/v1
+# 业务空间 ID 在百炼控制台「业务空间详情」页面；新加坡把 cn-beijing 换成 ap-southeast-1
+# resolution = "1080p"        # 480p / 720p / 1080p
+# draft_resolution = "480p"
+# generate_audio = "false"    # 镜匠自己配音，默认不要模型生成的声音
+# price = ""                  # 留空用参考价：1080p 1.2、720p 0.6、480p 0.3 元/秒
+
+# 可灵 Kling：https://kling.ai/document-api ，在开放平台创建 API Key（或 Access Key / Secret Key）
+[providers.video_gen.kling]
+# api_key = ""                # 新的单密钥鉴权；填了就不用填下面两项
+# access_key = ""
+# secret_key = ""
+# model = "kling-v3"          # 3～15 秒；也可以用 kling-v2-6 / kling-v2-1
+base_url = "https://api-beijing.klingai.com"   # 国际：https://api-singapore.klingai.com
+# resolution = "1080p"        # 720p（标准）/ 1080p（高品质）/ 4k
+# reference_model = ""        # 留空时第一张参考图作为首帧；填 kling-v1-6 时用多图参考（最多 4 张）
+# price = ""                  # 可灵按积分计费，请填实际单价
+
 # AI 图片：https://www.volcengine.com/docs/82379/1541523
 [providers.image_gen.seedream]
 # api_key = ""
