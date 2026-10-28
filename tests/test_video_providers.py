@@ -262,6 +262,58 @@ def test_minimax_business_error_in_http_200(settings, tmp_path):
         _provider("minimax", settings, server).generate("x", aspect="9:16", duration=6, output=tmp_path / "v")
 
 
+# ---- fal.ai -------------------------------------------------------------------
+
+
+def _fal_server(error=None):
+    status = {"status": "COMPLETED", **({"error": error} if error else {})}
+    return Server(
+        {
+            ("POST", "queue.fal.run/fal-ai/"): httpx.Response(200, json={"request_id": "r1", "status_url": "x", "response_url": "y"}),
+            ("GET", "/requests/r1/status"): httpx.Response(200, json=status),
+            ("GET", "/requests/r1"): httpx.Response(200, json={"video": {"url": "https://cdn.example/f.mp4"}}),
+        }
+    )
+
+
+def test_fal_text_and_image_models(settings, tmp_path):
+    settings.providers["video_gen"] = {
+        "fal": {
+            "api_key": "fk",
+            "model": "fal-ai/kling-video/v2.1/standard/text-to-video",
+            "image_model": "fal-ai/kling-video/v2.1/standard/image-to-video",
+            "durations": "5,10",
+            "extra": '{"cfg_scale": 0.5}',
+            "price": "0.5",
+        }
+    }
+    server = _fal_server()
+    fal = _provider("fal", settings, server)
+    tasks = []
+    fal.generate("a coat", aspect="9:16", duration=6, output=tmp_path / "v", on_task=tasks.append)
+    assert tasks == ["fal-ai/kling-video|r1"]
+    assert str(server.requests[0].url).endswith("/fal-ai/kling-video/v2.1/standard/text-to-video")
+    assert server.requests[0].headers["Authorization"] == "Key fk"
+    assert server.bodies()[0] == {"prompt": "a coat", "duration": "10", "aspect_ratio": "9:16", "cfg_scale": 0.5}
+    assert str(server.requests[1].url) == "https://queue.fal.run/fal-ai/kling-video/requests/r1/status"
+    fal.generate("a coat", aspect="9:16", duration=5, output=tmp_path / "w", first_frame=make_image(tmp_path / "p.png"))
+    assert server.requests[4].url.path.endswith("image-to-video") and "image_url" in server.bodies()[1]
+
+
+def test_fal_failure_and_config_checks(settings, tmp_path):
+    settings.providers["video_gen"] = {"fal": {"api_key": "fk", "model": "fal-ai/veo3/fast"}}
+    with pytest.raises(ProviderError, match="content policy"):
+        _provider("fal", settings, _fal_server(error="content policy")).generate(
+            "x", aspect="9:16", duration=5, output=tmp_path / "v"
+        )
+    settings.providers["video_gen"]["fal"]["extra"] = "{bad"
+    with pytest.raises(ProviderError, match="JSON"):
+        registry.create("video_gen", "fal", settings)
+    settings.providers["video_gen"]["fal"] = {"api_key": "fk", "model": "fal-ai/veo3/fast", "max_references": "3"}
+    with pytest.raises(ProviderError, match="references_field"):
+        registry.create("video_gen", "fal", settings)
+
+
 def test_kling_accepts_single_api_key_and_new_result_shape(settings, tmp_path):
     """可灵新的单密钥鉴权（Bearer API Key）和新结构的查询结果（status / outputs[]）。"""
     from shotwright.providers.video_gen.kling import KlingVideo
@@ -314,6 +366,16 @@ def test_account_problems_are_not_mistaken_for_unsupported_references(tmp_path):
     assert not isinstance(info.value, ReferenceImagesUnsupported)
     with pytest.raises(ReferenceImagesUnsupported):
         run(400, "invalid parameter")
+
+
+def test_fal_can_omit_aspect_ratio(tmp_path):
+    from shotwright.providers.video_gen.common import Request
+    from shotwright.providers.video_gen.fal import FalVideo
+
+    plain = FalVideo({"api_key": "k", "model": "fal-ai/x/text-to-video"})
+    assert plain.build_payload(Request("p", "text", 5, "9:16"))[1]["aspect_ratio"] == "9:16"
+    bare = FalVideo({"api_key": "k", "model": "fal-ai/x/text-to-video", "aspect_field": "none"})
+    assert "aspect_ratio" not in bare.build_payload(Request("p", "text", 5, "9:16"))[1]
 
 
 def test_wan_base_url_is_normalized_and_bare_404_names_the_url(tmp_path):
