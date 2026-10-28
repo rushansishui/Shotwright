@@ -534,8 +534,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     "aspect": p.canvas.aspect,
                     "language": languages.normalize(p.language),
                     "group": p.group or p.id,
-                    # 旧版剪辑页建的项目没有记 origin，按有没有原声镜头判断。
-                    "origin": "cut" if p.origin == "cut" or any(s.speech == "original" for s in p.shots) else "create",
+                    "origin": _origin(p),
                     "updated_at": p.updated_at,
                     "created_at": p.created_at,
                     # 最近一次成片：时长、生成时间，以及之后有没有再改过项目。
@@ -560,6 +559,15 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 }
             )
         return result
+
+    def _origin(p: Project) -> str:
+        """任务来自创作还是剪辑。旧版剪辑页建的项目没有记 origin：有原声镜头、或识别过原片的算剪辑。"""
+        if p.origin == "cut" or any(s.speech == "original" for s in p.shots):
+            return "cut"
+        transcripts = store.project_dir(p.id) / "cache" / "transcripts"
+        if not p.subject and not p.idea and transcripts.is_dir() and any(transcripts.iterdir()):
+            return "cut"
+        return "create"
 
     def _latest_render(project_id: str) -> dict | None:
         directory = store.project_dir(project_id) / "renders"

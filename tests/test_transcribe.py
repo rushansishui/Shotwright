@@ -288,3 +288,15 @@ def test_cut_projects_are_listed_separately(client):
     assert cut["origin"] == "cut" and created["origin"] == "create"
     listed = {p["id"]: p["origin"] for p in client.get("/api/v2/projects").json()}
     assert listed[cut["id"]] == "cut" and listed[created["id"]] == "create"
+
+
+def test_old_cut_task_without_origin_is_listed_under_cut(client, settings, store, tmp_path):
+    """旧版剪辑页建的任务没有 origin 字段：识别过原片、还没生成镜头的也算剪辑任务。"""
+    settings.defaults["asr"] = "fakeasr"
+    pid = client.post("/api/v2/projects", json={"mode": "empty"}).json()["id"]
+    with _clip_with_audio(tmp_path / "talk.mp4").open("rb") as handle:
+        asset = client.post(f"/api/v2/projects/{pid}/assets", files={"file": ("talk.mp4", handle)}).json()["id"]
+    client.post(f"/api/v2/projects/{pid}/transcripts/{asset}", json={})
+    _wait_done(client, pid, asset)
+    listed = {p["id"]: p for p in client.get("/api/v2/projects").json()}
+    assert listed[pid]["origin"] == "cut" and listed[pid]["source_asset"] == asset

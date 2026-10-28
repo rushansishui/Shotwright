@@ -786,7 +786,7 @@ export const en: Record<MessageKey, string> = {
   "nav.main": "Main navigation",
   "nav.create": "Create",
   "nav.status": "Settings",
-  "nav.cut": "Edit",
+  "nav.cut": "Cut",
   "ready.noSubjectsShort": "No people or products need reference images in this video. Go on to the next step.",
   "voice.allOriginal": "Every shot uses the original voice, so nothing is voiced. The settings below only apply to shots switched to “Voice the text”.",
   "voice.showSettings": "Voice settings",
