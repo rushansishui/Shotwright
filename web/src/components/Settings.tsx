@@ -17,7 +17,8 @@ export function Settings() {
   const [proxy, setProxy] = useState("");
   const [proxyState, setProxyState] = useState<"" | "saving" | "saved">("");
   const { t, lang } = useI18n();
-  const kindName = (kind: string) => (KINDS.includes(kind) ? t(`status.kind.${kind}` as MessageKey) : kind);
+  const kindName = (kind: string) =>
+    KINDS.includes(kind) ? t(`status.kind.${kind}` as MessageKey) : kind;
 
   function reload() {
     return Promise.all([api.providers(), api.settings()])
@@ -62,7 +63,7 @@ export function Settings() {
   const editable = !!data?.editable;
 
   return (
-    <main className="page narrow settings-page">
+    <main className="page settings-page">
       <section className="card">
         <div className="card-head">
           <h1>{t("status.title")}</h1>
@@ -70,7 +71,9 @@ export function Settings() {
         <p className="muted">{t("settings.intro")}</p>
         {data && (
           <p className="muted small">
-            {editable ? t("settings.file", { path: data.config_path }) : t("settings.readonly")}
+            {editable
+              ? t("settings.file", { path: data.config_path })
+              : t("settings.readonly")}
           </p>
         )}
         {error && <p className="hint error">{error}</p>}
@@ -92,12 +95,18 @@ export function Settings() {
             <button
               type="button"
               className="btn"
-              disabled={!editable || proxy === data.proxy || proxyState === "saving"}
+              disabled={
+                !editable || proxy === data.proxy || proxyState === "saving"
+              }
               onClick={saveProxy}
             >
-              {proxyState === "saving" ? t("settings.saving") : t("settings.save")}
+              {proxyState === "saving"
+                ? t("settings.saving")
+                : t("settings.save")}
             </button>
-            {proxyState === "saved" && <span className="ok small">{t("settings.saved")}</span>}
+            {proxyState === "saved" && (
+              <span className="ok small">{t("settings.saved")}</span>
+            )}
           </div>
         )}
       </section>
@@ -105,20 +114,26 @@ export function Settings() {
       {providers &&
         data &&
         Object.entries(providers).map(([kind, list]) => {
-          const choosable = list.filter((p) => p.fields.length > 0 || p.offline);
+          const choosable = list.filter(
+            (p) => p.fields.length > 0 || p.offline,
+          );
           return (
             <section key={kind} className="card provider-group">
               <div className="card-head">
                 <h2>{kindName(kind)}</h2>
                 <label className="settings-default">
-                  <span className="muted small">{t("settings.defaultFor")}</span>
+                  <span className="muted small">
+                    {t("settings.defaultFor")}
+                  </span>
                   <select
                     className="input"
                     value={data.defaults[kind] ?? ""}
                     disabled={!editable}
                     onChange={(e) => chooseDefault(kind, e.target.value)}
                   >
-                    {!data.defaults[kind] && <option value="">{t("settings.notChosen")}</option>}
+                    {!data.defaults[kind] && (
+                      <option value="">{t("settings.notChosen")}</option>
+                    )}
                     {choosable.map((p) => (
                       <option key={p.id} value={p.id}>
                         {providerName(p, lang)}
@@ -128,16 +143,18 @@ export function Settings() {
                   </select>
                 </label>
               </div>
-              {list.map((p) => (
-                <ProviderCard
-                  key={p.id}
-                  kind={kind}
-                  provider={p}
-                  saved={data.providers[kind]?.[p.id]?.fields ?? {}}
-                  editable={editable}
-                  onSaved={applied}
-                />
-              ))}
+              <div className="provider-grid">
+                {list.map((p) => (
+                  <ProviderCard
+                    key={p.id}
+                    kind={kind}
+                    provider={p}
+                    saved={data.providers[kind]?.[p.id]?.fields ?? {}}
+                    editable={editable}
+                    onSaved={applied}
+                  />
+                ))}
+              </div>
             </section>
           );
         })}
@@ -153,13 +170,21 @@ interface ProviderCardProps {
   onSaved: (data: SettingsData) => Promise<void>;
 }
 
-function ProviderCard({ kind, provider, saved, editable, onSaved }: ProviderCardProps) {
+function ProviderCard({
+  kind,
+  provider,
+  saved,
+  editable,
+  onSaved,
+}: ProviderCardProps) {
   const { t, lang } = useI18n();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [cleared, setCleared] = useState<Record<string, boolean>>({});
   const [state, setState] = useState<"" | "saving" | "saved" | "testing">("");
-  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(
+    null,
+  );
   const [error, setError] = useState("");
 
   const changes: Record<string, string> = {};
@@ -167,14 +192,21 @@ function ProviderCard({ kind, provider, saved, editable, onSaved }: ProviderCard
     if (cleared[field.key]) changes[field.key] = "";
     else if (field.key in draft) {
       const value = draft[field.key].trim();
-      const current = field.secret ? "" : saved[field.key]?.value ?? "";
-      if (field.secret ? value !== "" : value !== current) changes[field.key] = value;
+      const current = field.secret ? "" : (saved[field.key]?.value ?? "");
+      if (field.secret ? value !== "" : value !== current)
+        changes[field.key] = value;
     }
   }
   const dirty = Object.keys(changes).length > 0;
 
   function startEdit() {
-    setDraft(Object.fromEntries(provider.fields.filter((f) => !f.secret).map((f) => [f.key, saved[f.key]?.value ?? ""])));
+    setDraft(
+      Object.fromEntries(
+        provider.fields
+          .filter((f) => !f.secret)
+          .map((f) => [f.key, saved[f.key]?.value ?? ""]),
+      ),
+    );
     setCleared({});
     setResult(null);
     setError("");
@@ -186,7 +218,13 @@ function ProviderCard({ kind, provider, saved, editable, onSaved }: ProviderCard
     setError("");
     try {
       await onSaved(await api.saveProviderSettings(kind, provider.id, changes));
-      setDraft((d) => Object.fromEntries(Object.entries(d).filter(([key]) => !provider.fields.find((f) => f.key === key)?.secret)));
+      setDraft((d) =>
+        Object.fromEntries(
+          Object.entries(d).filter(
+            ([key]) => !provider.fields.find((f) => f.key === key)?.secret,
+          ),
+        ),
+      );
       setCleared({});
       setState("saved");
     } catch (e) {
@@ -208,27 +246,48 @@ function ProviderCard({ kind, provider, saved, editable, onSaved }: ProviderCard
   }
 
   const inputId = `setting-${kind}-${provider.id}`;
-  const labelOf = (key: string) => provider.fields.find((f) => f.key === key)?.label ?? key;
+  const labelOf = (key: string) =>
+    provider.fields.find((f) => f.key === key)?.label ?? key;
 
   return (
-    <div className={`provider-card ${open ? "open" : ""}`} data-provider={`${kind}.${provider.id}`}>
+    <div
+      className={`provider-card ${open ? "open" : ""}`}
+      data-provider={`${kind}.${provider.id}`}
+    >
       <div className="provider-row">
         <span className="provider-name">
           {providerName(provider, lang)}
-          {provider.paid && <span className="tag warn">{t("status.paid")}</span>}
-          {provider.default && <span className="tag">{t("status.default")}</span>}
+          {provider.paid && (
+            <span className="tag warn">{t("status.paid")}</span>
+          )}
+          {provider.default && (
+            <span className="tag">{t("status.default")}</span>
+          )}
         </span>
         <span className="provider-state">
-          {provider.configured ? <span className="ok">{t("status.ok")}</span> : <span className="bad">{t("status.missing")}</span>}
+          {provider.configured ? (
+            <span className="ok">{t("status.ok")}</span>
+          ) : (
+            <span className="bad">{t("status.missing")}</span>
+          )}
         </span>
         <span className="provider-actions">
           {provider.docs_url && (
-            <a href={provider.docs_url} target="_blank" rel="noreferrer" className="small">
+            <a
+              href={provider.docs_url}
+              target="_blank"
+              rel="noreferrer"
+              className="small"
+            >
               {t("settings.docs")}
             </a>
           )}
           {provider.fields.length > 0 && (
-            <button type="button" className="btn small" onClick={() => (open ? setOpen(false) : startEdit())}>
+            <button
+              type="button"
+              className="btn small"
+              onClick={() => (open ? setOpen(false) : startEdit())}
+            >
               {open ? t("settings.collapse") : t("settings.edit")}
             </button>
           )}
@@ -240,7 +299,9 @@ function ProviderCard({ kind, provider, saved, editable, onSaved }: ProviderCard
           {provider.required_any && provider.required_any.length > 1 && (
             <p className="muted small">
               {t("settings.anyOf", {
-                groups: provider.required_any.map((g) => g.map(labelOf).join(" + ")).join(lang === "zh" ? " 或 " : " or "),
+                groups: provider.required_any
+                  .map((g) => g.map(labelOf).join(" + "))
+                  .join(lang === "zh" ? " 或 " : " or "),
               })}
             </p>
           )}
@@ -256,7 +317,9 @@ function ProviderCard({ kind, provider, saved, editable, onSaved }: ProviderCard
               <div key={field.key} className="field">
                 <label htmlFor={`${inputId}-${field.key}`}>
                   {field.label}
-                  {field.required && <span className="muted">{t("status.required")}</span>}
+                  {field.required && (
+                    <span className="muted">{t("status.required")}</span>
+                  )}
                   <code className="muted small"> {field.key}</code>
                 </label>
                 <span className="provider-input">
@@ -266,8 +329,10 @@ function ProviderCard({ kind, provider, saved, editable, onSaved }: ProviderCard
                     type={field.secret ? "password" : "text"}
                     autoComplete="off"
                     disabled={!editable || cleared[field.key]}
-                    value={cleared[field.key] ? "" : draft[field.key] ?? ""}
-                    placeholder={cleared[field.key] ? t("settings.cleared") : placeholder}
+                    value={cleared[field.key] ? "" : (draft[field.key] ?? "")}
+                    placeholder={
+                      cleared[field.key] ? t("settings.cleared") : placeholder
+                    }
                     onChange={(e) => {
                       setDraft((d) => ({ ...d, [field.key]: e.target.value }));
                       setState("");
@@ -278,7 +343,12 @@ function ProviderCard({ kind, provider, saved, editable, onSaved }: ProviderCard
                       <input
                         type="checkbox"
                         checked={!!cleared[field.key]}
-                        onChange={(e) => setCleared((c) => ({ ...c, [field.key]: e.target.checked }))}
+                        onChange={(e) =>
+                          setCleared((c) => ({
+                            ...c,
+                            [field.key]: e.target.checked,
+                          }))
+                        }
                       />
                       {t("settings.clear")}
                     </label>
@@ -289,18 +359,38 @@ function ProviderCard({ kind, provider, saved, editable, onSaved }: ProviderCard
             );
           })}
           <div className="provider-foot">
-            <button type="button" className="btn primary" disabled={!editable || !dirty || state === "saving"} onClick={save}>
+            <button
+              type="button"
+              className="btn primary"
+              disabled={!editable || !dirty || state === "saving"}
+              onClick={save}
+            >
               {state === "saving" ? t("settings.saving") : t("settings.save")}
             </button>
             {provider.testable && (
-              <button type="button" className="btn" disabled={dirty || state === "testing"} onClick={test}>
-                {state === "testing" ? t("settings.testing") : t("settings.test")}
+              <button
+                type="button"
+                className="btn"
+                disabled={dirty || state === "testing"}
+                onClick={test}
+              >
+                {state === "testing"
+                  ? t("settings.testing")
+                  : t("settings.test")}
               </button>
             )}
-            {dirty && <span className="muted small">{t("settings.unsaved")}</span>}
-            {state === "saved" && !dirty && <span className="ok small">{t("settings.saved")}</span>}
+            {dirty && (
+              <span className="muted small">{t("settings.unsaved")}</span>
+            )}
+            {state === "saved" && !dirty && (
+              <span className="ok small">{t("settings.saved")}</span>
+            )}
           </div>
-          {result && <p className={`hint small ${result.ok ? "ok" : "error"}`}>{result.message}</p>}
+          {result && (
+            <p className={`hint small ${result.ok ? "ok" : "error"}`}>
+              {result.message}
+            </p>
+          )}
           {error && <p className="hint error small">{error}</p>}
         </div>
       )}
