@@ -196,7 +196,9 @@ class SeedanceVideo:
             except UnconfirmedTaskError:
                 raise
             except ProviderError as exc:
-                if not refs:
+                from shotwright.providers.video_gen.common import is_account_problem
+
+                if not refs or is_account_problem(str(exc)):
                     raise
                 # 远端明确拒绝（4xx，没扣费）：多数是不支持参考图。交给调用方去掉提示词里的参考图
                 # 要求后再提交，这里不自己重试——提示词里的「参考图 1/2」由调用方拼的。

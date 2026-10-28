@@ -88,9 +88,21 @@ class ProviderSpec:
     """配音服务是否提供逐词时间戳（用于精确字幕对齐）。"""
     prompt_languages: tuple[str, ...] = ("en",)
     """生成模型能直接理解的提示词语言（zh / en）。项目语言不在其中时，提交前先用大模型翻译。"""
+    pricing: Callable[[dict[str, str], str], float] | None = None
+    """视频生成：按 (配置, 分辨率) 给出参考单价（元 / 秒）；为空时用费用模块里的内置价格表。"""
+    billing: Callable[[dict[str, str], float], float] | None = None
+    resolutions_of: Callable[[dict[str, str]], tuple[str, ...]] | None = None
+    """按配置给出当前模型支持的分辨率（从低到高），费用估算里定草稿档用。"""
+    """视频生成：想要的秒数 → 实际计费秒数（取到模型支持的时长档位）；为空时按 min/max_duration 取整。"""
+
+    required_any: tuple[tuple[str, ...], ...] = ()
+    """几种填法任选其一，每种是一组都要填的字段；例如 ``(("api_key",), ("access_key", "secret_key"))``。"""
 
     def missing_fields(self, settings: dict[str, str]) -> list[str]:
-        return [f.key for f in self.fields if f.required and not settings.get(f.key)]
+        missing = [f.key for f in self.fields if f.required and not settings.get(f.key)]
+        if self.required_any and not any(all(settings.get(key) for key in group) for group in self.required_any):
+            missing.append(" 或 ".join("+".join(group) for group in self.required_any))
+        return missing
 
 
 Factory = Callable[[dict[str, str]], object]
