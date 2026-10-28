@@ -68,6 +68,7 @@ export function Editor({ projectId }: { projectId: string }) {
   const llm = defaultProvider("llm");
   const expandCount = llm ? projectNeedsExpansion(project) : 0;
   const aiVideo = defaultProvider("video_gen");
+  const videoProviders = (providers?.video_gen ?? []).filter((p) => p.configured);
   const aiImage = defaultProvider("image_gen");
   const updateSubtitle = (patch: Partial<SubtitleStyle>) =>
     run(() => api.updateProject(id, { subtitle: { ...project.subtitle, ...patch } }));
@@ -206,6 +207,7 @@ export function Editor({ projectId }: { projectId: string }) {
                 busy={shot.id in busy}
                 busySeconds={shot.id in busy ? Math.max(0, Math.round((now - busy[shot.id]) / 1000)) : 0}
                 aiVideo={aiVideo}
+                videoProviders={videoProviders}
                 aiImage={aiImage}
                 sourceModes={sourceModes}
                 onFocus={() => setActiveIndex(index)}

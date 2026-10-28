@@ -65,6 +65,8 @@ export function ShotCard(props: {
   /** 已经等了多少秒（生成 AI 画面可能要几分钟）。 */
   busySeconds?: number;
   aiVideo: ProviderInfo | null;
+  /** 已配置好的 AI 视频服务；有两个以上时每个镜头可以单独选。 */
+  videoProviders?: ProviderInfo[];
   aiImage: ProviderInfo | null;
   /** 服务 id → 画面来源，用来按当前来源筛选候选素材。 */
   sourceModes: Record<string, VisualMode>;
@@ -134,7 +136,10 @@ export function ShotCard(props: {
       props.onUpdate({ visual: { sequence: rest.slice(1) } });
     }
   };
-  const generator = visual.mode === "ai" ? props.aiVideo : visual.mode === "image" ? props.aiImage : null;
+  const videoProviders = props.videoProviders ?? [];
+  // 镜头单独选了视频服务时用它，否则用默认服务。
+  const aiVideo = videoProviders.find((p) => p.id === visual.provider) ?? props.aiVideo;
+  const generator = visual.mode === "ai" ? aiVideo : visual.mode === "image" ? props.aiImage : null;
   const modeOf = (asset: Asset | undefined): VisualMode | undefined => {
     if (!asset) return undefined;
     const mode = props.sourceModes[asset.source];
@@ -210,14 +215,14 @@ export function ShotCard(props: {
   const editable =
     visual.mode !== "color" && (selectedAsset?.kind === "video" || selectedAsset?.kind === "image");
   const canModify =
-    !!props.aiVideo &&
-    props.aiVideo.video_to_video &&
+    !!aiVideo &&
+    aiVideo.video_to_video &&
     selectedAsset?.kind === "video" &&
     !visual.locked &&
     !props.busy;
   const modify = () => {
     if (!prompt.trim()) return;
-    const name = props.aiVideo ? providerName(props.aiVideo, lang) : "";
+    const name = aiVideo ? providerName(aiVideo, lang) : "";
     if (window.confirm(t("shot.confirm.modify", { n: index + 1, name }))) {
       props.onCandidates(true, prompt !== visual.prompt ? { prompt } : undefined, true);
     }
@@ -360,6 +365,23 @@ export function ShotCard(props: {
                 if (patch) props.onUpdate({ visual: patch });
               }}
             />
+            {visual.mode === "ai" && videoProviders.length > 1 && (
+              <select
+                className="input video-model"
+                aria-label={t("shot.videoModel")}
+                title={t("shot.videoModelHint")}
+                value={aiVideo?.id ?? ""}
+                disabled={props.busy || visual.locked}
+                onChange={(e) => props.onUpdate({ visual: { provider: e.target.value } })}
+              >
+                {videoProviders.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {providerName(p, lang)}
+                    {p.default ? t("shot.videoModelDefault") : ""}
+                  </option>
+                ))}
+              </select>
+            )}
             <button
               type="button"
               className="btn"

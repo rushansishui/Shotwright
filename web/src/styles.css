@@ -2548,3 +2548,9 @@ input[type="color"] {
   margin-top: 6px;
   flex-wrap: wrap;
 }
+
+.input.video-model {
+  width: auto;
+  max-width: 180px;
+  flex: none;
+}
