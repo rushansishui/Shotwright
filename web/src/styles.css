@@ -3069,3 +3069,14 @@ li.missing .readiness-mark {
 .cut-side .cut-foot {
   margin-top: 6px;
 }
+.voice-more > summary {
+  cursor: pointer;
+  color: var(--muted);
+  margin: 4px 0 10px;
+}
+.voice-more > summary.hidden-summary {
+  display: none;
+}
+.voice-more[open] > .grid-2 {
+  margin-bottom: 12px;
+}

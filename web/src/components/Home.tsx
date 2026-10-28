@@ -279,7 +279,11 @@ export function Home() {
               />
             </div>
             <MaterialsPicker items={materials} onChange={setMaterials} videoType={videoType} disabled={working} />
-            {providers && !llmReady && <p className="hint warn">{t("home.llmMissing")}</p>}
+            {providers && !llmReady && (
+            <p className="hint warn">
+              {t("home.llmMissing")} <a href="#/settings">{t("nav.status")} →</a>
+            </p>
+          )}
             {error && <p className="hint error">{error}</p>}
             <div className="flow-actions">
               <button type="button" className="btn primary big" disabled={!idea.trim() || working} onClick={normalize}>
@@ -351,7 +355,11 @@ export function Home() {
                 </ul>
               </details>
               {tooLong && <p className="hint error">{t("home.subjectTooLong")}</p>}
-              {providers && !llmReady && <p className="hint warn">{t("home.llmMissing")}</p>}
+              {providers && !llmReady && (
+            <p className="hint warn">
+              {t("home.llmMissing")} <a href="#/settings">{t("nav.status")} →</a>
+            </p>
+          )}
             </div>
             {materials.length > 0 && <p className="muted small">{t("flow.materialsCount", { n: materials.length })}</p>}
             {error && <p className="hint error">{error}</p>}

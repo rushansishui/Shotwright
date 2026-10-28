@@ -76,6 +76,8 @@ export function Editor({ projectId }: { projectId: string }) {
 
   const id = project.id;
   const locked = generationLocked(project);
+  /** 所有镜头都保留原片人声（剪辑页生成），配音设置用不上。 */
+  const allOriginal = project.shots.length > 0 && project.shots.every((s) => s.speech === "original");
   /** 剪辑页生成的项目：可以回到文稿重新剪。 */
   const cutSource = project.shots.find((s) => s.speech === "original" && s.visual.selected)?.visual.selected ?? null;
   // 没选过步骤时：素材还没确认就从「素材」开始，否则从「画面」开始。
@@ -372,6 +374,10 @@ export function Editor({ projectId }: { projectId: string }) {
               ))}
             </select>
           </div>
+          {allOriginal && <p className="hint small">{t("voice.allOriginal")}</p>}
+          {/* 全是原声镜头时配音设置收起来（仍可展开，给改成"用文案配音"的镜头用）。 */}
+          <details className="voice-more" open={!allOriginal} key={allOriginal ? "original" : "tts"}>
+          <summary className={allOriginal ? "" : "hidden-summary"}>{t("voice.showSettings")}</summary>
           <div className="grid-2">
             <div className="field">
               <label htmlFor="tts">{t("editor.tts")}</label>
@@ -424,6 +430,7 @@ export function Editor({ projectId }: { projectId: string }) {
             />
           </div>
           <PronunciationSection project={project} canSuggest={!!llm} run={(action) => run(action)} onError={setError} />
+          </details>
         </Section>
 
         <Section

@@ -203,3 +203,17 @@ def test_language_version_switches_original_speech_to_voiceover(store, settings,
     shot = version.shots[0]
     assert shot.speech == "tts" and shot.visual.source_volume == 0.0 and shot.duration is None
     assert transcribe.shot_words(store, version, shot) == []
+
+
+def test_auto_language_adopts_detected_language(client, settings, store, tmp_path):
+    settings.defaults["asr"] = "fakeasr"
+    project = client.post(
+        "/api/v2/projects", json={"mode": "empty", "language": "en-US", "voice": {"provider": "silent"}}
+    ).json()
+    pid = project["id"]
+    with _clip_with_audio(tmp_path / "talk.mp4").open("rb") as handle:
+        asset = client.post(f"/api/v2/projects/{pid}/assets", files={"file": ("talk.mp4", handle)}).json()["id"]
+    client.post(f"/api/v2/projects/{pid}/transcripts/{asset}", json={"language": "auto"})
+    assert _wait_done(client, pid, asset)["state"] == "done"
+    # 假识别报告的是中文：项目语言跟着改成简体中文（字幕字体、翻译版本按它来）。
+    assert store.load(pid).language == "zh-CN"

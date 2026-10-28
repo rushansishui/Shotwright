@@ -103,7 +103,8 @@ class FasterWhisperASR:
         except ProviderError:
             raise
         except Exception as exc:
-            raise ProviderError(f"语音识别失败：{exc}") from exc
+            hint = "；如果是显卡相关的错误，请在服务设置里把运行设备改成 cpu" if "cud" in str(exc).lower() else ""
+            raise ProviderError(f"语音识别失败：{exc}{hint}") from exc
         return Transcript(words=words, sentences=sentences, language=str(getattr(info, "language", "") or ""))
 
 

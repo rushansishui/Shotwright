@@ -46,7 +46,7 @@ export function ReadinessCard({ project, run, onConfirmed }: ReadinessCardProps)
   }
 
   return (
-    <div className={`readiness ${confirmed && !revised ? "done" : ""}`}>
+    <div className={`readiness ${(confirmed && !revised) || subjects.length === 0 ? "done" : ""}`}>
       <div className="readiness-head">
         <strong>{t("ready.title")}</strong>
         {subjects.length > 0 && (
@@ -56,7 +56,7 @@ export function ReadinessCard({ project, run, onConfirmed }: ReadinessCardProps)
       </div>
 
       {subjects.length === 0 ? (
-        <p className="muted small">{t("ready.noSubjects")}</p>
+        <p className="muted small">{t("ready.noSubjectsShort")}</p>
       ) : (
         <ul className="readiness-list">
           {statuses.map(({ subject, ready, missing, images }) => (
@@ -108,7 +108,11 @@ export function ReadinessCard({ project, run, onConfirmed }: ReadinessCardProps)
       )}
 
       <div className="readiness-foot">
-        {!confirmed || revised ? (
+        {subjects.length === 0 ? (
+          <button type="button" className="btn" onClick={onConfirmed}>
+            {t("ready.next")}
+          </button>
+        ) : !confirmed || revised ? (
           <>
             <button type="button" className="btn primary" disabled={busy || !allReady} onClick={confirm}>
               {busy ? t("ready.confirming") : revised ? t("ready.reconfirm") : t("ready.confirm")}

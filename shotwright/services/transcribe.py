@@ -155,6 +155,8 @@ def start(
                 },
             )
             log.info("素材 %s 识别完成：%d 个词，用时 %.0f 秒", asset_id, len(result.words), time.monotonic() - started)
+            if language == "auto" and result.language:
+                _adopt_language(store, project.id, result.language)
         except (ProviderError, MediaError) as exc:
             write_json(path, {"state": "failed", "error": str(exc)})
         except Exception as exc:  # 识别库内部错误也要落盘，否则页面一直显示识别中
@@ -166,6 +168,19 @@ def start(
 
     threading.Thread(target=run, name=f"asr-{asset_id}", daemon=True).start()
     return {"state": "running", "progress": 0.0}
+
+
+def _adopt_language(store: ProjectStore, project_id: str, detected: str) -> None:
+    """自动识别语言时，把项目语言改成识别出的语言（字幕字体、翻译版本都按它来）。"""
+    from shotwright.core import languages
+    from shotwright.services.localize import apply_language
+
+    code = languages.normalize(detected)
+    with store.lock(project_id):
+        latest = store.load(project_id)
+        if languages.normalize(latest.language) != code:
+            apply_language(latest, code)
+            store.save(latest)
 
 
 # ---- 按文字剪 ------------------------------------------------------------------
