@@ -29,6 +29,7 @@ tts = "edge"        # 改成 "silent" 可离线预览
 stock = "pixabay"     # 或 "pexels"（Pexels 目前暂停发放新 Key）
 video_gen = "seedance"  # AI 视频（收费）：seedance / wan / kling / minimax / fal
 image_gen = "seedream"  # AI 图片（收费）；也可以用 "openai"
+asr = "faster_whisper"   # 剪辑页的语音识别：faster_whisper（本地免费）/ openai（云端）
 
 # ---- 大模型 ------------------------------------------------------------------
 # 在 [defaults] 里把 llm 改成要用的那一家，然后在对应小节填写 api_key 即可。
@@ -119,6 +120,22 @@ api_key = ""
 #   为 "false" 时只返回明确可商用的授权（CC0 / 公共领域 / CC BY / CC BY-SA）。
 #   Archive 上很多条目没有标注授权，默认保留并在界面上标"未标注授权"，发布前请自行确认。
 
+# ---- 语音识别（剪辑页）---------------------------------------------------------
+# 本地识别：不联网、不收费，原片不出本机。start.bat 会自动安装 faster-whisper；
+# 第一次识别时下载模型（small 约 480MB），连不上 Hugging Face 时自动换国内镜像 hf-mirror.com。
+[providers.asr.faster_whisper]
+# model = "small"            # tiny / base / small / medium / large-v3；有显卡建议 large-v3；也可以填已下载的模型文件夹路径
+# device = "auto"            # auto / cpu / cuda
+# compute_type = "default"   # cpu 可用 int8 加速，cuda 可用 float16
+# download_mirror = ""       # 留空：先试 Hugging Face，连不上自动换 https://hf-mirror.com
+# download_root = ""          # 模型存放目录；留空用 Hugging Face 默认缓存
+
+# 云端识别：OpenAI 兼容的 /audio/transcriptions（需要支持逐词时间戳），单个文件不超过 25MB。
+[providers.asr.openai]
+# api_key = ""               # 留空时使用 [providers.llm.openai] 的 Key
+# base_url = "https://api.openai.com/v1"   # Groq：https://api.groq.com/openai/v1
+# model = "whisper-1"        # Groq：whisper-large-v3-turbo
+
 # ---- AI 画面（收费）----------------------------------------------------------
 # Seedance / Seedream 与豆包大模型同属火山方舟：api_key 留空时自动使用
 # [providers.llm.doubao] 的 Key。需要先在方舟控制台"开通管理"里开通对应模型。
@@ -134,84 +151,6 @@ base_url = "https://ark.cn-beijing.volces.com/api/v3"
 # min_duration = "4"          # 模型支持的时长范围（秒），镜头时长会向上取整后限制在这个范围内
 # max_duration = "30"
 # generate_audio = "false"    # 是否生成音效（口播视频一般不需要）
-
-# ---- 其他 AI 视频服务（都收费）：配好几家时，每个镜头可以单独选用哪一家 ----------
-# 单价都是参考价，会过时；price 填上自己账户的实际单价（元/秒），费用估算和预算控制更准。
-
-# 通义万相（阿里云百炼）：https://help.aliyun.com/zh/model-studio/video-generate-edit-model/
-# api_key 留空时使用 [providers.llm.qwen] 的百炼 Key；地址、模型、Key 要属于同一地域。
-[providers.video_gen.wan]
-# api_key = ""
-# model = "wan3.0-video"      # 文生、首帧、参考图（最多 10 张）都支持，2～30 秒；更快的 wan3.0-video-prime
-base_url = "https://dashscope.aliyuncs.com/api/v1"
-# 阿里云建议改用业务空间专属地址（更稳定）：https://{业务空间ID}.cn-beijing.maas.aliyuncs.com/api/v1
-# 业务空间 ID 在百炼控制台「业务空间详情」页面；新加坡把 cn-beijing 换成 ap-southeast-1
-# resolution = "1080p"        # 480p / 720p / 1080p
-# draft_resolution = "480p"
-# generate_audio = "false"    # 镜匠自己配音，默认不要模型生成的声音
-# price = ""                  # 留空用参考价：1080p 1.2、720p 0.6、480p 0.3 元/秒
-
-# ---- 其他 AI 视频服务（都收费）：配好几家时，每个镜头可以单独选用哪一家 ----------
-# 单价都是参考价，会过时；price 填上自己账户的实际单价（元/秒），费用估算和预算控制更准。
-
-# 通义万相（阿里云百炼）：https://help.aliyun.com/zh/model-studio/video-generate-edit-model/
-# api_key 留空时使用 [providers.llm.qwen] 的百炼 Key；地址、模型、Key 要属于同一地域。
-[providers.video_gen.wan]
-# api_key = ""
-# model = "wan3.0-video"      # 文生、首帧、参考图（最多 10 张）都支持，2～30 秒；更快的 wan3.0-video-prime
-base_url = "https://dashscope.aliyuncs.com/api/v1"
-# 阿里云建议改用业务空间专属地址（更稳定）：https://{业务空间ID}.cn-beijing.maas.aliyuncs.com/api/v1
-# 业务空间 ID 在百炼控制台「业务空间详情」页面；新加坡把 cn-beijing 换成 ap-southeast-1
-# resolution = "1080p"        # 480p / 720p / 1080p
-# draft_resolution = "480p"
-# generate_audio = "false"    # 镜匠自己配音，默认不要模型生成的声音
-# price = ""                  # 留空用参考价：1080p 1.2、720p 0.6、480p 0.3 元/秒
-
-# 可灵 Kling：https://kling.ai/document-api ，在开放平台创建 API Key（或 Access Key / Secret Key）
-[providers.video_gen.kling]
-# api_key = ""                # 新的单密钥鉴权；填了就不用填下面两项
-# access_key = ""
-# secret_key = ""
-# model = "kling-v3"          # 3～15 秒；也可以用 kling-v2-6 / kling-v2-1
-base_url = "https://api-beijing.klingai.com"   # 国际：https://api-singapore.klingai.com
-# resolution = "1080p"        # 720p（标准）/ 1080p（高品质）/ 4k
-# reference_model = ""        # 留空时第一张参考图作为首帧；填 kling-v1-6 时用多图参考（最多 4 张）
-# price = ""                  # 可灵按积分计费，请填实际单价
-
-# ---- 其他 AI 视频服务（都收费）：配好几家时，每个镜头可以单独选用哪一家 ----------
-# 单价都是参考价，会过时；price 填上自己账户的实际单价（元/秒），费用估算和预算控制更准。
-
-# 通义万相（阿里云百炼）：https://help.aliyun.com/zh/model-studio/video-generate-edit-model/
-# api_key 留空时使用 [providers.llm.qwen] 的百炼 Key；地址、模型、Key 要属于同一地域。
-[providers.video_gen.wan]
-# api_key = ""
-# model = "wan3.0-video"      # 文生、首帧、参考图（最多 10 张）都支持，2～30 秒；更快的 wan3.0-video-prime
-base_url = "https://dashscope.aliyuncs.com/api/v1"
-# 阿里云建议改用业务空间专属地址（更稳定）：https://{业务空间ID}.cn-beijing.maas.aliyuncs.com/api/v1
-# 业务空间 ID 在百炼控制台「业务空间详情」页面；新加坡把 cn-beijing 换成 ap-southeast-1
-# resolution = "1080p"        # 480p / 720p / 1080p
-# draft_resolution = "480p"
-# generate_audio = "false"    # 镜匠自己配音，默认不要模型生成的声音
-# price = ""                  # 留空用参考价：1080p 1.2、720p 0.6、480p 0.3 元/秒
-
-# 可灵 Kling：https://kling.ai/document-api ，在开放平台创建 API Key（或 Access Key / Secret Key）
-[providers.video_gen.kling]
-# api_key = ""                # 新的单密钥鉴权；填了就不用填下面两项
-# access_key = ""
-# secret_key = ""
-# model = "kling-v3"          # 3～15 秒；也可以用 kling-v2-6 / kling-v2-1
-base_url = "https://api-beijing.klingai.com"   # 国际：https://api-singapore.klingai.com
-# resolution = "1080p"        # 720p（标准）/ 1080p（高品质）/ 4k
-# reference_model = ""        # 留空时第一张参考图作为首帧；填 kling-v1-6 时用多图参考（最多 4 张）
-# price = ""                  # 可灵按积分计费，请填实际单价
-
-# MiniMax 海螺：https://platform.minimaxi.com ，api_key 留空时使用 MiniMax 配音的 Key
-[providers.video_gen.minimax]
-# api_key = ""
-# model = "MiniMax-Hailuo-2.3"   # 6 / 10 秒；MiniMax-H3 支持参考图（最多 9 张）、4～15 秒（另有 -Highspeed / -Lite / -Max）
-base_url = "https://api.minimaxi.com"   # 国际：https://api.minimax.io
-# resolution = "768p"         # Hailuo：512p / 768p / 1080p（1080p 只有 6 秒）；H3：768p / 2k
-# price = ""
 
 # ---- 其他 AI 视频服务（都收费）：配好几家时，每个镜头可以单独选用哪一家 ----------
 # 单价都是参考价，会过时；price 填上自己账户的实际单价（元/秒），费用估算和预算控制更准。
