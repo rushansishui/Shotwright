@@ -254,10 +254,12 @@ def _provider_id(settings: Settings, kind: str, shot: Shot) -> str | None:
     chosen = shot.visual.provider
     if chosen:
         try:
-            registry.spec(kind, chosen)
-            return chosen
+            spec = registry.spec(kind, chosen)
         except ProviderError:
-            pass
+            spec = None
+        # 镜头当初选的服务后来删掉了 Key：界面上已经显示成默认服务，这里也跟着用默认服务。
+        if spec is not None and (chosen == settings.default_provider(kind) or registry.is_configured(spec, settings)):
+            return chosen
     return settings.default_provider(kind)
 
 
@@ -330,13 +332,18 @@ def apply_quality(settings: Settings, provider: object, provider_id: str | None,
         return ""
     if quality != "draft":
         return current
+    from shotwright.providers.video_gen.common import draft_resolution
+
     config = settings.provider_settings("video_gen", provider_id or "")
-    draft = (config.get("draft_resolution") or DRAFT_RESOLUTION).strip().lower()
-    order = ("480p", "720p", "1080p")
-    if draft in order and current in order and order.index(draft) < order.index(current):
+    supported = getattr(provider, "resolutions", None)
+    draft = draft_resolution(
+        current,
+        config.get("draft_resolution") or DRAFT_RESOLUTION,
+        supported if isinstance(supported, tuple | list) else None,
+    )
+    if draft != current:
         provider.resolution = draft  # type: ignore[attr-defined]
-        return draft
-    return current
+    return draft
 
 
 def generate_keyframes(

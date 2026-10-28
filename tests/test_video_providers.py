@@ -314,6 +314,63 @@ def test_fal_failure_and_config_checks(settings, tmp_path):
         registry.create("video_gen", "fal", settings)
 
 
+def test_cost_estimate_uses_model_prices(settings):
+    from shotwright.services import cost
+
+    settings.providers["video_gen"] = {
+        "wan": {"api_key": "k", "resolution": "720p"},
+        "minimax": {"api_key": "k", "model": "MiniMax-H3", "resolution": "2k"},
+        "kling": {"access_key": "a", "secret_key": "s", "price": "0.8"},
+        "fal": {"api_key": "k", "model": "fal-ai/x", "price": "0.5", "durations": "5,10"},
+    }
+    assert cost.video_price(settings, "wan") == 0.6
+    assert cost.video_price(settings, "wan", "480p") == 0.3
+    assert cost.video_price(settings, "minimax") == round(0.13 * 7.2, 3)
+    assert cost.video_price(settings, "kling") == 0.8  # 手填的单价优先
+    assert cost.video_price(settings, "fal") == 0.5
+    assert cost._draft_resolution(settings, "wan") == "480p"
+    from shotwright.core.models import Project, Shot
+
+    project, shot = Project(), Shot(text="一句话")
+    assert cost._shot_duration(project, shot, settings, "fal", 6.2) == 10.0
+    assert cost._shot_duration(project, shot, settings, "wan", 6.2) == 7.0
+
+
+def test_generation_flow_uses_each_models_reference_ability(client, settings, tmp_path, monkeypatch):
+    """同一个镜头：万相把商品图作为参考图提交；可灵不支持参考图，改用商品图作为首帧。"""
+    from shotwright.providers.video_gen.kling import KlingVideo
+    from shotwright.providers.video_gen.wan import WanVideo
+
+    created = client.post("/api/v2/projects", json={"mode": "split", "script": "一句话。", "voice": {"provider": "silent"}}).json()
+    pid, sid = created["id"], created["shots"][0]["id"]
+    with make_image(tmp_path / "coat.png").open("rb") as handle:
+        image = client.post(f"/api/v2/projects/{pid}/assets", files={"file": ("coat.png", handle)}).json()["id"]
+    look = {"subjects": [{"code": "P1", "name": "羽绒服", "kind": "product", "appearance": "立领无帽", "images": [image]}],
+            "scene": "", "style": "", "avoid": ""}
+    client.patch(f"/api/v2/projects/{pid}", json={"look": look})
+    client.patch(f"/api/v2/projects/{pid}/shots/{sid}", json={"visual": {"mode": "ai", "prompt": "P1 挂在衣架上"}})
+
+    wan_server, kling_server = _wan_server(), _kling_server()
+    clip = make_clip(tmp_path / "clip.mp4").read_bytes()
+    wan_server.video = kling_server.video = clip
+    monkeypatch.setattr(WanVideo, "_client", lambda self: httpx.Client(transport=httpx.MockTransport(wan_server)))
+    monkeypatch.setattr(KlingVideo, "_client", lambda self: httpx.Client(transport=httpx.MockTransport(kling_server)))
+    settings.providers["video_gen"] = {"wan": {"api_key": "k", "poll_interval": "0"}, "kling": {"access_key": "a", "secret_key": "s", "poll_interval": "0"}}
+
+    for provider in ("wan", "kling"):
+        client.patch(f"/api/v2/projects/{pid}/shots/{sid}", json={"visual": {"provider": provider}})
+        response = client.post(f"/api/v2/projects/{pid}/shots/{sid}/candidates", json={"confirm_charge": True})
+        assert response.status_code == 200, response.text
+
+    wan_body = wan_server.bodies()[0]
+    assert [m["type"] for m in wan_body["input"]["media"]] == ["reference_image"]
+    assert "参考图 1 = P1 羽绒服" in wan_body["input"]["prompt"] and "有没有帽子" in wan_body["input"]["prompt"]
+    kling_body = kling_server.bodies()[0]
+    assert "/image2video" in str(kling_server.requests[0].url) and kling_body["image"]
+    project = client.get(f"/api/v2/projects/{pid}").json()
+    assert project["cost_credits"] > 0  # 两次生成都按模型单价记了费用
+
+
 def test_kling_accepts_single_api_key_and_new_result_shape(settings, tmp_path):
     """可灵新的单密钥鉴权（Bearer API Key）和新结构的查询结果（status / outputs[]）。"""
     from shotwright.providers.video_gen.kling import KlingVideo
@@ -366,6 +423,35 @@ def test_account_problems_are_not_mistaken_for_unsupported_references(tmp_path):
     assert not isinstance(info.value, ReferenceImagesUnsupported)
     with pytest.raises(ReferenceImagesUnsupported):
         run(400, "invalid parameter")
+
+
+def test_minimax_models_and_draft_resolution(settings):
+    """H3 全系列的分辨率；Hailuo 1080P 只有 6 秒，草稿档降到 768P 后恢复 10 秒；费用估算和生成用同一个草稿档。"""
+    from shotwright.providers.video_gen.common import draft_resolution
+    from shotwright.providers.video_gen.minimax import MiniMaxVideo
+    from shotwright.services import cost, visuals
+
+    assert MiniMaxVideo({"api_key": "k", "model": "MiniMax-H3-Lite", "resolution": "480p"}).resolutions == ("480p", "768p")
+    assert MiniMaxVideo({"api_key": "k", "model": "MiniMax-H3-Max", "resolution": "768p"}).min_duration == 5
+    hailuo = MiniMaxVideo({"api_key": "k", "model": "MiniMax-Hailuo-2.3", "resolution": "1080p"})
+    assert hailuo.max_duration == 6
+    settings.providers["video_gen"] = {"minimax": {"api_key": "k", "resolution": "1080p", "draft_resolution": "512p"}}
+    assert visuals.apply_quality(settings, hailuo, "minimax", "draft") == "768p" and hailuo.max_duration == 10
+    assert cost._draft_resolution(settings, "minimax") == "768p"  # Hailuo 2.3 没有 512p，估算也按 768p
+    assert draft_resolution("2k", "512p", ("768p", "2k")) == "768p"
+    assert draft_resolution("768p", "512p", ("768p", "2k")) == "768p"
+
+
+def test_shot_falls_back_to_default_when_its_video_service_lost_its_key(settings):
+    from shotwright.core.models import Shot, ShotVisual
+    from shotwright.services import visuals
+
+    settings.defaults["video_gen"] = "wan"
+    settings.providers["video_gen"] = {"wan": {"api_key": "k"}}
+    shot = Shot(text="x", visual=ShotVisual(mode="ai", prompt="p", provider="kling"))
+    assert visuals._provider_id(settings, "video_gen", shot) == "wan"  # 可灵没配 Key
+    settings.providers["video_gen"]["kling"] = {"api_key": "kk"}
+    assert visuals._provider_id(settings, "video_gen", shot) == "kling"
 
 
 def test_fal_can_omit_aspect_ratio(tmp_path):

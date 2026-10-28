@@ -103,7 +103,7 @@ def estimate_render_cost(project: Project, settings: Settings, quality: str = "f
             )
             if visual.mode == "ai":
                 resolution = _draft_resolution(settings, provider_id) if quality == "draft" else ""
-                price = _VIDEO_GEN_PRICE.get(provider_id, 0.0) * resolution_factor(settings, provider_id, resolution)
+                price = video_price(settings, provider_id, resolution)
                 if price:
                     duration = _shot_duration(project, shot, settings, provider_id)
                     visual_cost = price * duration
@@ -142,7 +142,10 @@ def _shot_duration(
     """
     if seconds is None:
         seconds = estimated_shot_seconds(project, shot)
-    config = settings.provider_settings("video_gen", provider_id)
+    spec = _video_spec(provider_id)
+    config = _video_config(settings, provider_id)
+    if spec is not None and spec.billing is not None:
+        return spec.billing(config, seconds)
     try:
         minimum = int(config.get("min_duration") or 4)
         maximum = int(config.get("max_duration") or 30)
@@ -151,11 +154,42 @@ def _shot_duration(
     return float(clamp_duration(seconds, minimum, max(minimum, maximum)))
 
 
+def _video_spec(provider_id: str):
+    from shotwright.providers import registry
+    from shotwright.providers.base import ProviderError
+
+    try:
+        return registry.spec("video_gen", provider_id)
+    except (ProviderError, KeyError):
+        return None
+
+
+def _video_config(settings: Settings, provider_id: str) -> dict[str, str]:
+    """配置项加上 ProviderSpec 里的默认值（例如默认模型），和实例化服务时看到的一致。"""
+    spec = _video_spec(provider_id)
+    values = {f.key: f.default for f in spec.fields if f.default} if spec is not None else {}
+    values.update(settings.provider_settings("video_gen", provider_id))
+    return values
+
+
+def video_price(settings: Settings, provider_id: str, resolution: str = "") -> float:
+    """AI 视频的参考单价（元 / 秒）。"""
+    spec = _video_spec(provider_id)
+    if spec is not None and spec.pricing is not None:
+        return spec.pricing(_video_config(settings, provider_id), resolution)
+    return _VIDEO_GEN_PRICE.get(provider_id, 0.0) * resolution_factor(settings, provider_id, resolution)
+
+
 def _draft_resolution(settings: Settings, provider_id: str) -> str:
-    config = settings.provider_settings("video_gen", provider_id)
-    final = str(config.get("resolution") or "1080p").strip().lower()
-    draft = str(config.get("draft_resolution") or "720p").strip().lower()
-    return draft if _RESOLUTION_FACTOR.get(draft, 1.0) < _RESOLUTION_FACTOR.get(final, 1.0) else final
+    from shotwright.providers.video_gen.common import draft_resolution
+
+    config = _video_config(settings, provider_id)
+    spec = _video_spec(provider_id)
+    supported = spec.resolutions_of(config) if spec is not None and spec.resolutions_of is not None else None
+    # 和生成时（visuals.apply_quality）同一套规则：模型没有草稿那一档时用它支持的最低档。
+    return draft_resolution(
+        str(config.get("resolution") or "1080p"), str(config.get("draft_resolution") or "720p"), supported
+    )
 
 
 def resolution_factor(settings: Settings, provider_id: str, resolution: str = "") -> float:
@@ -179,7 +213,7 @@ def generation_cost(
     ``seconds`` 是这一次实际请求的时长（续生成分段时每段单独计）；为空时按镜头时长估算。
     """
     if kind == "video_gen":
-        price = _VIDEO_GEN_PRICE.get(provider_id, 0.0) * resolution_factor(settings, provider_id, resolution)
+        price = video_price(settings, provider_id, resolution)
         return round(price * _shot_duration(project, shot, settings, provider_id, seconds), 4) if price else 0.0
     if kind == "image_gen":
         return _IMAGE_GEN_PRICE.get(provider_id, 0.0)
