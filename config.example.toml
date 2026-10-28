@@ -1,5 +1,7 @@
 # Shotwright 配置模板。复制为 config.toml 后按需填写。
 # config.toml 已在 .gitignore 中，不会被提交。
+# 各服务的接口地址（base_url）都显式写出了当前的官方地址：服务商换地址时只改这一行，
+# 不用等镜匠更新。地址只写到版本号（例如 /api/v3、/v1），后面的接口路径由镜匠拼上。
 
 [app]
 # 项目与渲染结果的存放目录
@@ -25,7 +27,7 @@ auto_fetch_visuals = true
 llm = "doubao"       # doubao / deepseek / kimi / qwen / openai
 tts = "edge"        # 改成 "silent" 可离线预览
 stock = "pixabay"     # 或 "pexels"（Pexels 目前暂停发放新 Key）
-video_gen = "seedance"  # AI 视频（收费）
+video_gen = "seedance"  # AI 视频（收费）：seedance / wan / kling / minimax / fal
 image_gen = "seedream"  # AI 图片（收费）；也可以用 "openai"
 
 # ---- 大模型 ------------------------------------------------------------------
@@ -35,6 +37,7 @@ image_gen = "seedream"  # AI 图片（收费）；也可以用 "openai"
 # 豆包 Seed：https://console.volcengine.com/ark（API Key 管理 + 开通模型）
 [providers.llm.doubao]
 api_key = ""
+base_url = "https://ark.cn-beijing.volces.com/api/v3"
 # model = "doubao-seed-2-1-pro-260915"
 # 看图模型（可选）：填了之后会检查生成的画面（产品是否走样、是否切题）、给素材候选排序、
 # 检查成片里的手指和乱码文字。填控制台里支持图片理解的模型 ID，留空时不检查。
@@ -43,16 +46,19 @@ api_key = ""
 # DeepSeek：https://platform.deepseek.com
 [providers.llm.deepseek]
 api_key = ""
+base_url = "https://api.deepseek.com"
 # model = "deepseek-flash"
 
 # Kimi：https://platform.moonshot.cn
 [providers.llm.kimi]
 api_key = ""
+base_url = "https://api.moonshot.cn/v1"
 # model = "kimi-k3"
 
 # 通义千问：https://bailian.console.aliyun.com
 [providers.llm.qwen]
 api_key = ""
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"   # 国际站：https://dashscope-intl.aliyuncs.com/compatible-mode/v1
 # model = "qwen-plus"
 
 # 其他 OpenAI 兼容接口（OpenAI、本地 Ollama 等）
@@ -78,14 +84,17 @@ api_key = ""
 # 硅基流动：https://cloud.siliconflow.cn（API 密钥）
 [providers.tts.siliconflow]
 api_key = ""
+base_url = "https://api.siliconflow.cn/v1"
 
 # MiniMax：https://platform.minimaxi.com（接口密钥）
 [providers.tts.minimax]
 api_key = ""
+url = "https://api.minimaxi.com/v1/t2a_v2"   # 这一项是完整接口地址；国际站：https://api.minimax.io/v1/t2a_v2
 
 # ElevenLabs：https://elevenlabs.io（Profile → API Keys）
 [providers.tts.elevenlabs]
 api_key = ""
+base_url = "https://api.elevenlabs.io/v1/text-to-speech"
 
 # ---- 素材库 ------------------------------------------------------------------
 # Pixabay：注册后在 https://pixabay.com/api/docs/ 页面即可看到自己的 Key（免费）
@@ -118,6 +127,7 @@ api_key = ""
 # AI 视频：https://www.volcengine.com/docs/82379/1520757
 [providers.video_gen.seedance]
 # api_key = ""
+base_url = "https://ark.cn-beijing.volces.com/api/v3"
 # model = "doubao-seedance-2-5-260628"
 # resolution = "1080p"        # 480p / 720p / 1080p，越高越贵；成片档使用
 # draft_resolution = "720p"   # 草稿档用的分辨率，更快更省钱
@@ -262,6 +272,7 @@ queue_url = "https://queue.fal.run"   # fal 的队列接口地址
 # AI 图片：https://www.volcengine.com/docs/82379/1541523
 [providers.image_gen.seedream]
 # api_key = ""
+base_url = "https://ark.cn-beijing.volces.com/api/v3"
 # model = "doubao-seedream-5-0-pro-260628"   # 或更便宜的 doubao-seedream-5-0-flash-260915
 # size = ""                   # 留空按画布比例自动选择
 

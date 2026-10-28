@@ -47,6 +47,11 @@ shotwright/
 │   ├── music/archive.py Internet Archive 背景音乐（免 Key，按授权过滤）
 │   ├── paid_task.py     收费异步任务：提交不重试、轮询、下载
 │   ├── video_gen/seedance.py      火山方舟 Seedance：文生视频、首帧图生视频、视频转视频（改画面）
+│   ├── video_gen/common.py        各家视频服务共用：模型能力表 VideoModel、时长取档、图片编码、参考价、任务骨架
+│   ├── video_gen/wan.py           通义万相（阿里云百炼）：文生、首帧、参考图（wan3.0 最多 10 张）
+│   ├── video_gen/kling.py         可灵：JWT 鉴权；文生、首帧，可选多图参考
+│   ├── video_gen/minimax.py       MiniMax 海螺：Hailuo（v1 接口）与 H3（v2 接口，参考图最多 9 张）
+│   ├── video_gen/fal.py           fal.ai 聚合平台：填模型路径即可，参数写法可配置
 │   └── image_gen/openai_images.py Seedream / OpenAI 兼容文生图
 ├── services/
 │   ├── storyboard.py    诉求 → 全片设定 + 文案 + 镜头（叙事结构、画面描述、运镜、衔接，出稿自检）
@@ -198,6 +203,7 @@ registry.register(
 - 配置来自 `config.toml` 的 `[providers.<类别>.<id>]`，可用环境变量 `SHOTWRIGHT_<类别>_<ID>_<字段>` 覆盖。
 - `/api/v2/providers` 和网页的"服务状态"页直接遍历注册表生成，只报告是否已配置，不返回任何配置值。
 - 收费的服务设置 `paid=True`，界面会标出"收费"。
+- **视频服务按模型声明能力**（`video_gen/common.py`）：每家服务列出自己各个模型的 `VideoModel`——支持的输入方式（文生、首帧、首尾帧、参考图）、时长范围或固定档位、分辨率、参考图上限、是否带声音、各分辨率参考单价。`TaskVideoProvider` 统一处理：时长向上取到模型支持的档位（多出的渲染时裁掉，超过上限的由镜匠分段续生成）、模型不支持参考图时把第一张参考图作为首帧、参考图被拒（4xx，未扣费）时退回首帧重试一次、提示词超长截断。各家只写请求怎么拼、结果怎么取。`ProviderSpec.pricing` / `billing` 给费用估算用（不需要实例化服务），`price` 配置项可以覆盖参考价。镜头的 `visual.provider` 指定这个镜头用哪家服务，界面在配好两家以上时显示选择。保存的任务 id 带上接口信息（可灵 `image2video:xxx`、MiniMax `v1:xxx`、fal `owner/app|request_id`），重启后知道去哪里查询。
 - `shared_key_from` 让同一平台的服务共用一把 Key：Seedance、Seedream 自己的 `api_key` 为空时使用 `[providers.llm.doubao]` 的方舟 Key。
 
 ### 收费生成
