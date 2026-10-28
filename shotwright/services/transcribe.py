@@ -54,8 +54,8 @@ FILLERS = {
 _PUNCT = re.compile(r"[\s\W_]+", re.UNICODE)
 _CJK = re.compile(r"[぀-ヿ㐀-䶿一-鿿가-힯]")
 
-# 识别中的任务：(项目 id, 素材 id) → 进度。进程重启后文件里留下的 running 视为中断。
-_running: dict[tuple[str, str], float] = {}
+# 识别中的任务：(项目 id, 素材 id) → 进度、阶段、开始时间。
+_running: dict[tuple[str, str], dict] = {}
 _running_lock = threading.Lock()
 
 
@@ -75,7 +75,13 @@ def load(store: ProjectStore, project_id: str, asset_id: str) -> dict:
     key = (project_id, asset_id)
     with _running_lock:
         if key in _running:
-            return {"state": "running", "progress": round(_running[key], 3)}
+            info = _running[key]
+            return {
+                "state": "running",
+                "progress": round(info["progress"], 3),
+                "stage": info["stage"],
+                "elapsed": round(time.time() - info["since"], 1),
+            }
     data = read_json(transcript_path(store, project_id, asset_id))
     if not data:
         return {"state": "none"}
@@ -126,14 +132,15 @@ def start(
     key = (project.id, asset_id)
     with _running_lock:
         if key in _running:
-            return {"state": "running", "progress": _running[key]}
-        _running[key] = 0.0
+            return {"state": "running", "progress": _running[key]["progress"], "stage": _running[key]["stage"]}
+        _running[key] = {"progress": 0.0, "stage": "extract", "since": time.time()}
     path = transcript_path(store, project.id, asset_id)
     lang = language or project.language
 
-    def progress(value: float) -> None:
+    def progress(value: float, stage: str = "recognize") -> None:
         with _running_lock:
-            _running[key] = max(0.0, min(1.0, value))
+            if key in _running:
+                _running[key].update(progress=max(0.0, min(1.0, value)), stage=stage)
 
     def run() -> None:
         started = time.monotonic()
@@ -141,6 +148,7 @@ def start(
             with tempfile.TemporaryDirectory(prefix="shotwright-asr-") as temp:
                 audio = Path(temp) / "speech.mp3"
                 _extract_audio(source, audio)
+                progress(0.0, "recognize")
                 result: Transcript = asr.transcribe(audio, language=lang, progress=progress)
             write_json(
                 path,
@@ -167,7 +175,7 @@ def start(
                 _running.pop(key, None)
 
     threading.Thread(target=run, name=f"asr-{asset_id}", daemon=True).start()
-    return {"state": "running", "progress": 0.0}
+    return {"state": "running", "progress": 0.0, "stage": "extract", "elapsed": 0.0}
 
 
 def _adopt_language(store: ProjectStore, project_id: str, detected: str) -> None:

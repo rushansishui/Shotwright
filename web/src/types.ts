@@ -262,6 +262,9 @@ export interface ShotUpdate {
 export interface TranscriptData {
   state: "none" | "running" | "done" | "failed";
   progress?: number;
+  /** 识别进行到哪一步：extract 抽音轨 / model 准备模型 / download 下载模型 / load 加载模型 / recognize 识别中。 */
+  stage?: "extract" | "model" | "download" | "load" | "recognize";
+  elapsed?: number;
   error?: string;
   language?: string;
   duration?: number | null;

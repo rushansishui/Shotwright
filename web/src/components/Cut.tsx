@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, assetUrl } from "../api";
 import { formatClock, groupSentences, guessAspect, needsSpace, planRanges, type WordTuple } from "../cut";
 import { providerName, useI18n } from "../i18n";
+import type { MessageKey } from "../messages";
 import type { LanguageInfo, Project, ProviderInfo, TranscriptData } from "../types";
 
 interface CutProps {
@@ -189,7 +190,7 @@ function CutEditor({ projectId, assetId }: { projectId: string; assetId: string 
       .then((next) => {
         if (stopped) return;
         setData(next);
-        if (next.state === "running") timer = window.setTimeout(() => setTick((n) => n + 1), 1500);
+        if (next.state === "running") timer = window.setTimeout(() => setTick((n) => n + 1), 2000);
       })
       .catch((e) => !stopped && setError((e as Error).message));
     return () => {
@@ -363,11 +364,22 @@ function CutEditor({ projectId, assetId }: { projectId: string; assetId: string 
 
       {(!data || data.state === "running") && (
         <section className="card cut-waiting">
-          <strong>{t("cut.recognizing")}</strong>
+          <strong>
+            {t(`cut.stage.${data?.stage ?? "extract"}` as MessageKey)}
+            {(data?.stage === "download" || data?.stage === "recognize") && data.progress
+              ? ` ${Math.round(data.progress * 100)}%`
+              : ""}
+          </strong>
           <div className="progress">
-            <div className="progress-bar" style={{ width: `${Math.round((data?.progress ?? 0) * 100)}%` }} />
+            <div
+              className="progress-bar"
+              style={{ width: `${Math.round(((data?.stage === "download" || data?.stage === "recognize") ? data.progress ?? 0 : 0) * 100)}%` }}
+            />
           </div>
-          <p className="muted small">{t("cut.recognizingHint")}</p>
+          <p className="muted small">
+            {data?.elapsed ? t("cut.elapsed", { time: formatClock(data.elapsed) }) + " · " : ""}
+            {data?.stage === "download" || data?.stage === "model" ? t("cut.downloadHint") : t("cut.recognizingHint")}
+          </p>
         </section>
       )}
 

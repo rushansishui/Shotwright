@@ -217,3 +217,34 @@ def test_auto_language_adopts_detected_language(client, settings, store, tmp_pat
     assert _wait_done(client, pid, asset)["state"] == "done"
     # 假识别报告的是中文：项目语言跟着改成简体中文（字幕字体、翻译版本按它来）。
     assert store.load(pid).language == "zh-CN"
+
+
+def test_faster_whisper_download_falls_back_to_mirror(monkeypatch, tmp_path):
+    """连不上 Hugging Face 时换 hf-mirror.com 下载，而不是一直卡住；都连不上时给出明确的报错。"""
+    pytest.importorskip("faster_whisper")
+    import huggingface_hub
+
+    from shotwright.providers.asr import faster_whisper as fw
+    from shotwright.providers.base import ProviderError
+
+    calls = []
+
+    def fake_snapshot(repo, *, local_files_only=False, endpoint=None, **kwargs):
+        calls.append((repo, local_files_only, endpoint))
+        if local_files_only:
+            raise FileNotFoundError("not cached")
+        return str(tmp_path / "model")
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", fake_snapshot)
+    monkeypatch.setattr(fw, "_reachable", lambda url, proxy=None: "hf-mirror.com" in url)
+    stages = []
+    asr = fw.FasterWhisperASR({"model": "small", "download_root": str(tmp_path)})
+    assert asr._download(lambda value, stage: stages.append(stage)) == str(tmp_path / "model")
+    assert calls == [
+        ("Systran/faster-whisper-small", True, None),
+        ("Systran/faster-whisper-small", False, "https://hf-mirror.com"),
+    ]
+
+    monkeypatch.setattr(fw, "_reachable", lambda url, proxy=None: False)
+    with pytest.raises(ProviderError, match="下载失败"):
+        asr._download(None)

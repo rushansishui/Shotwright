@@ -144,8 +144,9 @@ class Transcript:
 
 class ASRProvider(Protocol):
     def transcribe(
-        self, audio: Path, *, language: str | None, progress: Callable[[float], None] | None = None
+        self, audio: Path, *, language: str | None, progress: Callable[..., None] | None = None
     ) -> Transcript: ...
+    """``progress(比例, 阶段)``：阶段是 download（下载模型）/ load（加载模型）/ recognize（识别中）。"""
 
 
 class TTSProvider(Protocol):
