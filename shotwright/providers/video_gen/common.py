@@ -409,4 +409,4 @@ class TaskVideoProvider:
         raise NotImplementedError
 
     def _finish(self, client, task_id: str, output: Path) -> Path:  # pragma: no cover - 子类实现
-        raise NotImplementedError
+        raise NotImplementedError

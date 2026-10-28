@@ -482,4 +482,4 @@ def test_wan_base_url_is_normalized_and_bare_404_names_the_url(tmp_path):
         provider.generate("x", aspect="9:16", duration=5, output=tmp_path / "o")
     message = str(info.value)
     assert "接口地址不存在" in message and f"{host}/api/v1/services/aigc/video-generation/video-synthesis" in message
-    assert "开通" not in message
+    assert "开通" not in message

@@ -208,4 +208,4 @@ registry.register(
         billing=_billing,
     ),
     FalVideo,
-)
+)

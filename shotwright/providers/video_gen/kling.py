@@ -252,4 +252,4 @@ registry.register(
         resolutions_of=resolutions_for(CATALOG, DEFAULT_MODEL),
     ),
     KlingVideo,
-)
+)
