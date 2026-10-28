@@ -61,6 +61,7 @@ ShotRole = Literal["hook", "product", "demo", "scene", "people", "explain", "tal
 """镜头类型：开场钩子、产品亮相、使用演示、场景氛围、人物、原理示意、口播、结尾引导。"""
 ShotStatus = Literal["draft", "ready", "rendering", "done", "failed"]
 SpeechMode = Literal["tts", "original"]
+ProjectOrigin = Literal["create", "cut"]
 """镜头的声音：tts 用文案配音；original 保留原片里的人声，文案只做字幕。"""
 
 ReferenceRole = Literal["product", "person", "logo", "style"]
@@ -816,6 +817,8 @@ class Project(_Model):
     之后改镜头文案不影响这里，留作创作记录。"""
     video_type: VideoType | None = None
     """视频类型；为空表示没选（旧项目或只按文案拆镜头）。"""
+    origin: ProjectOrigin = "create"
+    """create：「创作」里从想法生成的视频；cut：「剪辑」里导入已有视频剪的。两边的任务列表分开显示。"""
     titles: TitleSettings = Field(default_factory=TitleSettings)
     """标题：画面顶部常驻大标题、片头标题卡、镜头小标题样式。"""
     look: Look = Field(default_factory=Look)

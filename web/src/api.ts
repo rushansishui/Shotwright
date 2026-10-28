@@ -112,6 +112,8 @@ export const api = {
     /** 目标总时长（秒）；为空时由大模型估算。 */
     duration?: number | null;
     video_type?: VideoType | null;
+    /** cut：剪辑页建的任务，在「剪辑」的任务列表里显示。 */
+    origin?: "create" | "cut";
   }) => request<Project>("/projects", json("POST", body)),
   updateProject: (
     id: string,

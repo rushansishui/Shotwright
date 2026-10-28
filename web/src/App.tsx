@@ -23,6 +23,9 @@ function parseHash(): Route {
 
 export function App() {
   const [route, setRoute] = useState<Route>(parseHash);
+  /** 正在编辑的项目来自创作还是剪辑，决定顶部导航高亮哪一个。 */
+  const [projectOrigin, setProjectOrigin] = useState<"create" | "cut">("create");
+  const inCut = route.page === "cut" || (route.page === "project" && projectOrigin === "cut");
   const { t, lang, setLang } = useI18n();
 
   useEffect(() => {
@@ -41,10 +44,10 @@ export function App() {
             <span className="brand-cn">{t("app.brandSub")}</span>
           </a>
           <nav className="nav" aria-label={t("nav.main")}>
-            <a href="#/" className={route.page === "home" || route.page === "project" ? "active" : ""}>
+            <a href="#/" className={route.page === "home" || (route.page === "project" && !inCut) ? "active" : ""}>
               {t("nav.create")}
             </a>
-            <a href="#/cut" className={route.page === "cut" ? "active" : ""}>
+            <a href="#/cut" className={inCut ? "active" : ""}>
               {t("nav.cut")}
             </a>
             <a href="#/settings" className={route.page === "settings" ? "active" : ""}>
@@ -65,7 +68,7 @@ export function App() {
       {route.page === "home" && <Home />}
       {route.page === "settings" && <Settings />}
       {route.page === "cut" && <Cut projectId={route.projectId} assetId={route.assetId} />}
-      {route.page === "project" && <Editor key={route.id} projectId={route.id} />}
+      {route.page === "project" && <Editor key={route.id} projectId={route.id} onOrigin={setProjectOrigin} />}
     </div>
   );
 }

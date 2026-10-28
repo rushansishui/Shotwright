@@ -280,3 +280,11 @@ def test_faster_whisper_gets_decoded_samples_not_a_path(monkeypatch, tmp_path):
     assert isinstance(samples, np.ndarray) and samples.dtype == np.float32
     assert abs(len(samples) - 2 * fw.SAMPLE_RATE) < fw.SAMPLE_RATE * 0.1
     assert result.words[0].text == "你好" and result.language == "zh"
+
+
+def test_cut_projects_are_listed_separately(client):
+    created = client.post("/api/v2/projects", json={"mode": "empty"}).json()
+    cut = client.post("/api/v2/projects", json={"mode": "empty", "origin": "cut"}).json()
+    assert cut["origin"] == "cut" and created["origin"] == "create"
+    listed = {p["id"]: p["origin"] for p in client.get("/api/v2/projects").json()}
+    assert listed[cut["id"]] == "cut" and listed[created["id"]] == "create"

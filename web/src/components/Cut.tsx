@@ -3,7 +3,8 @@ import { api, assetUrl } from "../api";
 import { formatClock, groupSentences, guessAspect, needsSpace, planRanges, type WordTuple } from "../cut";
 import { providerName, useI18n } from "../i18n";
 import type { MessageKey } from "../messages";
-import type { LanguageInfo, Project, ProviderInfo, TranscriptData } from "../types";
+import type { LanguageInfo, Project, ProjectSummary, ProviderInfo, TranscriptData } from "../types";
+import { ProjectList } from "./ProjectList";
 
 interface CutProps {
   /** 已经上传并开始识别的项目和原片；为空时显示上传页。 */
@@ -34,18 +35,29 @@ function readVideoSize(file: File): Promise<{ width: number; height: number; dur
   });
 }
 
+type CutMode = "speech" | "scenes";
+
 function CutUpload() {
   const { t, lang } = useI18n();
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [mode, setMode] = useState<CutMode>("speech");
   const [languages, setLanguages] = useState<LanguageInfo[]>([]);
   const [language, setLanguage] = useState(lang === "zh" ? "zh-CN" : "auto");
   const [providers, setProviders] = useState<ProviderInfo[] | null>(null);
   const [provider, setProvider] = useState("");
+  const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
 
+  const loadProjects = () =>
+    api
+      .listProjects()
+      .then((all) => setProjects(all.filter((p) => p.origin === "cut")))
+      .catch(() => setProjects([]));
+
   useEffect(() => {
     api.languages().then(setLanguages).catch(() => undefined);
+    loadProjects();
     api
       .providers()
       .then((all) => {
@@ -53,11 +65,14 @@ function CutUpload() {
         setProviders(list);
         const chosen = list.find((p) => p.default && p.configured) ?? list.find((p) => p.configured);
         setProvider(chosen?.id ?? "");
+        if (!chosen) setMode("scenes");
       })
       .catch((e) => setError((e as Error).message));
   }, []);
 
   const usable = (providers ?? []).filter((p) => p.configured);
+  const file = files[0] ?? null;
+  const ready = files.length > 0 && !busy && (mode === "scenes" || usable.length > 0);
 
   async function start() {
     if (!file) return;
@@ -72,7 +87,17 @@ function CutUpload() {
         language: language === "auto" ? undefined : language,
         canvas: { aspect: guessAspect(size.width, size.height) },
         video_type: "footage",
+        origin: "cut",
       });
+      if (mode === "scenes") {
+        // 不识别：按画面变化切镜头，几段视频依次接在后面，直接进编辑器。
+        for (let i = 0; i < files.length; i++) {
+          setBusy(t("cut.importing", { n: i + 1, total: files.length }));
+          await api.importFootage(project.id, files[i], i === 0);
+        }
+        window.location.hash = `#/p/${project.id}`;
+        return;
+      }
       const asset = await api.upload(project.id, file);
       await api.startTranscript(project.id, asset.id, { provider: provider || null, language });
       window.location.hash = `#/cut/${project.id}/${asset.id}`;
@@ -83,29 +108,62 @@ function CutUpload() {
   }
 
   return (
-    <main className="page cut-page">
+    <main className="page home-layout cut-home">
       <section className="card cut-upload">
         <div className="card-head">
           <h1>{t("cut.title")}</h1>
         </div>
         <p className="muted">{t("cut.intro")}</p>
-        <label className={`cut-drop ${file ? "has-file" : ""}`}>
+
+        <div className="cut-modes" role="radiogroup" aria-label={t("cut.modeLabel")}>
+          {(["speech", "scenes"] as CutMode[]).map((value) => (
+            <label key={value} className={`cut-mode ${mode === value ? "on" : ""}`}>
+              <input
+                type="radio"
+                name="cut-mode"
+                checked={mode === value}
+                disabled={!!busy}
+                onChange={() => {
+                  setMode(value);
+                  if (value === "speech") setFiles((f) => f.slice(0, 1));
+                  if (value === "scenes" && language === "auto") setLanguage(lang === "zh" ? "zh-CN" : "en-US");
+                }}
+              />
+              <strong>{t(`cut.mode.${value}` as MessageKey)}</strong>
+              <span className="muted small">{t(`cut.mode.${value}Hint` as MessageKey)}</span>
+            </label>
+          ))}
+        </div>
+
+        <label className={`cut-drop ${files.length ? "has-file" : ""}`}>
           <input
             type="file"
             accept="video/*,audio/*"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            multiple={mode === "scenes"}
+            onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
             disabled={!!busy}
           />
-          <strong>{file ? file.name : t("cut.pick")}</strong>
+          <strong>
+            {files.length === 0
+              ? mode === "scenes"
+                ? t("cut.pickMany")
+                : t("cut.pick")
+              : files.length === 1
+                ? file!.name
+                : t("cut.picked", { n: files.length })}
+          </strong>
           <span className="muted small">
-            {file ? `${(file.size / 1024 / 1024).toFixed(1)} MB` : t("cut.pickHint")}
+            {files.length
+              ? `${(files.reduce((sum, f) => sum + f.size, 0) / 1024 / 1024).toFixed(1)} MB`
+              : t("cut.pickHint")}
           </span>
         </label>
+
         <div className="cut-options">
           <label className="field">
-            <span className="label">{t("cut.language")}</span>
+            <span className="label">{mode === "speech" ? t("cut.language") : t("cut.videoLanguage")}</span>
             <select className="input" value={language} onChange={(e) => setLanguage(e.target.value)} disabled={!!busy}>
-              <option value="auto">{t("cut.autoLanguage")}</option>
+              {mode === "speech" && <option value="auto">{t("cut.autoLanguage")}</option>}
               {languages.map((l) => (
                 <option key={l.code} value={l.code}>
                   {lang === "zh" ? l.name_zh : l.name}
@@ -113,29 +171,42 @@ function CutUpload() {
               ))}
             </select>
           </label>
-          <label className="field">
-            <span className="label">{t("cut.provider")}</span>
-            <select className="input" value={provider} onChange={(e) => setProvider(e.target.value)} disabled={!!busy}>
-              {usable.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {providerName(p, lang)}
-                </option>
-              ))}
-            </select>
-          </label>
+          {mode === "speech" && (
+            <label className="field">
+              <span className="label">{t("cut.provider")}</span>
+              <select className="input" value={provider} onChange={(e) => setProvider(e.target.value)} disabled={!!busy}>
+                {usable.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {providerName(p, lang)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
-        {providers && !usable.length && (
+        {mode === "speech" && providers && !usable.length && (
           <p className="hint warn">
-            {t("cut.providerMissing")} <a href="#/settings">{t("nav.status")}</a>
+            {t("cut.providerMissing")} <a href="#/settings">{t("nav.status")} →</a>
           </p>
         )}
         {error && <p className="hint error">{error}</p>}
         <div className="cut-foot">
-          <button type="button" className="btn primary" disabled={!file || !!busy || !usable.length} onClick={start}>
-            {busy || t("cut.start")}
+          <button type="button" className="btn primary" disabled={!ready} onClick={start}>
+            {busy || (mode === "scenes" ? t("cut.startScenes") : t("cut.start"))}
           </button>
         </div>
       </section>
+
+      <ProjectList
+        className="home-projects"
+        compact
+        title={t("cut.recent")}
+        empty={t("cut.recentEmpty")}
+        projects={projects ?? []}
+        loading={projects === null}
+        onError={setError}
+        onChanged={loadProjects}
+      />
     </main>
   );
 }

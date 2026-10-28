@@ -3080,3 +3080,36 @@ li.missing .readiness-mark {
 .voice-more[open] > .grid-2 {
   margin-bottom: 12px;
 }
+.cut-home .cut-upload {
+  max-width: none;
+  margin: 0;
+}
+.cut-modes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+.cut-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px 12px 40px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--field);
+  cursor: pointer;
+  position: relative;
+}
+.cut-mode input {
+  position: absolute;
+  left: 14px;
+  top: 14px;
+  accent-color: var(--accent);
+}
+.cut-mode.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.cut-mode strong {
+  font-size: 15px;
+}

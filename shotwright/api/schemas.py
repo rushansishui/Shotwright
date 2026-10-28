@@ -16,6 +16,7 @@ from shotwright.core.models import (
     FitMode,
     Look,
     Overlay,
+    ProjectOrigin,
     Pronunciation,
     ReferenceAsset,
     SfxSettings,
@@ -54,6 +55,8 @@ class CreateProject(_Body):
     """视频内容的语言代码（见 /api/v2/languages），也接受"简体中文"这类旧写法。"""
     canvas: Canvas | None = None
     voice: VoiceSettings | None = None
+    origin: ProjectOrigin = "create"
+    """cut：剪辑页导入已有视频建的项目，在「剪辑」的任务列表里显示。"""
 
     @field_validator("subject")
     @classmethod

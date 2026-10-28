@@ -534,6 +534,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     "aspect": p.canvas.aspect,
                     "language": languages.normalize(p.language),
                     "group": p.group or p.id,
+                    # 旧版剪辑页建的项目没有记 origin，按有没有原声镜头判断。
+                    "origin": "cut" if p.origin == "cut" or any(s.speech == "original" for s in p.shots) else "create",
                     "updated_at": p.updated_at,
                     "created_at": p.created_at,
                     # 最近一次成片：时长、生成时间，以及之后有没有再改过项目。
@@ -547,6 +549,12 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                         if latest
                         else None
                     ),
+                    # 剪辑任务还没生成镜头时，从任务列表回到剪辑页要用到原片的素材 id。
+                    "source_asset": next(
+                        (a.id for a in p.assets.values() if a.kind in ("video", "audio")), None
+                    )
+                    if not p.shots
+                    else None,
                     # 封面：最近的成片或第一个有画面的镜头；地址带上来源，换了来源浏览器会重新取。
                     "cover": f"/api/v2/projects/{p.id}/cover?k={source[1]}" if source else None,
                 }
@@ -618,6 +626,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             idea=body.idea,
             target_seconds=body.duration,
             video_type=body.video_type,
+            origin=body.origin,
         )
         # 新项目要先确认素材（全片设定）才能生成 AI 画面。
         project.look.confirmed = False
@@ -1170,6 +1179,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 texts=texts,
             )
             project.video_type = "footage"
+            project.origin = "cut"
 
         return _mutate(project_id, change)
 

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { subtitleMargin } from "../types";
 import type { Aspect, ShotUpdate, SubtitleStyle, VisualMode } from "../types";
@@ -42,7 +42,7 @@ function loadStep(id: string): EditorStep | null {
   }
 }
 
-export function Editor({ projectId }: { projectId: string }) {
+export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: (origin: "create" | "cut") => void }) {
   const {
     project,
     error,
@@ -69,6 +69,11 @@ export function Editor({ projectId }: { projectId: string }) {
   const [marginDraft, setMarginDraft] = useState<number | undefined>(undefined);
   const [styleDraft, setStyleDraft] = useState<Partial<SubtitleStyle>>({});
   const [step, setStepState] = useState<EditorStep | null>(() => loadStep(projectId));
+  /** 剪辑里导入的任务：返回剪辑页，顶部导航高亮「剪辑」。 */
+  const isCut = !!project && (project.origin === "cut" || project.shots.some((s) => s.speech === "original"));
+  useEffect(() => {
+    if (project) onOrigin?.(isCut ? "cut" : "create");
+  }, [project, isCut, onOrigin]);
 
   if (!project) {
     return <main className="page">{error ? <p className="hint error">{error}</p> : <p className="muted">{t("common.loading")}</p>}</main>;
@@ -163,7 +168,7 @@ export function Editor({ projectId }: { projectId: string }) {
     <main className="page editor">
       <div className="editor-main">
         <div className="titlebar">
-          <a className="btn ghost" href="#/">
+          <a className="btn ghost" href={isCut ? "#/cut" : "#/"}>
             {t("editor.back")}
           </a>
           <label className="sr-only" htmlFor="title">

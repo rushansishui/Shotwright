@@ -475,7 +475,7 @@ export function Home() {
       <ProjectList
         className="home-projects"
         compact
-        projects={projects ?? []}
+        projects={(projects ?? []).filter((p) => p.origin !== "cut")}
         loading={projects === null}
         onError={setError}
         onChanged={() => api.listProjects().then(setProjects).catch(() => setProjects([]))}

@@ -348,6 +348,8 @@ export interface Pronunciation {
 }
 
 export interface Project {
+  /** create：创作里生成的视频；cut：剪辑里导入已有视频的任务。 */
+  origin?: "create" | "cut";
   id: string;
   title: string;
   subject: string;
@@ -433,6 +435,10 @@ export interface ProjectSummary {
   render?: { id: string; duration: number | null; created_at: number; stale: boolean } | null;
   /** 封面图片地址（最近的成片或第一个有画面的镜头）；没有画面时为空。 */
   cover?: string | null;
+  /** create：创作里生成的视频；cut：剪辑里导入已有视频的任务。 */
+  origin?: "create" | "cut";
+  /** 剪辑任务还没生成镜头时，原片的素材 id（回到剪辑页用）。 */
+  source_asset?: string | null;
 }
 
 export interface ProviderInfo {
