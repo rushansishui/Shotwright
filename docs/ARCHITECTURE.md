@@ -101,7 +101,7 @@ tests/                   pytest
 
 | 对象 | 说明 |
 | --- | --- |
-| `Project` | 一个视频的全部状态：画布（比例、帧率）、视频类型、标题 `titles`（常驻大标题、片头标题卡、小标题样式）、全片设定 `look`、默认配音、字幕样式、背景音乐（闪避、淡入淡出、节拍对齐）、音效层 `sfx`、导出响度、交付平台、叠加文字与图形、转场、AI 角标、首尾帧衔接开关、主体库（参考素材）、镜头列表、素材表、费用上限与累计生成费用、修订号 |
+| `Project` | 一个视频的全部状态：来源 `origin`（`create` 创作 / `cut` 剪辑，两边的任务列表分开显示）、画布（比例、帧率）、视频类型、标题 `titles`（常驻大标题、片头标题卡、小标题样式）、全片设定 `look`、默认配音、字幕样式、背景音乐（闪避、淡入淡出、节拍对齐）、音效层 `sfx`、导出响度、交付平台、叠加文字与图形、转场、AI 角标、首尾帧衔接开关、主体库（参考素材）、镜头列表、素材表、费用上限与累计生成费用、修订号 |
 | `Look` | 全片设定：主体列表（代号、名称、类别、外观、最多 10 张参考图 `images`，第一张是主图；`image_labels` 记每张图的颜色/款式；`no_reference` 表示用户确认这个主体不需要参考图）、场景、视觉风格、禁止项、统一调色预设、素材确认状态 `confirmed` 和确认后又改过的时间 `revised_at`（这两个由服务端维护）；预留风格参考图和品牌包 |
 | `Shot` | 文案（可含 `[停顿]`、`*强调*` 标注）、镜头小标题、镜头类型 `role`、声音来源 `speech`（`tts` 按文案配音 / `original` 保留原片人声，剪辑页生成）、固定时长（为空则跟随配音）、画面 `ShotVisual`、可选的单独配音设置 |
 | `ShotVisual` | 画面来源 `mode`（`stock` 检索 / `ai` AI 视频 / `image` AI 图片 / `upload` 上传 / `color` 纯色）、检索词、画面描述 `prompt`、静态画面描述 `image_prompt`、运镜 `camera`、衔接说明 `link`、候选素材、已选素材、多选的其他素材 `sequence`（依次播放）、首帧、生成版本记录 `takes`、锁定标记、未取回的收费任务 `pending`，以及剪辑设置（见下） |
@@ -190,9 +190,9 @@ AI 画面要和商品一致，前提是全片设定里的主体都备好了参�
 
 ## 剪辑：按文字剪已有视频
 
-`services/transcribe.py`，界面在 `web/src/components/Cut.tsx`（路由 `#/cut`）：
+`services/transcribe.py`，界面在 `web/src/components/Cut.tsx`（路由 `#/cut`）。剪辑页建的项目 `origin = "cut"`，在剪辑页右侧的任务列表里显示，编辑这类项目时导航高亮「剪辑」、返回也回到剪辑页（旧项目没有这个字段时，有原声镜头或识别过原片的也算剪辑任务）。剪辑页有两种剪法：「按画面剪」不识别语音，直接调用原片导入（`POST /projects/{id}/footage`，第一段替换镜头、其余依次追加）；「按说的话剪」走下面的流程：
 
-1. 上传原片后 `POST /projects/{id}/transcripts/{asset}` 在后台线程识别：ffmpeg 抽出单声道 16kHz 音轨交给 `asr` 类 Provider（`faster_whisper` 本地 / `openai` 云端），结果（逐词时间戳 + 分句）存在 `cache/transcripts/<素材 id>.json`，页面轮询 GET 查看进度。
+1. 上传原片后 `POST /projects/{id}/transcripts/{asset}` 在后台线程识别：ffmpeg 抽出单声道 16kHz 音轨交给 `asr` 类 Provider（`faster_whisper` 本地 / `openai` 云端；本地识别同样用 ffmpeg 把音频解码成 16kHz 采样交给模型，不经过 PyAV，新版 PyAV 与 faster-whisper 不兼容。模型第一次使用时下载：先查本地缓存，再依次试配置的地址、Hugging Face、hf-mirror.com，连不上的 8 秒内跳过，下载中按已下载字节报告进度），结果（逐词时间戳 + 分句）存在 `cache/transcripts/<素材 id>.json`，页面轮询 GET 查看进度。
 2. 用户在文稿里删词（语气词按语言内置词表一键勾选；`/retakes` 让大模型按句找出重说和说一半放弃的部分），可选压缩长停顿。
 3. `POST /projects/{id}/cut`：`plan_ranges` 算出保留的时间段（删掉的词前后留 0.08 秒余量；压缩停顿时两边各留 0.25 秒），再在画面切换处、较长时在句末切成镜头；被口误、停顿隔开的相邻片段并进同一个镜头，剪掉的部分记在 `ShotVisual.skips`，渲染时先用 select/aselect 把这些片段去掉再按整段处理。生成的镜头 `Shot.speech = "original"`：不调用配音服务（只生成镜头时长的静音轨），原声按 `source_volume` 混入，字幕按识别的逐词时间（扣掉前面跳过的时间）对齐，不做读音纠正。
 4. 拆分、合并原声镜头时按镜头时间换算素材时间（`to_source_time` / `to_shot_time`），`skips` 和字幕文字跟着分开或合并；合并同一原片里中间隔着一段的两个镜头时，中间那段记为 `skips`。翻译出的其他语言版本改为 `speech = "tts"`、原声音量置 0，重新配音。

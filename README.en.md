@@ -17,7 +17,7 @@ Shotwright is built around the *shot*. The script is split into shots, and each 
 - **Storyboard editing**: split a script into shots sentence by sentence, or write a video brief (audience, tone, key points; up to 4096 bytes), pick a length, and let an LLM write the script, decide how many shots it needs, and suggest search terms and visual prompts for each shot. An existing video can be **duplicated into a new project** to keep editing, carrying its assets, settings and render cache along.
 - **Mixed visuals**: in one video, some shots can use Pixabay / Pexels / Coverr footage, some AI video (Seedance, Wan, Kling, MiniMax Hailuo, or Veo, Vidu and others via fal.ai, chosen per shot) or AI images (Seedream with a slow Ken Burns push-in), and some your own uploads. An AI image can also serve as the first frame of an AI video. A shot can hold **several clips played in sequence**, and candidates can be deleted. Under each shot, a hint shows how many candidates the other sources have, with one click to switch, so switching sources never loses footage you already generated.
 - **Footage import and in-shot editing**: import footage shot on a phone and have it split into shots at scene changes; in each shot you can drag the in and out points, split it or merge it with the next. When a clip is shorter than its shot it is slowed down a little (to no less than 0.8×) and then holds its last frame, instead of jumping back to the start. The clip's own sound can be kept at an adjustable volume and is lowered automatically under the voice-over. When switching between portrait and landscape you can choose what part of the frame to keep, or keep the whole subject over a blurred fill.
-- **Cut an existing video by its text**: upload a talking-head, explainer or product video under "Cut" in the top bar and it transcribes what is said (local faster-whisper — free, and the footage never leaves your machine — or an OpenAI-compatible cloud service). Click a word to jump and play, select a passage and delete it to cut the video with it; one click ticks off filler words (um, uh, 嗯, 啊), "AI retakes" finds sentences that were restarted or abandoned halfway, and long pauses can be squeezed. Double-click to fix a mis-transcribed word. Generate original-sound shots from the result: no re-voicing, subtitles follow the word timings, the removed parts are skipped inside each shot, and subtitles, music, titles and translated voice-over versions all work as usual.
+- **Cut an existing video**: "Cut" in the top bar is separate from "Create" and has its own task list. There are two ways to cut: for footage without speech (product shots, b-roll, montage material) choose "Edit by scenes", which skips speech recognition and splits the video at scene changes, several videos at a time; for talking-head, explainer and live-selling videos choose "Edit by what is said": upload the video and it transcribes what is said (local faster-whisper — free, and the footage never leaves your machine — or an OpenAI-compatible cloud service), with progress shown while the model downloads and while it transcribes. Click a word to jump and play, select a passage and delete it to cut the video with it; one click ticks off filler words (um, uh, 嗯, 啊), "AI retakes" finds sentences that were restarted or abandoned halfway, and long pauses can be squeezed. Double-click to fix a mis-transcribed word. Generate original-sound shots from the result: no re-voicing, subtitles follow the word timings, the removed parts are skipped inside each shot, and subtitles, music, titles and translated voice-over versions all work as usual.
 - **Video quality**: pick a video type on the home page (product ad, brand film, explainer, talking head, footage makeover) to get a brief template and writing tips, with a check for unfilled placeholders before you submit. The storyboard starts with a look (subject appearance, setting, style, taboos, color grade); every shot gets a 60–120-word description, a camera move and a continuity note, and the storyboard is self-checked and rewritten once if needed. At generation time you can create keyframes first, several takes at once, or extend shots longer than the model allows from the last frame. With a vision model configured, results are checked for product drift, stock candidates are ranked and the final video is scanned for flaws. A pre-render check lists things worth fixing, and `shotwright bench` runs a fixed quality benchmark compared with the previous batch.
 - **Finishing**: export normalizes loudness to -14 LUFS and ducks the music under the voice with a fade in and out. Optionally cuts snap to the music's beat, transition whooshes and ambience can be layered in, the whole video can share one color grade, and delivery targets (Douyin, Kuaishou, Channels, Xiaohongshu, Shorts, Bilibili) set the encoding and keep subtitles and overlays inside the safe area.
 - **Product ads**: a project-level library of product shots, people, logos and style images used as references for generation; edit a clip with a prompt (video-to-video); overlay selling points, prices and logos separately from the subtitles, with transitions between shots; overlay text is translated along with the language versions.
@@ -39,25 +39,29 @@ Shotwright is built around the *shot*. The script is split into shots, and each 
 
 ## Screenshots
 
-**New video**: write a brief, pick the language, aspect ratio and length, and the AI writes the script and decides how many shots it needs.
+**Create a new video**: describe the idea in a few sentences, the AI turns it into a full brief from the template for the video type, then writes an editable script, and the storyboard is generated from that script; your projects are listed on the right.
 
 ![New video](docs/images/en-home.png)
 
-**Storyboard editor**: each shot picks its own visual source; the live preview on the right shows the subtitles, and only changed shots are re-rendered.
+**Storyboard editor**: five steps in production order — ① Materials (subject reference images and looks, brand and style references) → ② Visuals → ③ Voice & subtitles → ④ Music & SFX → ⑤ Titles & text. AI visuals can only be generated once every subject has its reference images and look and the checklist is confirmed. Each shot picks its own visual source; the live preview on the right shows the subtitles, and only changed shots are re-rendered.
 
 ![Storyboard editor](docs/images/en-editor.png)
 
-**Mixed visuals in one video**: the upper shot uses stock footage, the lower one an AI image; under each shot a hint shows how many candidates the other sources have, one click to switch.
+**Shot card**: every shot picks its own visual source (stock, AI video, AI image, upload, solid colour), and one video can mix them; AI video prompts are built from the shared look, you can draft keyframes first, generate several takes at once and pick draft or final resolution, and every generation is kept as a version; shot type, caption title, camera move and AI rewrite sit under "More".
 
-![Stock search and AI image](docs/images/en-shots.png)
+![Shot card](docs/images/en-shots.png)
 
 **Audio, subtitles and language versions**: switch the video language and voice; upload background music or find it automatically and preview the candidates; translate the video into another language in one click.
 
 ![Audio, subtitles and language versions](docs/images/en-audio.png)
 
-**Cut an existing video**: upload footage on the "Cut" page, and once it is transcribed, delete words in the text to cut the video with them, tick off fillers and squeeze pauses, then generate original-sound shots straight from it.
+**Cut an existing video**: with "Edit by what is said", click a word to play from there; struck-through words are deleted fillers and retakes and are skipped during playback; then generate original-sound shots. For footage without speech, "Edit by scenes" splits it into shots directly.
 
-**Settings**: fill in each service's key, model and endpoint in the page; saving writes back to `config.toml` and takes effect immediately, and keys are shown only as their last four characters.
+![Cut by text](docs/images/en-cut.png)
+
+**Settings**: fill in each service's key, model and endpoint in the page; saving writes back to `config.toml` and takes effect immediately, keys are shown only as their last four characters, and LLMs, AI video and speech recognition have a "Test connection" button.
+
+![Settings](docs/images/en-settings.png)
 
 ## Hardware requirements
 
