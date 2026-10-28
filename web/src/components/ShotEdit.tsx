@@ -106,6 +106,9 @@ export function ShotEdit(props: {
         {isVideo && own && (visual.trim_start > 0 || visual.trim_end !== null) && (
           <span className="muted small"> · {t("edit.range", { start: fmt(savedStart), end: fmt(savedEnd) })}</span>
         )}
+        {isVideo && own && !!visual.skips?.length && (
+          <span className="muted small"> · {t("edit.skips", { n: visual.skips.length })}</span>
+        )}
       </summary>
       <div className="shot-edit-body">
         <div className="shot-edit-media">

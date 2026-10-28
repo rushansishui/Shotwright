@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { assetUrl, estimateSeconds, type GenerateOptions } from "../api";
 import { providerName, useI18n } from "../i18n";
 import type { MessageKey } from "../messages";
-import type { Asset, CameraMove, Project, ProviderInfo, Shot, ShotRole, Take, VisualMode, VisualPatch } from "../types";
+import type { Asset, CameraMove, Project, ProviderInfo, Shot, ShotRole, ShotUpdate, Take, VisualMode, VisualPatch } from "../types";
 import { Icon, Segmented } from "./Controls";
 import { ShotEdit } from "./ShotEdit";
 
@@ -75,7 +75,7 @@ export function ShotCard(props: {
   /** 服务 id → 画面来源，用来按当前来源筛选候选素材。 */
   sourceModes: Record<string, VisualMode>;
   onFocus: () => void;
-  onUpdate: (body: { text?: string; title?: string; role?: ShotRole; visual?: VisualPatch }) => void;
+  onUpdate: (body: ShotUpdate) => void;
   /** ``patch`` 是还没失焦保存的提示词，先存好再生成。 */
   onCandidates: (confirmCharge?: boolean, patch?: VisualPatch, editSelected?: boolean, options?: GenerateOptions) => void;
   /** 配置了大模型时可以让 AI 改写这个镜头的画面。 */
@@ -280,6 +280,7 @@ export function ShotCard(props: {
           onChange={(e) => setText(e.target.value)}
           onBlur={() => text !== shot.text && props.onUpdate({ text })}
         />
+        {shot.speech === "original" && <p className="muted small original-note">{t("shot.originalSpeech")}</p>}
 
         <div className="shot-visual-row">
           <Segmented
@@ -502,6 +503,20 @@ export function ShotCard(props: {
         <details className="shot-more">
           <summary>{t("shot.moreSettings")}</summary>
           <div className="shot-more-body">
+            {(shot.speech === "original" || visual.mode === "upload") && (
+              <div className="inline-field">
+                <span className="label">{t("shot.speech")}</span>
+                <select
+                  className="input role-select"
+                  aria-label={t("shot.speech")}
+                  value={shot.speech ?? "tts"}
+                  onChange={(e) => props.onUpdate({ speech: e.target.value as "tts" | "original" })}
+                >
+                  <option value="original">{t("shot.speechOriginal")}</option>
+                  <option value="tts">{t("shot.speechTts")}</option>
+                </select>
+              </div>
+            )}
             <div className="inline-field">
               <span className="label">{t("shot.role")}</span>
               <select

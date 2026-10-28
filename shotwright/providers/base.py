@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol
 
-ProviderKind = Literal["llm", "tts", "stock", "video_gen", "image_gen", "music"]
+ProviderKind = Literal["llm", "tts", "stock", "video_gen", "image_gen", "music", "asr"]
 
 
 class ProviderError(RuntimeError):
@@ -130,6 +130,22 @@ class SpeechResult:
     duration: float
     words: list[WordTiming] = field(default_factory=list)
     """逐词时间戳；配音服务不提供时为空，字幕退回按字数估算分配。"""
+
+
+@dataclass
+class Transcript:
+    """语音识别结果：逐词时间戳（相对音频开头，秒）和分句。"""
+
+    words: list[WordTiming]
+    sentences: list[tuple[float, float]] = field(default_factory=list)
+    """每句的起止时间；剪辑页按句分段显示，长片段也在句末切开。"""
+    language: str = ""
+
+
+class ASRProvider(Protocol):
+    def transcribe(
+        self, audio: Path, *, language: str | None, progress: Callable[[float], None] | None = None
+    ) -> Transcript: ...
 
 
 class TTSProvider(Protocol):

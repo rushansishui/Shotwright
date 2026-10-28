@@ -123,6 +123,11 @@ def create_language_version(
     for shot in version.shots:
         if shot.id in texts:
             shot.text = texts[shot.id]
+        if shot.speech == "original":
+            # 其他语言版本要重新配音，原片里的人声关掉，否则两种语言叠在一起。
+            shot.speech = "tts"
+            shot.duration = None
+            shot.visual.source_volume = 0.0
         shot.status, shot.error = "draft", None
     # 叠加文字（卖点、价格、购买引导）跟着一起翻译，否则多语言版本里还留着原文。
     if overlay_texts:

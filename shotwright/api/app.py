@@ -37,6 +37,7 @@ from shotwright.api.schemas import (
     ChargeConsent,
     CreateProject,
     CreateVersion,
+    CutRequest,
     DefaultProvider,
     DuplicateProject,
     ExpandRequest,
@@ -49,10 +50,11 @@ from shotwright.api.schemas import (
     SplitShot,
     StoryboardRequest,
     SuggestTitles,
+    TranscribeRequest,
     UpdateProject,
     UpdateShot,
 )
-from shotwright.config import ROOT_DIR, Settings, load_settings
+from shotwright.config import PROVIDER_KINDS, ROOT_DIR, Settings, load_settings
 from shotwright.core import languages, platforms
 from shotwright.core.models import Project, Shot, ShotVisual, VoiceSettings, validate_id
 from shotwright.core.store import ProjectNotFound, ProjectStore, read_json
@@ -77,6 +79,7 @@ from shotwright.services import (
     readiness,
     rewrite,
     storyboard,
+    transcribe,
     visuals,
 )
 from shotwright.services import cost as cost_service
@@ -332,7 +335,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                         for f in spec.fields
                     ],
                     "required_any": [list(group) for group in spec.required_any],
-                    "testable": spec.kind in ("llm", "video_gen"),
+                    "testable": spec.kind in ("llm", "video_gen", "asr"),
                     "capabilities": sorted(spec.capabilities),
                     "max_duration": spec.max_duration,
                     "has_audio": spec.has_audio,
@@ -377,7 +380,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             "config_path": str(settings.config_path) if settings.config_path else "",
             "editable": settings.config_path is not None,
             "proxy": settings.proxy or "",
-            "defaults": {kind: settings.default_provider(kind) for kind in ("llm", "tts", "stock", "video_gen", "image_gen")},
+            "defaults": {kind: settings.default_provider(kind) for kind in PROVIDER_KINDS},
             "providers": result,
         }
 
@@ -987,7 +990,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         """在镜头片段的第 ``at`` 秒处拆成两个镜头（只适用于视频镜头）。"""
 
         def change(project: Project) -> None:
-            editing.split_shot(project, _id(shot_id), body.at)
+            editing.split_shot(project, _id(shot_id), body.at, store)
 
         return _mutate(project_id, change)
 
@@ -1008,6 +1011,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 shot.text = body.text
             if body.role is not None:
                 shot.role = body.role
+            if body.speech is not None:
+                shot.speech = body.speech
             if body.title is not None:
                 shot.title = body.title.strip()
             if body.clear_duration:
@@ -1102,6 +1107,69 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             except KeyError:
                 raise HTTPException(404, "候选素材不存在") from None
             shot.status, shot.error = "draft", None
+
+        return _mutate(project_id, change)
+
+    # ---- 剪辑：识别原声，按文字剪 ---------------------------------------------------
+
+    def _media_asset(project: Project, asset_id: str):
+        asset = project.assets.get(_id(asset_id))
+        if asset is None:
+            raise HTTPException(404, "素材不存在")
+        return asset
+
+    @api.get("/projects/{project_id}/transcripts/{asset_id}")
+    def read_transcript(project_id: str, asset_id: str):
+        """识别状态和结果；完成时附带语气词的下标（剪辑页一键勾选）。"""
+        project = store.load(_id(project_id))
+        _media_asset(project, asset_id)
+        data = transcribe.load(store, project.id, asset_id)
+        if data.get("state") == "done":
+            words = transcribe.words_of(data)
+            data = {**data, "fillers": transcribe.filler_indexes(words, data.get("language") or project.language)}
+        return data
+
+    @api.post("/projects/{project_id}/transcripts/{asset_id}")
+    def start_transcript(project_id: str, asset_id: str, body: TranscribeRequest | None = None):
+        """开始识别（后台进行），之后轮询 GET 查看进度。"""
+        project = store.load(_id(project_id))
+        _media_asset(project, asset_id)
+        body = body or TranscribeRequest()
+        return transcribe.start(store, settings, project, asset_id, provider_id=body.provider, language=body.language)
+
+    @api.post("/projects/{project_id}/transcripts/{asset_id}/retakes")
+    def suggest_retakes(project_id: str, asset_id: str):
+        """AI 去口误：找出重说、说一半放弃、和内容无关的句子，返回其中所有词的下标（不收费的大模型调用）。"""
+        project = store.load(_id(project_id))
+        _media_asset(project, asset_id)
+        data = transcribe.load(store, project.id, asset_id)
+        if data.get("state") != "done":
+            raise HTTPException(409, "这段原片还没有识别完成")
+        llm = registry.create("llm", None, settings)
+        return {"remove": transcribe.suggest_retakes(llm, data)}  # type: ignore[arg-type]
+
+    @api.post("/projects/{project_id}/cut")
+    def cut_by_text(project_id: str, body: CutRequest):
+        """按剪辑结果生成原声镜头，替换项目里现有的镜头。"""
+        texts: dict[int, str] = {}
+        for key, value in body.texts.items():
+            try:
+                texts[int(key)] = value[:200]
+            except ValueError:
+                raise HTTPException(422, "改字的下标不对") from None
+
+        def change(project: Project) -> None:
+            _media_asset(project, body.asset_id)
+            transcribe.build_shots(
+                store,
+                project,
+                body.asset_id,
+                removed=set(body.removed),
+                max_pause=body.max_pause,
+                split_scenes=body.split_scenes,
+                texts=texts,
+            )
+            project.video_type = "footage"
 
         return _mutate(project_id, change)
 

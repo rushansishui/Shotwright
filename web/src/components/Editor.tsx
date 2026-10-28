@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { api } from "../api";
 import { subtitleMargin } from "../types";
-import type { Aspect, ShotRole, SubtitleStyle, VisualMode, VisualPatch } from "../types";
+import type { Aspect, ShotUpdate, SubtitleStyle, VisualMode } from "../types";
 import { Section, Segmented, Slider } from "./Controls";
 import { providerName, useI18n } from "../i18n";
 import { RenderPanel } from "./RenderPanel";
@@ -76,6 +76,8 @@ export function Editor({ projectId }: { projectId: string }) {
 
   const id = project.id;
   const locked = generationLocked(project);
+  /** 剪辑页生成的项目：可以回到文稿重新剪。 */
+  const cutSource = project.shots.find((s) => s.speech === "original" && s.visual.selected)?.visual.selected ?? null;
   // 没选过步骤时：素材还没确认就从「素材」开始，否则从「画面」开始。
   const current: EditorStep = step ?? (locked ? 1 : 2);
   const setStep = (next: EditorStep) => {
@@ -172,6 +174,11 @@ export function Editor({ projectId }: { projectId: string }) {
             onChange={(e) => setTitle(e.target.value)}
             onBlur={() => title !== project.title && run(() => api.updateProject(id, { title }))}
           />
+          {cutSource && (
+            <a className="btn" href={`#/cut/${id}/${cutSource}`}>
+              {t("cut.recut")}
+            </a>
+          )}
           <button
             type="button"
             className="btn"
@@ -310,7 +317,7 @@ export function Editor({ projectId }: { projectId: string }) {
                 aiImage={aiImage}
                 sourceModes={sourceModes}
                 onFocus={() => setActiveIndex(index)}
-                onUpdate={(body: { text?: string; title?: string; role?: ShotRole; visual?: VisualPatch }) => run(() => api.updateShot(id, shot.id, body))}
+                onUpdate={(body: ShotUpdate) => run(() => api.updateShot(id, shot.id, body))}
                 onCandidates={(confirmCharge, patch, editSelected, options) =>
                   run(async () => {
                     // 还没失焦保存的提示词先存好，再生成，避免用旧提示词花钱。

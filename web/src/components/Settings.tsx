@@ -4,7 +4,7 @@ import { providerName, useI18n } from "../i18n";
 import type { MessageKey } from "../messages";
 import type { ProviderInfo, Providers, SettingsData } from "../types";
 
-const KINDS = ["llm", "tts", "stock", "video_gen", "image_gen"];
+const KINDS = ["llm", "tts", "stock", "video_gen", "image_gen", "music", "asr"];
 
 /**
  * 服务设置：直接在页面里填写各服务的地址、模型和 Key，保存即写回 config.toml 并立即生效。

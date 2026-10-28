@@ -12,6 +12,7 @@ import type {
   ProjectSummary,
   Providers,
   SettingsData,
+  TranscriptData,
   RenderResult,
   Shot,
   ShotRole,
@@ -67,6 +68,15 @@ const json = (method: string, body?: unknown): RequestInit => ({
 export const api = {
   providers: () => request<Providers>("/providers"),
   settings: () => request<SettingsData>("/settings"),
+  transcript: (id: string, asset: string) => request<TranscriptData>(`/projects/${id}/transcripts/${asset}`),
+  startTranscript: (id: string, asset: string, body: { provider?: string | null; language?: string | null } = {}) =>
+    request<TranscriptData>(`/projects/${id}/transcripts/${asset}`, json("POST", body)),
+  suggestRetakes: (id: string, asset: string) =>
+    request<{ remove: number[] }>(`/projects/${id}/transcripts/${asset}/retakes`, json("POST")),
+  cut: (
+    id: string,
+    body: { asset_id: string; removed: number[]; max_pause: number | null; split_scenes: boolean; texts: Record<string, string> },
+  ) => request<Project>(`/projects/${id}/cut`, json("POST", body)),
   saveProviderSettings: (kind: string, id: string, values: Record<string, string>) =>
     request<SettingsData>(`/settings/providers/${kind}/${id}`, json("PUT", { values })),
   saveDefaultProvider: (kind: string, provider: string) =>
@@ -179,7 +189,15 @@ export const api = {
   updateShot: (
     id: string,
     shotId: string,
-    body: { text?: string; title?: string; duration?: number; clear_duration?: boolean; role?: ShotRole; visual?: VisualPatch },
+    body: {
+      text?: string;
+      title?: string;
+      duration?: number;
+      clear_duration?: boolean;
+      role?: ShotRole;
+      visual?: VisualPatch;
+      speech?: "tts" | "original";
+    },
   ) => request<Project>(`/projects/${id}/shots/${shotId}`, json("PATCH", body)),
   deleteShot: (id: string, shotId: string) => request<Project>(`/projects/${id}/shots/${shotId}`, json("DELETE")),
   /** 收费的 AI 生成必须传 confirmCharge=true（用户已确认），否则后端返回 402。 */

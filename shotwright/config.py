@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_FONTS_DIR = ROOT_DIR / "resources" / "fonts"
 
-PROVIDER_KINDS = ("llm", "tts", "stock", "video_gen", "image_gen", "music")
+PROVIDER_KINDS = ("llm", "tts", "stock", "video_gen", "image_gen", "music", "asr")
 
 DEFAULT_PROVIDERS = {
     "llm": "doubao",
@@ -27,6 +27,7 @@ DEFAULT_PROVIDERS = {
     "video_gen": "seedance",
     "image_gen": "seedream",
     "music": "archive",
+    "asr": "faster_whisper",
 }
 
 

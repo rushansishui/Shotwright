@@ -27,7 +27,7 @@ rem Reinstall dependencies whenever pyproject.toml changes (new versions may add
 fc /b "pyproject.toml" ".venv\.installed" >nul 2>nul
 if errorlevel 1 (
   echo [Shotwright] Installing Python dependencies...
-  ".venv\Scripts\python.exe" -m pip install -e ".[dev]" || goto :fail
+  ".venv\Scripts\python.exe" -m pip install -e ".[dev,asr]" || goto :fail
   copy /y "pyproject.toml" ".venv\.installed" >nul
 )
 

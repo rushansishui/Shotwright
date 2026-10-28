@@ -20,6 +20,7 @@ from shotwright.core.models import (
     ReferenceAsset,
     SfxSettings,
     ShotRole,
+    SpeechMode,
     SubtitleStyle,
     TitleSettings,
     TransitionSettings,
@@ -156,6 +157,8 @@ class UpdateShot(_Body):
     role: ShotRole | None = None
     voice: VoiceSettings | None = None
     clear_voice: bool = False
+    speech: SpeechMode | None = None
+    """original：保留原片人声、文案只做字幕；tts：用文案配音。"""
 
 
 class AddShot(_Body):
@@ -321,3 +324,22 @@ class DefaultProvider(_Body):
 class AppSettings(_Body):
     proxy: str = Field("", max_length=300)
     """访问外网用的代理，例如 http://127.0.0.1:7890；空字符串表示不用代理。"""
+
+
+class TranscribeRequest(_Body):
+    """识别原片里的人声。``provider`` 为空时用默认的语音识别服务，``language`` 为空时用项目语言。"""
+
+    provider: str | None = Field(None, max_length=40)
+    language: str | None = Field(None, max_length=20)
+
+
+class CutRequest(_Body):
+    """按文字剪辑：删掉的词、是否压缩长停顿，生成原声镜头（替换现有镜头）。"""
+
+    asset_id: str = Field(..., max_length=40)
+    removed: list[int] = Field(default_factory=list, max_length=50000)
+    max_pause: float | None = Field(None, ge=0.3, le=10.0)
+    """超过这么长的停顿压缩掉；为空时保留所有没说话的画面。"""
+    split_scenes: bool = True
+    texts: dict[str, str] = Field(default_factory=dict, max_length=5000)
+    """改过错字的词：下标 → 新文字。"""

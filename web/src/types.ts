@@ -220,6 +220,8 @@ export interface ShotVisual {
   /** 视频素材的入点、出点（秒）；出点为 null 表示到结尾。 */
   trim_start: number;
   trim_end: number | null;
+  /** 入出点之间剪掉的片段（素材秒数），按文字剪辑时生成。 */
+  skips?: [number, number][];
   /** 入出点和取景是针对哪个素材设的；和 selected 不同时按默认处理。 */
   edit_asset: string | null;
   fill: FillMode;
@@ -241,8 +243,31 @@ export interface Shot {
   /** 镜头类型：开场钩子、产品亮相、使用演示、场景氛围、人物、原理示意、口播、结尾引导。 */
   role?: ShotRole | null;
   voice: VoiceSettings | null;
+  /** original：原片里的人声（剪辑页生成），不再配音，文案只做字幕。 */
+  speech?: "tts" | "original";
   status: string;
   error: string | null;
+}
+
+/** 修改镜头时可以传的字段。 */
+export interface ShotUpdate {
+  text?: string;
+  title?: string;
+  role?: ShotRole;
+  visual?: VisualPatch;
+  speech?: "tts" | "original";
+}
+
+/** 剪辑页：原片的语音识别结果。words 是 [文字, 开始秒, 结束秒]。 */
+export interface TranscriptData {
+  state: "none" | "running" | "done" | "failed";
+  progress?: number;
+  error?: string;
+  language?: string;
+  duration?: number | null;
+  words?: [string, number, number][];
+  sentences?: [number, number][];
+  fillers?: number[];
 }
 
 export interface Asset {

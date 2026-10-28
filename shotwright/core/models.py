@@ -60,6 +60,8 @@ VIDEO_TYPE_NAMES: dict[str, str] = {
 ShotRole = Literal["hook", "product", "demo", "scene", "people", "explain", "talking", "cta"]
 """镜头类型：开场钩子、产品亮相、使用演示、场景氛围、人物、原理示意、口播、结尾引导。"""
 ShotStatus = Literal["draft", "ready", "rendering", "done", "failed"]
+SpeechMode = Literal["tts", "original"]
+"""镜头的声音：tts 用文案配音；original 保留原片里的人声，文案只做字幕。"""
 
 ReferenceRole = Literal["product", "person", "logo", "style"]
 """参考素材的角色：产品外观、人物形象、品牌 Logo、整体风格。"""
@@ -508,6 +510,8 @@ class ShotVisual(_Model):
     trim_start: float = Field(0.0, ge=0.0, le=36000)
     trim_end: float | None = Field(None, gt=0.0, le=36000)
     """视频素材的入点和出点（秒）；出点为空表示到素材结尾。"""
+    skips: list[tuple[float, float]] = Field(default_factory=list, max_length=300)
+    """入出点之间要剪掉的片段（素材里的秒数），例如按文字剪辑时删掉的口误、语气词和长停顿；播放时直接跳过。"""
     edit_asset: str | None = None
     """入出点和取景是针对哪个素材设的。换了素材后这些设置不再生效，按默认处理。"""
     fill: FillMode = "slow_hold"
@@ -556,7 +560,46 @@ class ShotVisual(_Model):
         """当前选中素材实际生效的剪辑设置：入出点和取景属于别的素材时恢复默认。"""
         if self.edit_asset is not None and self.edit_asset == self.selected:
             return self
-        return self.model_copy(update={"trim_start": 0.0, "trim_end": None, "focus_x": 0.5, "focus_y": 0.5})
+        return self.model_copy(
+            update={"trim_start": 0.0, "trim_end": None, "focus_x": 0.5, "focus_y": 0.5, "skips": []}
+        )
+
+    def skips_within(self, start: float, end: float) -> list[tuple[float, float]]:
+        """落在 [start, end] 里的剪掉片段，按时间排好、重叠的合并。"""
+        result: list[list[float]] = []
+        for a, b in sorted(self.skips):
+            a, b = max(a, start), min(b, end)
+            if b - a <= 0.001:
+                continue
+            if result and a <= result[-1][1]:
+                result[-1][1] = max(result[-1][1], b)
+            else:
+                result.append([a, b])
+        return [(round(a, 3), round(b, 3)) for a, b in result]
+
+    def kept_seconds(self, start: float, end: float) -> float:
+        """入出点之间去掉剪掉片段后的长度。"""
+        return max(0.0, end - start - sum(b - a for a, b in self.skips_within(start, end)))
+
+    def to_source_time(self, start: float, end: float, offset: float) -> float:
+        """镜头里的第 ``offset`` 秒对应素材里的哪一秒（跳过剪掉的片段）。"""
+        position = start + offset
+        for a, b in self.skips_within(start, end):
+            if a < position:
+                position += b - a
+        return min(position, end)
+
+    def to_shot_time(self, start: float, end: float, source: float) -> float | None:
+        """素材里的某一秒在镜头里是第几秒；落在剪掉的片段里时返回 None。"""
+        if source < start or source > end:
+            return None
+        shift = 0.0
+        for a, b in self.skips_within(start, end):
+            if a <= source < b:
+                return None
+            if b <= source:
+                shift += b - a
+        return source - start - shift
 
 
 class Shot(_Model):
@@ -571,6 +614,8 @@ class Shot(_Model):
     """镜头类型；写分镜时按视频类型的叙事结构给出，用来选默认的画面来源。"""
     voice: VoiceSettings | None = None
     """单独覆盖这个镜头的配音设置；为空时用项目设置。"""
+    speech: SpeechMode = "tts"
+    """original：原片自带人声（剪辑页导入），不再配音；字幕按语音识别的逐词时间对齐。"""
     status: ShotStatus = "draft"
     error: str | None = None
 

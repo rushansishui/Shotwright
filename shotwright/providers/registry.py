@@ -39,6 +39,8 @@ _BUILTIN_MODULES = (
     "shotwright.providers.video_gen.fal",
     "shotwright.providers.image_gen.openai_images",
     "shotwright.providers.music.archive",
+    "shotwright.providers.asr.faster_whisper",
+    "shotwright.providers.asr.openai_asr",
 )
 
 
