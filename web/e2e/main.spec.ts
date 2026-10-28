@@ -8,7 +8,7 @@ import { expect, test, type Page } from "@playwright/test";
  * 主流程端到端测试。用真实浏览器跑，不模拟网络。
  *
  * 前提：本地已装 FFmpeg（渲染需要）。测试只走完全本地的路径
- * （粘贴文案 → 按标点拆镜头 → 纯色画面渲染），不会调用任何收费服务。
+ * （按标点拆镜头 → 纯色画面渲染），不会调用任何收费服务。
  */
 
 const RUN_ID = Date.now().toString(36);
@@ -16,12 +16,12 @@ const RUN_ID = Date.now().toString(36);
 /** 两句足够长的文案：按句拆镜头时会合并过短的句子，短句会被并成一个镜头。 */
 const TWO_SHOTS = "镜头从城市的清晨慢慢推进到街角的路口和天桥。第二句，阳光照在刚刚开门的咖啡店橱窗上面闪闪发亮。";
 
-/** 用"粘贴现成文案"模式新建项目：不调用大模型，离线可用。 */
+/** 直接调用接口按句拆镜头新建项目：不调用大模型，离线可用。 */
 async function createProject(page: Page, script: string) {
-  await page.goto("/");
-  await page.getByRole("radio", { name: /粘贴现成文案|Paste a script/ }).click();
-  await page.locator("#script").fill(script);
-  await page.getByRole("button", { name: /生成分镜|Create storyboard/ }).click();
+  const response = await page.request.post("/api/v2/projects", { data: { mode: "split", script } });
+  expect(response.ok()).toBeTruthy();
+  const project = await response.json();
+  await page.goto(`/#/p/${project.id}`);
   await expect(page.locator(".editor")).toBeVisible();
 }
 

@@ -8,8 +8,6 @@ export interface Draft {
   title: string;
   lines: string[];
   videoType: VideoType;
-  mode?: "llm" | "split";
-  script?: string;
   aspect?: Aspect;
   duration?: number;
   language?: string;

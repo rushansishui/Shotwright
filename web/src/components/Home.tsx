@@ -26,7 +26,6 @@ function speakSeconds(text: string): number {
 
 export function Home() {
   const [initial] = useState(loadDraft);
-  const [mode, setMode] = useState<"llm" | "split">(initial.mode ?? "llm");
   const [step, setStep] = useState<Step>(initial.step ?? 1);
   const [idea, setIdea] = useState(initial.idea ?? "");
   const [subject, setSubject] = useState(initial.subject ?? "");
@@ -36,7 +35,6 @@ export function Home() {
   const [materials, setMaterials] = useState<PendingMaterial[]>([]);
   /** 诉求检查发现问题时先提示；用户点「仍然继续」后才往下走。 */
   const [warned, setWarned] = useState<"script" | "board" | null>(null);
-  const [script, setScript] = useState(initial.script ?? "");
   const [aspect, setAspect] = useState<Aspect>(initial.aspect ?? "9:16");
   const [duration, setDuration] = useState(initial.duration ?? 30);
   const [busy, setBusy] = useState<"normalize" | "script" | "create" | null>(null);
@@ -56,8 +54,8 @@ export function Home() {
   }, []);
 
   useEffect(
-    () => saveDraft({ step, idea, subject, title, lines, videoType, mode, script, aspect, duration, language }),
-    [step, idea, subject, title, lines, videoType, mode, script, aspect, duration, language],
+    () => saveDraft({ step, idea, subject, title, lines, videoType, aspect, duration, language }),
+    [step, idea, subject, title, lines, videoType, aspect, duration, language],
   );
 
   const llmReady = providers?.llm?.some((p) => p.default && p.configured) ?? false;
@@ -169,25 +167,6 @@ export function Home() {
     return uploaded;
   }
 
-  async function createFromScript() {
-    setBusy("create");
-    setError("");
-    try {
-      const project = await api.createProject({ mode: "split", script, canvas: { aspect }, language });
-      localStorage.removeItem(DRAFT_KEY);
-      if (materials.length) {
-        const uploaded = await uploadMaterials(project.id);
-        await api.applyMaterials(project.id, uploaded);
-      }
-      window.location.hash = `#/p/${project.id}`;
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(null);
-      setProgress("");
-    }
-  }
-
   function setLine(index: number, value: string) {
     setLines(lines.map((line, i) => (i === index ? value : line)));
   }
@@ -210,22 +189,20 @@ export function Home() {
   /** 视频设置：类型、语言、比例、时长。只出现一次，任何一步都能改。 */
   const settings = (
     <div className="video-settings">
-      {mode === "llm" && (
-        <div className="field">
-          <span className="label">{t("home.videoType")}</span>
-          <Segmented
-            label={t("home.videoType")}
-            value={videoType}
-            onChange={(value) => {
-              setVideoType(value);
-              setWarned(null);
-            }}
-            options={VIDEO_TYPES.map((value) => ({ value, label: t(`videoType.${value}` as MessageKey) }))}
-          />
-          {videoType === "footage" && <p className="hint small">{t("home.footageHint")}</p>}
-        </div>
-      )}
-      <div className={`settings-row ${mode === "llm" ? "three" : "two"}`}>
+      <div className="field">
+        <span className="label">{t("home.videoType")}</span>
+        <Segmented
+          label={t("home.videoType")}
+          value={videoType}
+          onChange={(value) => {
+            setVideoType(value);
+            setWarned(null);
+          }}
+          options={VIDEO_TYPES.map((value) => ({ value, label: t(`videoType.${value}` as MessageKey) }))}
+        />
+        {videoType === "footage" && <p className="hint small">{t("home.footageHint")}</p>}
+      </div>
+      <div className="settings-row three">
         <div className="field">
           <label htmlFor="language" title={t("home.languageHint")}>
             {t("home.language")}
@@ -251,17 +228,15 @@ export function Home() {
             ]}
           />
         </div>
-        {mode === "llm" && (
-          <div className="field">
-            <div className="field-row">
-              <label htmlFor="duration" title={t("home.durationHint")}>
-                {t("home.duration")}
-              </label>
-              <span className="muted small">{t("home.durationValue", { n: duration })}</span>
-            </div>
-            <input id="duration" type="range" min={10} max={180} step={5} value={duration} onChange={(e) => setDuration(Number(e.target.value))} />
+        <div className="field">
+          <div className="field-row">
+            <label htmlFor="duration" title={t("home.durationHint")}>
+              {t("home.duration")}
+            </label>
+            <span className="muted small">{t("home.durationValue", { n: duration })}</span>
           </div>
-        )}
+          <input id="duration" type="range" min={10} max={180} step={5} value={duration} onChange={(e) => setDuration(Number(e.target.value))} />
+        </div>
       </div>
     </div>
   );
@@ -271,251 +246,222 @@ export function Home() {
       <section className="card new-video home-create">
         <div className="card-head new-video-head">
           <h1>{t("home.newVideo")}</h1>
-          <Segmented
-            label={t("home.createMode")}
-            value={mode}
-            onChange={setMode}
-            options={[
-              { value: "llm", label: t("home.mode.llm") },
-              { value: "split", label: t("home.mode.split") },
-            ]}
-          />
         </div>
 
-        {mode === "llm" && (
-          <>
-            <ol className="flow-steps" aria-label={t("flow.steps")}>
-              {steps.map((item) => (
-                <li key={item.n} className={step === item.n ? "on" : step > item.n ? "done" : ""}>
-                  <button type="button" disabled={working || !reachable(item.n)} aria-current={step === item.n ? "step" : undefined} onClick={() => setStep(item.n)}>
-                    <span className="flow-num">{step > item.n ? "✓" : item.n}</span>
-                    {t(item.label)}
-                  </button>
-                </li>
-              ))}
-            </ol>
+        <ol className="flow-steps" aria-label={t("flow.steps")}>
+          {steps.map((item) => (
+            <li key={item.n} className={step === item.n ? "on" : step > item.n ? "done" : ""}>
+              <button type="button" disabled={working || !reachable(item.n)} aria-current={step === item.n ? "step" : undefined} onClick={() => setStep(item.n)}>
+                <span className="flow-num">{step > item.n ? "✓" : item.n}</span>
+                {t(item.label)}
+              </button>
+            </li>
+          ))}
+        </ol>
 
-            {settings}
+        {settings}
 
-            {step === 1 && (
-              <div className="flow-body">
-                <div className="field grow">
-                  <div className="field-row">
-                    <label htmlFor="idea">{t("flow.idea")}</label>
-                    <span className="muted small">{t("flow.ideaHint")}</span>
-                  </div>
-                  <textarea
-                    id="idea"
-                    className="input"
-                    rows={5}
-                    maxLength={4000}
-                    placeholder={t(`flow.ideaExample.${videoType}` as MessageKey)}
-                    value={idea}
-                    onChange={(e) => setIdea(e.target.value)}
-                  />
-                </div>
-                <MaterialsPicker items={materials} onChange={setMaterials} videoType={videoType} disabled={working} />
-                {providers && !llmReady && <p className="hint warn">{t("home.llmMissing")}</p>}
-                {error && <p className="hint error">{error}</p>}
-                <div className="flow-actions">
-                  <button type="button" className="btn primary big" disabled={!idea.trim() || working} onClick={normalize}>
-                    {busy === "normalize" ? t("flow.normalizing") : t("flow.normalize")}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn ghost"
-                    disabled={working}
-                    onClick={() => {
-                      if (!subject.trim()) setSubject(templates[videoType].template);
-                      setStep(2);
-                    }}
-                  >
-                    {t("flow.writeMyself")}
-                  </button>
-                </div>
+        {step === 1 && (
+          <div className="flow-body">
+            <div className="field grow">
+              <div className="field-row">
+                <label htmlFor="idea">{t("flow.idea")}</label>
+                <span className="muted small">{t("flow.ideaHint")}</span>
               </div>
-            )}
-
-            {step === 2 && (
-              <div className="flow-body">
-                <div className="field grow">
-                  <div className="field-row">
-                    <label htmlFor="subject">{t("home.subject")}</label>
-                    <span className={`muted small ${tooLong ? "bad" : ""}`}>
-                      {subjectBytes} / {MAX_SUBJECT_BYTES} {t("home.subjectBytes")}
-                    </span>
-                  </div>
-                  <p className="muted small">{t("flow.briefHint")}</p>
-                  <textarea
-                    id="subject"
-                    className="input"
-                    rows={12}
-                    placeholder={t("home.subjectExample", { example: templates[videoType].example })}
-                    value={subject}
-                    onChange={(e) => {
-                      setSubject(e.target.value);
-                      setWarned(null);
-                    }}
-                    aria-invalid={tooLong}
-                  />
-                  <div className="row">
-                    <button type="button" className="btn small" onClick={useTemplate}>
-                      {t("home.useTemplate")}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn small ghost"
-                      onClick={() => {
-                        setSubject(templates[videoType].example);
-                        setWarned(null);
-                      }}
-                    >
-                      {t("home.useExample")}
-                    </button>
-                    {idea.trim() && llmReady && (
-                      <button type="button" className="btn small ghost" disabled={working} onClick={normalize}>
-                        {busy === "normalize" ? t("flow.normalizing") : t("flow.renormalize")}
-                      </button>
-                    )}
-                  </div>
-                  <details className="brief-tips">
-                    <summary>{t("home.tips")}</summary>
-                    <ul>
-                      {["purpose", "audience", "message", "appearance", "style", "include", "noText"].map((key) => (
-                        <li key={key}>{t(`home.tip.${key}` as MessageKey)}</li>
-                      ))}
-                    </ul>
-                  </details>
-                  {tooLong && <p className="hint error">{t("home.subjectTooLong")}</p>}
-                  {providers && !llmReady && <p className="hint warn">{t("home.llmMissing")}</p>}
-                </div>
-                {materials.length > 0 && <p className="muted small">{t("flow.materialsCount", { n: materials.length })}</p>}
-                {error && <p className="hint error">{error}</p>}
-                {warned && hasIssues(issues) && (
-                  <div className="hint warn brief-check" role="alert">
-                    <p>{t("home.checkTitle")}</p>
-                    <ul>
-                      {issues.unfilled > 0 && <li>{t("home.checkUnfilled", { n: issues.unfilled })}</li>}
-                      {issues.tooShort && <li>{t("home.checkShort")}</li>}
-                      {issues.noAppearance && <li>{t("home.checkAppearance")}</li>}
-                    </ul>
-                  </div>
-                )}
-                <div className="flow-actions">
-                  <button
-                    type="button"
-                    className="btn primary big"
-                    disabled={!subject.trim() || tooLong || working}
-                    onClick={() => writeScript(warned === "script")}
-                  >
-                    {busy === "script" ? t("flow.scripting") : warned === "script" && hasIssues(issues) ? t("flow.scriptAnyway") : t("flow.writeScript")}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn"
-                    disabled={!subject.trim() || tooLong || working}
-                    onClick={() => createFromBrief(false, warned === "board")}
-                  >
-                    {busy === "create" ? progress || t("home.writing") : warned === "board" && hasIssues(issues) ? t("home.submitAnyway") : t("flow.skipScript")}
-                  </button>
-                  <button type="button" className="btn ghost" disabled={working} onClick={() => setStep(1)}>
-                    {t("flow.back")}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {step === 3 && (
-              <div className="flow-body">
-                <div className="field grow">
-                  <label htmlFor="title">{t("flow.title")}</label>
-                  <input id="title" className="input" maxLength={120} value={title} onChange={(e) => setTitle(e.target.value)} />
-                </div>
-                <div className="field grow">
-                  <div className="field-row">
-                    <span className="label">{t("flow.script")}</span>
-                    <span className={`muted small ${Math.abs(scriptSeconds - duration) > Math.max(5, duration * 0.3) ? "bad" : ""}`}>
-                      {t("flow.scriptStats", { n: cleanLines.length, seconds: scriptSeconds, target: duration })}
-                    </span>
-                  </div>
-                  <p className="muted small">{t("flow.scriptHint")}</p>
-                  <ol className="script-lines">
-                    {lines.map((line, index) => (
-                      <li key={index} className="script-line">
-                        <span className="script-num">{index + 1}</span>
-                        <textarea
-                          className="input"
-                          rows={2}
-                          aria-label={t("flow.lineLabel", { n: index + 1 })}
-                          value={line}
-                          onChange={(e) => setLine(index, e.target.value)}
-                        />
-                        <span className="muted small script-sec">{line.trim() ? `${Math.round(speakSeconds(line))}s` : ""}</span>
-                        <div className="script-tools">
-                          <button type="button" className="btn icon ghost" aria-label={t("flow.lineUp")} title={t("flow.lineUp")} disabled={index === 0} onClick={() => moveLine(index, -1)}>
-                            <Icon name="up" />
-                          </button>
-                          <button
-                            type="button"
-                            className="btn icon ghost"
-                            aria-label={t("flow.lineDown")}
-                            title={t("flow.lineDown")}
-                            disabled={index === lines.length - 1}
-                            onClick={() => moveLine(index, 1)}
-                          >
-                            <Icon name="down" />
-                          </button>
-                          <button
-                            type="button"
-                            className="btn icon ghost danger"
-                            aria-label={t("flow.lineRemove")}
-                            title={t("flow.lineRemove")}
-                            onClick={() => setLines(lines.filter((_, i) => i !== index))}
-                          >
-                            <Icon name="trash" />
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ol>
-                  <button type="button" className="btn small" onClick={() => setLines([...lines, ""])} disabled={lines.length >= 60}>
-                    <Icon name="plus" /> {t("flow.lineAdd")}
-                  </button>
-                </div>
-                {materials.length > 0 && <p className="muted small">{t("flow.materialsCount", { n: materials.length })}</p>}
-                {error && <p className="hint error">{error}</p>}
-                <div className="flow-actions">
-                  <button type="button" className="btn primary big" disabled={!cleanLines.length || working} onClick={() => createFromBrief(true)}>
-                    {busy === "create" ? progress || t("home.writing") : t("flow.createFromScript")}
-                  </button>
-                  <button type="button" className="btn" disabled={working} onClick={() => writeScript(true)}>
-                    {busy === "script" ? t("flow.scripting") : t("flow.rewriteScript")}
-                  </button>
-                  <button type="button" className="btn ghost" disabled={working} onClick={() => setStep(2)}>
-                    {t("flow.back")}
-                  </button>
-                </div>
-              </div>
-            )}
-          </>
-        )}
-
-        {mode === "split" && (
-          <>
-            {settings}
-            <div className="field">
-              <label htmlFor="script">{t("home.script")}</label>
-              <textarea id="script" className="input" rows={7} placeholder={t("home.scriptPlaceholder")} value={script} onChange={(e) => setScript(e.target.value)} />
+              <textarea
+                id="idea"
+                className="input"
+                rows={5}
+                maxLength={4000}
+                placeholder={t(`flow.ideaExample.${videoType}` as MessageKey)}
+                value={idea}
+                onChange={(e) => setIdea(e.target.value)}
+              />
             </div>
-            <MaterialsPicker items={materials} onChange={setMaterials} videoType={null} disabled={working} />
+            <MaterialsPicker items={materials} onChange={setMaterials} videoType={videoType} disabled={working} />
+            {providers && !llmReady && <p className="hint warn">{t("home.llmMissing")}</p>}
             {error && <p className="hint error">{error}</p>}
             <div className="flow-actions">
-              <button type="button" className="btn primary big" disabled={!script.trim() || working} onClick={createFromScript}>
-                {busy === "create" ? progress || t("home.creating") : t("home.submit")}
+              <button type="button" className="btn primary big" disabled={!idea.trim() || working} onClick={normalize}>
+                {busy === "normalize" ? t("flow.normalizing") : t("flow.normalize")}
+              </button>
+              <button
+                type="button"
+                className="btn ghost"
+                disabled={working}
+                onClick={() => {
+                  if (!subject.trim()) setSubject(templates[videoType].template);
+                  setStep(2);
+                }}
+              >
+                {t("flow.writeMyself")}
               </button>
             </div>
-          </>
+          </div>
         )}
+
+        {step === 2 && (
+          <div className="flow-body">
+            <div className="field grow">
+              <div className="field-row">
+                <label htmlFor="subject">{t("home.subject")}</label>
+                <span className={`muted small ${tooLong ? "bad" : ""}`}>
+                  {subjectBytes} / {MAX_SUBJECT_BYTES} {t("home.subjectBytes")}
+                </span>
+              </div>
+              <p className="muted small">{t("flow.briefHint")}</p>
+              <textarea
+                id="subject"
+                className="input"
+                rows={12}
+                placeholder={t("home.subjectExample", { example: templates[videoType].example })}
+                value={subject}
+                onChange={(e) => {
+                  setSubject(e.target.value);
+                  setWarned(null);
+                }}
+                aria-invalid={tooLong}
+              />
+              <div className="row">
+                <button type="button" className="btn small" onClick={useTemplate}>
+                  {t("home.useTemplate")}
+                </button>
+                <button
+                  type="button"
+                  className="btn small ghost"
+                  onClick={() => {
+                    setSubject(templates[videoType].example);
+                    setWarned(null);
+                  }}
+                >
+                  {t("home.useExample")}
+                </button>
+                {idea.trim() && llmReady && (
+                  <button type="button" className="btn small ghost" disabled={working} onClick={normalize}>
+                    {busy === "normalize" ? t("flow.normalizing") : t("flow.renormalize")}
+                  </button>
+                )}
+              </div>
+              <details className="brief-tips">
+                <summary>{t("home.tips")}</summary>
+                <ul>
+                  {["purpose", "audience", "message", "appearance", "style", "include", "noText"].map((key) => (
+                    <li key={key}>{t(`home.tip.${key}` as MessageKey)}</li>
+                  ))}
+                </ul>
+              </details>
+              {tooLong && <p className="hint error">{t("home.subjectTooLong")}</p>}
+              {providers && !llmReady && <p className="hint warn">{t("home.llmMissing")}</p>}
+            </div>
+            {materials.length > 0 && <p className="muted small">{t("flow.materialsCount", { n: materials.length })}</p>}
+            {error && <p className="hint error">{error}</p>}
+            {warned && hasIssues(issues) && (
+              <div className="hint warn brief-check" role="alert">
+                <p>{t("home.checkTitle")}</p>
+                <ul>
+                  {issues.unfilled > 0 && <li>{t("home.checkUnfilled", { n: issues.unfilled })}</li>}
+                  {issues.tooShort && <li>{t("home.checkShort")}</li>}
+                  {issues.noAppearance && <li>{t("home.checkAppearance")}</li>}
+                </ul>
+              </div>
+            )}
+            <div className="flow-actions">
+              <button
+                type="button"
+                className="btn primary big"
+                disabled={!subject.trim() || tooLong || working}
+                onClick={() => writeScript(warned === "script")}
+              >
+                {busy === "script" ? t("flow.scripting") : warned === "script" && hasIssues(issues) ? t("flow.scriptAnyway") : t("flow.writeScript")}
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={!subject.trim() || tooLong || working}
+                onClick={() => createFromBrief(false, warned === "board")}
+              >
+                {busy === "create" ? progress || t("home.writing") : warned === "board" && hasIssues(issues) ? t("home.submitAnyway") : t("flow.skipScript")}
+              </button>
+              <button type="button" className="btn ghost" disabled={working} onClick={() => setStep(1)}>
+                {t("flow.back")}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === 3 && (
+          <div className="flow-body">
+            <div className="field grow">
+              <label htmlFor="title">{t("flow.title")}</label>
+              <input id="title" className="input" maxLength={120} value={title} onChange={(e) => setTitle(e.target.value)} />
+            </div>
+            <div className="field grow">
+              <div className="field-row">
+                <span className="label">{t("flow.script")}</span>
+                <span className={`muted small ${Math.abs(scriptSeconds - duration) > Math.max(5, duration * 0.3) ? "bad" : ""}`}>
+                  {t("flow.scriptStats", { n: cleanLines.length, seconds: scriptSeconds, target: duration })}
+                </span>
+              </div>
+              <p className="muted small">{t("flow.scriptHint")}</p>
+              <ol className="script-lines">
+                {lines.map((line, index) => (
+                  <li key={index} className="script-line">
+                    <span className="script-num">{index + 1}</span>
+                    <textarea
+                      className="input"
+                      rows={2}
+                      aria-label={t("flow.lineLabel", { n: index + 1 })}
+                      value={line}
+                      onChange={(e) => setLine(index, e.target.value)}
+                    />
+                    <span className="muted small script-sec">{line.trim() ? `${Math.round(speakSeconds(line))}s` : ""}</span>
+                    <div className="script-tools">
+                      <button type="button" className="btn icon ghost" aria-label={t("flow.lineUp")} title={t("flow.lineUp")} disabled={index === 0} onClick={() => moveLine(index, -1)}>
+                        <Icon name="up" />
+                      </button>
+                      <button
+                        type="button"
+                        className="btn icon ghost"
+                        aria-label={t("flow.lineDown")}
+                        title={t("flow.lineDown")}
+                        disabled={index === lines.length - 1}
+                        onClick={() => moveLine(index, 1)}
+                      >
+                        <Icon name="down" />
+                      </button>
+                      <button
+                        type="button"
+                        className="btn icon ghost danger"
+                        aria-label={t("flow.lineRemove")}
+                        title={t("flow.lineRemove")}
+                        onClick={() => setLines(lines.filter((_, i) => i !== index))}
+                      >
+                        <Icon name="trash" />
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+              <button type="button" className="btn small" onClick={() => setLines([...lines, ""])} disabled={lines.length >= 60}>
+                <Icon name="plus" /> {t("flow.lineAdd")}
+              </button>
+            </div>
+            {materials.length > 0 && <p className="muted small">{t("flow.materialsCount", { n: materials.length })}</p>}
+            {error && <p className="hint error">{error}</p>}
+            <div className="flow-actions">
+              <button type="button" className="btn primary big" disabled={!cleanLines.length || working} onClick={() => createFromBrief(true)}>
+                {busy === "create" ? progress || t("home.writing") : t("flow.createFromScript")}
+              </button>
+              <button type="button" className="btn" disabled={working} onClick={() => writeScript(true)}>
+                {busy === "script" ? t("flow.scripting") : t("flow.rewriteScript")}
+              </button>
+              <button type="button" className="btn ghost" disabled={working} onClick={() => setStep(2)}>
+                {t("flow.back")}
+              </button>
+            </div>
+          </div>
+        )}
+
       </section>
 
       <ProjectList
