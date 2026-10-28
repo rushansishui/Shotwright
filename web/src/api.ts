@@ -50,6 +50,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       if (typeof data.detail === "string") message = data.detail;
       // 页面已经是新版、后台服务还是旧版时，新接口会落到静态文件上，返回这两种通用错误。
       if (["Method Not Allowed", "Not Found", "接口不存在", "No such API endpoint"].includes(data.detail)) message = translate("common.serverOutdated");
+      // 新页面传了新字段、后台还是旧版时，后台会拒绝"不认识的字段"：提示重启服务，而不是显示英文报错。
+      else if (Array.isArray(data.detail) && data.detail.some((d: { type?: string }) => d.type === "extra_forbidden"))
+        message = translate("common.serverOutdated");
       else if (Array.isArray(data.detail)) message = data.detail.map((d: { msg: string }) => d.msg).join("; ");
     } catch {
       /* 响应不是 JSON */
