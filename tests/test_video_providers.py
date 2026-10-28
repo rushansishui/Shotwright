@@ -199,6 +199,69 @@ def test_kling_business_error_is_a_rejection(settings, tmp_path):
         _provider("kling", settings, server).generate("x", aspect="9:16", duration=5, output=tmp_path / "v")
 
 
+# ---- MiniMax ------------------------------------------------------------------
+
+
+def _minimax_server():
+    return Server(
+        {
+            ("POST", "/v1/video_generation"): httpx.Response(200, json={"task_id": "mt1", "base_resp": {"status_code": 0}}),
+            ("POST", "/v2/video_generation"): httpx.Response(200, json={"task_id": "mh3", "base_resp": {"status_code": 0}}),
+            ("GET", "/v1/query/video_generation"): httpx.Response(
+                200, json={"task_id": "mt1", "status": "Success", "file_id": "f1", "base_resp": {"status_code": 0}}
+            ),
+            ("GET", "/v1/files/retrieve"): httpx.Response(200, json={"file": {"download_url": "https://cdn.example/m.mp4"}}),
+            ("GET", "/v2/query/video_generation/mh3"): httpx.Response(
+                200, json={"task": {"status": "succeeded", "content": {"url": "https://cdn.example/h3.mp4"}}}
+            ),
+        }
+    )
+
+
+def test_minimax_hailuo_v1_flow(settings, tmp_path):
+    settings.providers["video_gen"] = {"minimax": {"api_key": "k"}}
+    server = _minimax_server()
+    minimax = _provider("minimax", settings, server)
+    image = make_image(tmp_path / "p.png")
+    tasks = []
+    minimax.generate("x", aspect="9:16", duration=7, output=tmp_path / "v", first_frame=image, on_task=tasks.append)
+    body = server.bodies()[0]
+    assert tasks == ["v1:mt1"] and body["model"] == "MiniMax-Hailuo-2.3" and body["duration"] == 10
+    assert body["resolution"] == "768P" and body["prompt_optimizer"] is False
+    assert body["first_frame_image"].startswith("data:image/png;base64,")
+    assert "file_id=f1" in str(server.requests[2].url)  # 用 file_id 换下载地址
+
+
+def test_minimax_1080p_is_six_seconds_only(settings):
+    settings.providers["video_gen"] = {"minimax": {"api_key": "k", "resolution": "1080p"}}
+    minimax = registry.create("video_gen", "minimax", settings)
+    assert minimax.max_duration == 6
+    assert minimax.plan("x", aspect="9:16", duration=9, first_frame=None, references=None).seconds == 6
+
+
+def test_minimax_h3_reference_images(settings, tmp_path):
+    settings.providers["video_gen"] = {"minimax": {"api_key": "k", "model": "MiniMax-H3"}}
+    server = _minimax_server()
+    minimax = _provider("minimax", settings, server)
+    assert minimax.max_reference_images == 9
+    refs = [make_image(tmp_path / f"{i}.png", size=f"{320 + i}x320") for i in range(2)]
+    tasks = []
+    path = minimax.generate("x", aspect="9:16", duration=5, output=tmp_path / "v", reference_images=refs, on_task=tasks.append)
+    body = server.bodies()[0]
+    assert tasks == ["v2:mh3"] and path.read_bytes() == b"mp4-bytes"
+    assert [item.get("role") for item in body["content"]] == [None, "reference_image", "reference_image"]
+    assert body["ratio"] == "9:16" and body["resolution"] == "768P" and body["duration"] == 5
+
+
+def test_minimax_business_error_in_http_200(settings, tmp_path):
+    settings.providers["video_gen"] = {"minimax": {"api_key": "k"}}
+    server = Server(
+        {("POST", "/v1/video_generation"): httpx.Response(200, json={"base_resp": {"status_code": 1008, "status_msg": "insufficient balance"}})}
+    )
+    with pytest.raises(ProviderError, match="insufficient balance"):
+        _provider("minimax", settings, server).generate("x", aspect="9:16", duration=6, output=tmp_path / "v")
+
+
 def test_kling_accepts_single_api_key_and_new_result_shape(settings, tmp_path):
     """可灵新的单密钥鉴权（Bearer API Key）和新结构的查询结果（status / outputs[]）。"""
     from shotwright.providers.video_gen.kling import KlingVideo
@@ -225,6 +288,32 @@ def test_kling_accepts_single_api_key_and_new_result_shape(settings, tmp_path):
     provider._client = lambda: httpx.Client(transport=httpx.MockTransport(handler))  # type: ignore[method-assign]
     path = provider.generate("P1 在雪地", aspect="9:16", duration=5, output=tmp_path / "out")
     assert path.exists() and seen[0].headers["Authorization"] == "Bearer key-123"
+
+
+def test_account_problems_are_not_mistaken_for_unsupported_references(tmp_path):
+    """余额不足、Key 无效被拒时不要「去掉参考图重试」——再交一次也一样失败。"""
+    from shotwright.providers.base import ReferenceImagesUnsupported
+    from shotwright.providers.video_gen.common import is_account_problem
+    from shotwright.providers.video_gen.minimax import MiniMaxVideo
+
+    assert is_account_problem("MiniMax 拒绝了请求：HTTP 402，insufficient balance")
+    assert is_account_problem("拒绝了请求：HTTP 401，InvalidApiKey")
+    assert not is_account_problem("拒绝了请求：HTTP 400，reference_image not supported")
+    images = [make_image(tmp_path / "a.png")]
+
+    def run(status, message):
+        def handler(request):
+            return httpx.Response(status, json={"base_resp": {"status_code": 1008, "status_msg": message}})
+
+        provider = MiniMaxVideo({"api_key": "k", "model": "MiniMax-H3", "poll_interval": "0"})
+        provider._client = lambda: httpx.Client(transport=httpx.MockTransport(handler))  # type: ignore[method-assign]
+        provider.generate("x", aspect="9:16", duration=5, output=tmp_path / "o", reference_images=images)
+
+    with pytest.raises(ProviderError) as info:
+        run(402, "insufficient balance")
+    assert not isinstance(info.value, ReferenceImagesUnsupported)
+    with pytest.raises(ReferenceImagesUnsupported):
+        run(400, "invalid parameter")
 
 
 def test_wan_base_url_is_normalized_and_bare_404_names_the_url(tmp_path):

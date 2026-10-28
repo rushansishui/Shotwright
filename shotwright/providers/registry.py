@@ -36,6 +36,9 @@ _BUILTIN_MODULES = (
     "shotwright.providers.video_gen.wan",
     "shotwright.providers.video_gen.wan",
     "shotwright.providers.video_gen.kling",
+    "shotwright.providers.video_gen.wan",
+    "shotwright.providers.video_gen.kling",
+    "shotwright.providers.video_gen.minimax",
     "shotwright.providers.image_gen.openai_images",
     "shotwright.providers.music.archive",
 )
