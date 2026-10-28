@@ -63,6 +63,27 @@ def whisper_language(code: str | None) -> str | None:
     return code.split("-")[0].lower()
 
 
+SAMPLE_RATE = 16000
+
+
+def load_audio(path: Path):
+    """用 ffmpeg 把音频解码成 16kHz 单声道浮点数组交给 faster-whisper。
+
+    不用 faster-whisper 自带的解码：它依赖 PyAV，新版 PyAV 去掉了它用到的参数
+    （报 ``open() got an unexpected keyword argument 'metadata_errors'``），镜匠本来就有 ffmpeg。
+    """
+    import numpy as np
+
+    from shotwright.media.ffmpeg import run_ffmpeg
+
+    pcm = path.with_suffix(".pcm")
+    run_ffmpeg(["-i", str(path), "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", str(pcm)], timeout=900)
+    try:
+        return np.fromfile(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+    finally:
+        pcm.unlink(missing_ok=True)
+
+
 class FasterWhisperASR:
     def __init__(self, settings: dict[str, str]):
         self.model_name = (settings.get("model") or "small").strip()
@@ -175,7 +196,7 @@ class FasterWhisperASR:
         lang = whisper_language(language)
         try:
             segments, info = model.transcribe(  # type: ignore[attr-defined]
-                str(audio),
+                load_audio(audio),
                 language=lang,
                 word_timestamps=True,
                 vad_filter=True,

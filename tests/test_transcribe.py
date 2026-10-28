@@ -248,3 +248,35 @@ def test_faster_whisper_download_falls_back_to_mirror(monkeypatch, tmp_path):
     monkeypatch.setattr(fw, "_reachable", lambda url, proxy=None: False)
     with pytest.raises(ProviderError, match="下载失败"):
         asr._download(None)
+
+
+def test_faster_whisper_gets_decoded_samples_not_a_path(monkeypatch, tmp_path):
+    """faster-whisper 自带的解码依赖 PyAV，新版 PyAV 不兼容；改为 ffmpeg 解码后把采样数组交给它。"""
+    pytest.importorskip("faster_whisper")
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from shotwright.providers.asr import faster_whisper as fw
+
+    audio = tmp_path / "speech.mp3"
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=300:duration=2", str(audio)],
+        check=True,
+    )
+    seen = {}
+
+    class Model:
+        def transcribe(self, samples, **kwargs):
+            seen["samples"] = samples
+            word = SimpleNamespace(word=" 你好", start=0.1, end=0.5)
+            segment = SimpleNamespace(start=0.0, end=1.0, words=[word])
+            return iter([segment]), SimpleNamespace(duration=2.0, language="zh")
+
+    asr = fw.FasterWhisperASR({})
+    monkeypatch.setattr(asr, "_model", lambda progress=None: Model())
+    result = asr.transcribe(audio, language="zh-CN")
+    samples = seen["samples"]
+    assert isinstance(samples, np.ndarray) and samples.dtype == np.float32
+    assert abs(len(samples) - 2 * fw.SAMPLE_RATE) < fw.SAMPLE_RATE * 0.1
+    assert result.words[0].text == "你好" and result.language == "zh"
