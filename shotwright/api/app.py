@@ -23,23 +23,26 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from shotwright import __version__
+from shotwright import __version__, config_edit
 from shotwright.api import errors
 from shotwright.api.jobs import JobManager
 from shotwright.api.schemas import (
     AddShot,
     AmbienceSearch,
     ApplyMaterials,
+    AppSettings,
     BgmDownload,
     BgmSearch,
     CandidatesRequest,
     ChargeConsent,
     CreateProject,
     CreateVersion,
+    DefaultProvider,
     DuplicateProject,
     ExpandRequest,
     NormalizeBrief,
     PreviewVoice,
+    ProviderValues,
     ReorderShots,
     RewriteShot,
     ScriptRequest,
@@ -71,6 +74,7 @@ from shotwright.services import (
     music,
     prompting,
     pronounce,
+    readiness,
     rewrite,
     storyboard,
     visuals,
@@ -317,9 +321,18 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     "configured": registry.is_configured(spec, settings),
                     "default": settings.default_provider(spec.kind) == spec.id,
                     "fields": [
-                        {"key": f.key, "label": f.label, "required": f.required, "secret": f.secret}
+                        {
+                            "key": f.key,
+                            "label": f.label,
+                            "required": f.required,
+                            "secret": f.secret,
+                            "default": f.default,
+                            "help": f.help,
+                        }
                         for f in spec.fields
                     ],
+                    "required_any": [list(group) for group in spec.required_any],
+                    "testable": spec.kind in ("llm", "video_gen"),
                     "capabilities": sorted(spec.capabilities),
                     "max_duration": spec.max_duration,
                     "has_audio": spec.has_audio,
@@ -329,6 +342,101 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 }
             )
         return result
+
+    # ---- 设置：在界面里改 config.toml --------------------------------------------
+
+    def _mask(value: str) -> str:
+        return "••••" + value[-4:] if len(value) > 8 else "••••"
+
+    def _config_path() -> Path:
+        if settings.config_path is None:
+            raise HTTPException(409, "当前没有配置文件路径，不能在界面里修改配置")
+        return settings.config_path
+
+    def _spec_or_404(kind: str, provider_id: str):
+        try:
+            return registry.spec(kind, provider_id)
+        except ProviderError:
+            raise HTTPException(404, "服务不存在") from None
+
+    @api.get("/settings")
+    def read_settings():
+        """设置页：当前的默认服务、代理和各服务填写的值（密钥只返回是否已填和后 4 位）。"""
+        result: dict[str, dict] = {}
+        for spec in registry.specs():
+            saved = settings.provider_settings(spec.kind, spec.id)
+            fields = {}
+            for f in spec.fields:
+                value = str(saved.get(f.key, ""))
+                fields[f.key] = {"set": bool(value), "value": _mask(value) if f.secret and value else value}
+            result.setdefault(spec.kind, {})[spec.id] = {
+                "configured": registry.is_configured(spec, settings),
+                "fields": fields,
+            }
+        return {
+            "config_path": str(settings.config_path) if settings.config_path else "",
+            "editable": settings.config_path is not None,
+            "proxy": settings.proxy or "",
+            "defaults": {kind: settings.default_provider(kind) for kind in ("llm", "tts", "stock", "video_gen", "image_gen")},
+            "providers": result,
+        }
+
+    @api.put("/settings/providers/{kind}/{provider_id}")
+    def save_provider_settings(kind: str, provider_id: str, body: ProviderValues):
+        """保存一个服务的配置到 config.toml，立即生效（不用重启）。"""
+        spec = _spec_or_404(kind, provider_id)
+        known = {f.key for f in spec.fields}
+        unknown = set(body.values) - known
+        if unknown:
+            raise HTTPException(422, f"不认识的配置项：{', '.join(sorted(unknown))}")
+        changes: dict[str, str | None] = {key: (value.strip() or None) for key, value in body.values.items()}
+        try:
+            config_edit.update(_config_path(), ["providers", kind, provider_id], changes)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        current = settings.providers.setdefault(kind, {}).setdefault(provider_id, {})
+        for key, value in changes.items():
+            if value is None:
+                current.pop(key, None)
+            else:
+                current[key] = value
+        return read_settings()
+
+    @api.put("/settings/defaults")
+    def save_default_provider(body: DefaultProvider):
+        _spec_or_404(body.kind, body.provider)
+        try:
+            config_edit.update(_config_path(), ["defaults"], {body.kind: body.provider})
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        settings.defaults[body.kind] = body.provider
+        return read_settings()
+
+    @api.put("/settings/app")
+    def save_app_settings(body: AppSettings):
+        proxy = body.proxy.strip()
+        if proxy and not proxy.startswith(("http://", "https://", "socks5://", "socks5h://")):
+            raise HTTPException(422, "代理地址要以 http://、https:// 或 socks5:// 开头")
+        try:
+            config_edit.update(_config_path(), ["app"], {"proxy": proxy or None})
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        settings.proxy = proxy or None
+        return read_settings()
+
+    @api.post("/settings/providers/{kind}/{provider_id}/test")
+    def test_provider(kind: str, provider_id: str):
+        """测试连接：发一个不花钱（或几乎不花钱）的请求，确认 Key、地址、模型名对不对。"""
+        _spec_or_404(kind, provider_id)
+        try:
+            provider = registry.create(kind, provider_id, settings)
+        except ProviderError as exc:
+            return {"ok": False, "message": str(exc)}
+        check = getattr(provider, "check", None)
+        if check is None:
+            return {"ok": False, "message": "这个服务暂不支持测试连接"}
+        ok, message = check()
+        return {"ok": ok, "message": message}
 
     @api.get("/voices")
     def voices(language: str | None = None, provider: str | None = None):
@@ -508,6 +616,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             target_seconds=body.duration,
             video_type=body.video_type,
         )
+        # 新项目要先确认素材（全片设定）才能生成 AI 画面。
+        project.look.confirmed = False
         if body.canvas:
             project.canvas = body.canvas
         if not body.voice and settings.default_provider("tts"):
@@ -534,6 +644,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             project.title = project.title or board.title
             project.shots = board.shots
             project.look = board.look
+            project.look.confirmed = False
             if body.video_type:
                 storyboard.suggest_sources(project.shots, visuals.available_sources(settings), project.look)
         elif body.mode == "split":
@@ -617,6 +728,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 latest.title = board.title or body.subject[:40]
             latest.shots = board.shots
             latest.look = board.look
+            latest.look.confirmed = False  # 新写的主体要先准备、确认，才能生成 AI 画面
             if latest.video_type:
                 storyboard.suggest_sources(latest.shots, visuals.available_sources(settings), latest.look)
             brief_service.apply_materials(latest, materials, board.footage)
@@ -653,7 +765,6 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 "idea",
                 "script",
                 "video_type",
-                "look",
                 "titles",
                 "chain_frames",
                 "target_seconds",
@@ -672,6 +783,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 value = getattr(body, name)
                 if value is not None:
                     setattr(project, name, value)
+            if body.look is not None:
+                project.look = readiness.carry_over(project.look, body.look)
             if "loudness" in body.model_fields_set:
                 project.loudness = body.loudness
             if "budget" in body.model_fields_set:
@@ -716,6 +829,18 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 raise KeyError(code)
             if asset_id not in subject.images:
                 subject.images.append(asset_id)
+
+        return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/look/confirm")
+    def confirm_look(project_id: str):
+        """确认素材（全片设定）已准备好，之后才能生成 AI 画面。没准备好时返回 409 并说明缺什么。"""
+
+        def change(project: Project) -> None:
+            try:
+                readiness.confirm(project)
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from exc
 
         return _mutate(project_id, change)
 
@@ -1025,6 +1150,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         if shot.visual.locked:
             raise HTTPException(409, "镜头已锁定，请先解锁")
         body = body or CandidatesRequest()
+        if (body.edit_selected or shot.visual.mode in ("ai", "image")) and readiness.generation_locked(project):
+            raise HTTPException(409, readiness.LOCKED_MESSAGE)
         confirmed = body.confirm_charge
         edit = body.edit_selected
         keyframes = body.keyframes if shot.visual.mode == "ai" and not edit else 0
@@ -1102,6 +1229,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         def change(latest: Project) -> None:
             if latest.look.is_empty() and not project.look.is_empty():
                 latest.look = project.look
+                latest.look.confirmed = False  # 补出来的主体同样要先确认
             for shot_id in changed:
                 try:
                     target = latest.shot(shot_id)
@@ -1285,6 +1413,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         """``confirm_charge: true`` 时，没有画面的 AI 镜头会提交收费生成；否则改用素材检索。"""
         if not store.exists(_id(project_id)):
             raise ProjectNotFound(project_id)
+        if body and body.confirm_charge and readiness.generation_locked(store.load(project_id)):
+            raise HTTPException(409, readiness.LOCKED_MESSAGE)
         return jobs.submit(
             project_id,
             allow_paid=bool(body and body.confirm_charge),

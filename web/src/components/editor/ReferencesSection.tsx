@@ -3,7 +3,9 @@ import { api, assetUrl } from "../../api";
 import type { Project, ReferenceAsset, ReferenceRole } from "../../types";
 import { useI18n } from "../../i18n";
 
-const ROLES: ReferenceRole[] = ["product", "person", "logo", "style"];
+/** 品牌与风格参考只放 Logo 和风格图；产品、人物的图片属于全片设定里的主体。 */
+const ROLES: ReferenceRole[] = ["logo", "style"];
+const MAX_SUBJECT_IMAGES = 10;
 
 interface ReferencesSectionProps {
   project: Project;
@@ -46,6 +48,22 @@ export function ReferencesSection({ project, run, setError }: ReferencesSectionP
     return run(() => api.updateProject(id, { references: next }));
   }
 
+  /** 旧项目里放在这里的产品 / 人物图：归到全片设定的主体下，生成时才会作为这个主体的参考图。 */
+  function moveToSubject(index: number, code: string) {
+    const ref = project.references[index];
+    const look = project.look;
+    if (!look || !ref) return;
+    const subjects = look.subjects.map((s) =>
+      s.code === code && !(s.images ?? []).includes(ref.asset_id) && (s.images ?? []).length < MAX_SUBJECT_IMAGES
+        ? { ...s, images: [...(s.images ?? []), ref.asset_id] }
+        : s,
+    );
+    const references = project.references.filter((_, i) => i !== index);
+    return run(() => api.updateProject(id, { look: { ...look, subjects }, references }));
+  }
+
+  const subjects = (project.look?.subjects ?? []).filter((s) => s.kind !== "place");
+
   return (
     <div className="field">
       <div className="field-row">
@@ -59,7 +77,7 @@ export function ReferencesSection({ project, run, setError }: ReferencesSectionP
         hidden
         onChange={(e) => {
           const file = e.target.files?.[0];
-          if (file) addReference(file, "product");
+          if (file) addReference(file, "logo");
           e.target.value = "";
         }}
       />
@@ -89,17 +107,38 @@ export function ReferencesSection({ project, run, setError }: ReferencesSectionP
                     placeholder={t("references.labelPlaceholder")}
                     onChange={(e) => patch(index, { label: e.target.value })}
                   />
-                  <select
-                    className="input"
-                    value={ref.role}
-                    onChange={(e) => patch(index, { role: e.target.value as ReferenceRole })}
-                  >
-                    {ROLES.map((role) => (
-                      <option key={role} value={role}>
-                        {t(`references.role.${role}`)}
-                      </option>
-                    ))}
-                  </select>
+                  {ref.role === "product" || ref.role === "person" ? (
+                    <div className="row">
+                      <span className="hint warn small">{t("references.oldRole", { role: t(`references.role.${ref.role}`) })}</span>
+                      {subjects.length > 0 && (
+                        <select
+                          className="input compact"
+                          aria-label={t("references.moveTo")}
+                          value=""
+                          onChange={(e) => e.target.value && moveToSubject(index, e.target.value)}
+                        >
+                          <option value="">{t("references.moveTo")}</option>
+                          {subjects.map((s) => (
+                            <option key={s.code} value={s.code}>
+                              {s.code} {s.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  ) : (
+                    <select
+                      className="input"
+                      value={ref.role}
+                      onChange={(e) => patch(index, { role: e.target.value as ReferenceRole })}
+                    >
+                      {ROLES.map((role) => (
+                        <option key={role} value={role}>
+                          {t(`references.role.${role}`)}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                   <div className="row">
                     <label className="switch">
                       <input

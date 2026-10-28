@@ -305,3 +305,19 @@ class StoryboardRequest(_Body):
 
 class ApplyMaterials(_Body):
     materials: list[MaterialNote] = Field(default_factory=list, max_length=30)
+
+
+class ProviderValues(_Body):
+    """设置页保存一个服务的配置：字符串设置；空字符串删除这一项；不传的项不改。"""
+
+    values: dict[str, str] = Field(default_factory=dict)
+
+
+class DefaultProvider(_Body):
+    kind: str = Field(..., max_length=20)
+    provider: str = Field(..., max_length=40)
+
+
+class AppSettings(_Body):
+    proxy: str = Field("", max_length=300)
+    """访问外网用的代理，例如 http://127.0.0.1:7890；空字符串表示不用代理。"""

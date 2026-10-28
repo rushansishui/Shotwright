@@ -339,6 +339,8 @@ class LookSubject(_Model):
     默认只参照第一张（主图）；镜头可以改选别的图（例如另一种颜色），见 :attr:`ShotVisual.refs`。"""
     image_labels: dict[str, str] = Field(default_factory=dict)
     """参考图的说明（素材 id → 颜色 / 款式，例如「浅粉色」），写进提示词，让模型按这一款生成。"""
+    no_reference: bool = False
+    """用户确认这个主体不需要参考图（例如路人、背景人物），准备清单里算作就绪。"""
 
     @model_validator(mode="before")
     @classmethod
@@ -402,6 +404,11 @@ class Look(_Model):
     """统一调色预设：自然、暖色、冷色、鲜艳、胶片、黑白；空字符串表示不调色。"""
     brand: str | None = None
     """品牌包。预留，v0.5 品牌包作为全片设定的预设。"""
+    confirmed: bool | None = None
+    """素材是否已确认：确认前不能生成 AI 画面。``None`` 是有这个功能之前的旧项目，按已确认处理。
+    由服务端维护（``POST /projects/{id}/look/confirm``），客户端改全片设定时不能改它。"""
+    revised_at: float | None = None
+    """确认之后又改了设定的时间：在这之前生成的 AI 画面可能和新设定不一致。"""
 
     @field_validator("scene", "style")
     @classmethod

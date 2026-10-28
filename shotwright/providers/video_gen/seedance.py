@@ -207,6 +207,14 @@ class SeedanceVideo:
                 on_task(task_id)
             return self._finish(client, task_id, output)
 
+    def check(self) -> tuple[bool, str]:
+        """测试连接：列出最近的一个任务，不花钱。"""
+        from shotwright.providers.video_gen.common import run_check
+
+        with self._client() as client:
+            url = f"{self.base_url}/contents/generations/tasks?page_num=1&page_size=1"
+            return run_check(client, url, self._headers, secret=self.api_key)
+
     def resume(self, task_id: str, *, output: Path) -> Path:
         """继续轮询一个已提交的任务（进程重启后恢复用）。"""
         tasks_url = f"{self.base_url}/contents/generations/tasks"

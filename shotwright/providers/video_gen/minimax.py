@@ -172,6 +172,9 @@ class MiniMaxVideo(TaskVideoProvider):
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
+    def check_target(self):
+        return f"{self.base_url}/v1/query/video_generation?task_id=0", self._headers, self.api_key
+
     def build_payload(self, request: Request) -> dict:
         if self.v2:
             content: list[dict] = [{"type": "text", "text": request.prompt}]

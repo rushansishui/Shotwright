@@ -405,8 +405,53 @@ class TaskVideoProvider:
         with self._client() as client:
             return self._finish(client, task_id, output)
 
+    def check_target(self) -> tuple[str, dict[str, str], str]:  # pragma: no cover - 子类实现
+        """测试连接用的 (查询地址, 请求头, 要在报错里抹掉的密钥)：查一个不存在的任务，不花钱。"""
+        raise NotImplementedError
+
+    def check(self) -> tuple[bool, str]:
+        url, headers, secret = self.check_target()
+        with self._client() as client:
+            return run_check(client, url, headers, secret=secret)
+
     def _submit(self, client, request: Request) -> str:  # pragma: no cover - 子类实现
         raise NotImplementedError
 
     def _finish(self, client, task_id: str, output: Path) -> Path:  # pragma: no cover - 子类实现
         raise NotImplementedError
+
+
+# ---- 测试连接（设置页用）：发一个不花钱的请求，看 Key 和地址对不对 -------------------------
+
+
+def describe_check(response) -> tuple[bool, str]:
+    """把测试请求的响应翻译成一句话。查询一个不存在的任务：Key 对的话通常返回 200 或 400，不会扣费。"""
+    status = response.status_code
+    body: object = {}
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+    base = body.get("base_resp") if isinstance(body, dict) else None
+    if isinstance(base, dict) and base.get("status_code") in (1004, 2049):
+        return False, f"Key 无效：{base.get('status_msg') or base.get('status_code')}"
+    if status in (401, 403):
+        return False, f"Key 无效或没有权限（HTTP {status}）"
+    if status == 402:
+        return False, "账户余额不足（HTTP 402）"
+    if status == 404 and not (response.text or "").strip():
+        return False, f"接口地址不存在（HTTP 404）：{response.request.url}，请检查 base_url"
+    if status >= 500:
+        return False, f"服务暂时不可用（HTTP {status}），稍后再试"
+    return True, "连接正常，Key 有效"
+
+
+def run_check(client, url: str, headers: dict[str, str], *, secret: str = "") -> tuple[bool, str]:
+    import httpx
+
+    try:
+        response = client.get(url, headers=headers)
+    except httpx.HTTPError as exc:
+        message = str(exc).replace(secret, "***") if secret else str(exc)
+        return False, f"连不上：{message[:200]}。请检查网络、代理或 base_url"
+    return describe_check(response)

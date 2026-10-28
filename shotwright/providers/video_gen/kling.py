@@ -150,6 +150,9 @@ class KlingVideo(TaskVideoProvider):
     def _secret(self) -> str:
         return self.api_key or self.secret_key
 
+    def check_target(self):
+        return f"{self.base_url}/v1/videos/text2video/shotwright-check", self._headers, self._secret
+
     def build_payload(self, request: Request) -> tuple[str, dict]:
         """返回 (接口名, 请求体)。"""
         common: dict = {"prompt": request.prompt, "mode": _MODES.get(self.resolution, "std")}

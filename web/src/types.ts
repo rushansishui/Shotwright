@@ -135,6 +135,8 @@ export interface LookSubject {
   images?: string[];
   /** 参考图的颜色/款式（素材 id → 「浅粉色」这类说明），写进提示词，让模型照着这一款的颜色画。 */
   image_labels?: Record<string, string>;
+  /** 用户确认这个主体不需要参考图（例如路人），准备清单里算作就绪。 */
+  no_reference?: boolean;
 }
 
 /** 全片设定：主体代号与外观、场景、视觉风格、禁止项，生成每个镜头时自动拼进提示词。 */
@@ -146,6 +148,10 @@ export interface Look {
   style_ref?: string | null;
   grade?: string;
   brand?: string | null;
+  /** 素材是否已确认（服务端维护）：false 时不能生成 AI 画面；null 是旧项目，按已确认处理。 */
+  confirmed?: boolean | null;
+  /** 确认之后又改了设定的时间（秒）。 */
+  revised_at?: number | null;
 }
 
 /** 一次生成的版本记录：关键帧、多候选、再来一版共用。 */
@@ -410,7 +416,9 @@ export interface ProviderInfo {
   configured: boolean;
   default: boolean;
   docs_url: string;
-  fields: { key: string; label: string; required: boolean; secret: boolean }[];
+  fields: { key: string; label: string; required: boolean; secret: boolean; default?: string; help?: string }[];
+  required_any?: string[][];
+  testable?: boolean;
   capabilities: string[];
   max_duration: number | null;
   has_audio: boolean;
@@ -420,6 +428,15 @@ export interface ProviderInfo {
 }
 
 export type Providers = Record<string, ProviderInfo[]>;
+
+/** 设置页：config.toml 里填写的值（密钥只有是否已填和后 4 位）。 */
+export interface SettingsData {
+  config_path: string;
+  editable: boolean;
+  proxy: string;
+  defaults: Record<string, string>;
+  providers: Record<string, Record<string, { configured: boolean; fields: Record<string, { set: boolean; value: string }> }>>;
+}
 
 export interface RenderResult {
   render_id: string;

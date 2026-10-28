@@ -15,7 +15,7 @@ const DEFAULT_TITLES: TitleSettings = {
 
 interface TitleSectionProps {
   project: Project;
-  step: number;
+  step?: number;
   canSuggest: boolean;
   run: (action: () => Promise<Project>, shotId?: string) => Promise<Project | null>;
   onError?: (message: string) => void;
@@ -201,8 +201,9 @@ export function TitleSection({ project, step, canSuggest, run, onError }: TitleS
       </div>
 
       <div className="divider" />
+      <details className="look-advanced" open={project.shots.some((s) => (s.title ?? "").trim())}>
+        <summary>{t("titles.shotStyle")}</summary>
       <div className="field">
-        <span className="label">{t("titles.shotStyle")}</span>
         <p className="muted small">{t("titles.shotHint")}</p>
         <Segmented
           label={t("titles.shotPosition")}
@@ -236,6 +237,7 @@ export function TitleSection({ project, step, canSuggest, run, onError }: TitleS
           </div>
         </div>
       </div>
+      </details>
     </Section>
   );
 }

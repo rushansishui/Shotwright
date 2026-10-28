@@ -101,6 +101,10 @@ class FalVideo(TaskVideoProvider):
             return f"{seconds}s"
         return str(seconds)
 
+    def check_target(self):
+        request_id = "00000000-0000-0000-0000-000000000000"
+        return f"{self.queue_url}/{_app(self.model)}/requests/{request_id}/status", self._headers, self.api_key
+
     def build_payload(self, request: Request) -> tuple[str, dict]:
         """返回 (模型路径, 请求体)。"""
         body: dict = {"prompt": request.prompt}

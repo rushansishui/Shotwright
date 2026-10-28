@@ -11,6 +11,7 @@ import type {
   Project,
   ProjectSummary,
   Providers,
+  SettingsData,
   RenderResult,
   Shot,
   ShotRole,
@@ -65,6 +66,14 @@ const json = (method: string, body?: unknown): RequestInit => ({
 
 export const api = {
   providers: () => request<Providers>("/providers"),
+  settings: () => request<SettingsData>("/settings"),
+  saveProviderSettings: (kind: string, id: string, values: Record<string, string>) =>
+    request<SettingsData>(`/settings/providers/${kind}/${id}`, json("PUT", { values })),
+  saveDefaultProvider: (kind: string, provider: string) =>
+    request<SettingsData>("/settings/defaults", json("PUT", { kind, provider })),
+  saveAppSettings: (proxy: string) => request<SettingsData>("/settings/app", json("PUT", { proxy })),
+  testProvider: (kind: string, id: string) =>
+    request<{ ok: boolean; message: string }>(`/settings/providers/${kind}/${id}/test`, json("POST")),
   voices: (language?: string, provider?: string) => {
     const params = new URLSearchParams();
     if (language) params.set("language", language);
@@ -126,6 +135,8 @@ export const api = {
   /** 把新建时上传的素材放到该放的地方（不调用大模型）。 */
   applyMaterials: (id: string, materials: MaterialNote[]) => request<Project>(`/projects/${id}/materials`, json("POST", { materials })),
   /** 给全片设定里的主体生成定妆图（AI 图片，收费，调用前要让用户确认）。 */
+  /** 确认素材已准备好，之后才能生成 AI 画面；没准备好时返回 409 并说明缺什么。 */
+  confirmLook: (id: string) => request<Project>(`/projects/${id}/look/confirm`, json("POST", {})),
   subjectImage: (id: string, code: string) =>
     request<Project>(`/projects/${id}/look/${encodeURIComponent(code)}/image`, json("POST", { confirm_charge: true })),
   /** 看主体的参考图写外观描述（领型、有无帽子等），只返回文字。 */

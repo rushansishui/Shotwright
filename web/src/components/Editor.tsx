@@ -19,6 +19,28 @@ import { TextStyleEditor } from "./editor/TextStyleEditor";
 import { KeywordField } from "./editor/KeywordField";
 import { PronunciationSection } from "./editor/PronunciationSection";
 import { OriginRecord } from "./editor/OriginRecord";
+import { ReadinessCard } from "./editor/ReadinessCard";
+import { generationLocked, outdatedShots, preparedSubjects } from "../readiness";
+import type { MessageKey } from "../messages";
+
+type EditorStep = 1 | 2 | 3 | 4 | 5;
+const STEPS: { n: EditorStep; label: MessageKey }[] = [
+  { n: 1, label: "steps.materials" },
+  { n: 2, label: "steps.visuals" },
+  { n: 3, label: "steps.voice" },
+  { n: 4, label: "steps.music" },
+  { n: 5, label: "steps.text" },
+];
+const stepKey = (id: string) => `shotwright.editorStep.${id}`;
+
+function loadStep(id: string): EditorStep | null {
+  try {
+    const value = Number(localStorage.getItem(stepKey(id)));
+    return value >= 1 && value <= 5 ? (value as EditorStep) : null;
+  } catch {
+    return null;
+  }
+}
 
 export function Editor({ projectId }: { projectId: string }) {
   const {
@@ -46,12 +68,40 @@ export function Editor({ projectId }: { projectId: string }) {
   const [expanding, setExpanding] = useState(false);
   const [marginDraft, setMarginDraft] = useState<number | undefined>(undefined);
   const [styleDraft, setStyleDraft] = useState<Partial<SubtitleStyle>>({});
+  const [step, setStepState] = useState<EditorStep | null>(() => loadStep(projectId));
 
   if (!project) {
     return <main className="page">{error ? <p className="hint error">{error}</p> : <p className="muted">{t("common.loading")}</p>}</main>;
   }
 
   const id = project.id;
+  const locked = generationLocked(project);
+  // 没选过步骤时：素材还没确认就从「素材」开始，否则从「画面」开始。
+  const current: EditorStep = step ?? (locked ? 1 : 2);
+  const setStep = (next: EditorStep) => {
+    setStepState(next);
+    try {
+      localStorage.setItem(stepKey(id), String(next));
+    } catch {
+      /* 存不了就只在这次打开时记住 */
+    }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  const outdated = outdatedShots(project);
+  const filled = project.shots.filter((s) => s.visual.mode === "color" || (s.visual.selected && project.assets[s.visual.selected])).length;
+  const stepState = (n: EditorStep): string => {
+    if (n === 1) return locked ? "todo" : preparedSubjects(project).length && project.look?.revised_at ? "warn" : "done";
+    if (n === 2) return project.shots.length && filled === project.shots.length ? (outdated.length ? "warn" : "done") : "todo";
+    return "";
+  };
+  const next = (n: EditorStep) =>
+    n < 5 ? (
+      <div className="step-next">
+        <button type="button" className="btn primary" onClick={() => setStep((n + 1) as EditorStep)}>
+          {t("steps.next", { name: t(STEPS[n].label) })}
+        </button>
+      </div>
+    ) : null;
   const ttsProviders = providers?.tts ?? [];
   const defaultProvider = (kind: string) => {
     const found = (providers?.[kind] ?? []).find((p) => p.default);
@@ -151,10 +201,41 @@ export function Editor({ projectId }: { projectId: string }) {
           </p>
         )}
 
-        <OriginRecord project={project} run={(action) => run(action)} />
+        <nav className="editor-steps" aria-label={t("steps.label")}>
+          {STEPS.map((item) => (
+            <button
+              key={item.n}
+              type="button"
+              className={`${current === item.n ? "on" : ""} ${stepState(item.n)}`}
+              aria-current={current === item.n ? "step" : undefined}
+              onClick={() => setStep(item.n)}
+            >
+              <span className="step-num">{stepState(item.n) === "done" ? "✓" : item.n}</span>
+              <span className="step-label">{t(item.label)}</span>
+              {item.n === 2 && project.shots.length > 0 && (
+                <span className="step-count">
+                  {filled}/{project.shots.length}
+                </span>
+              )}
+            </button>
+          ))}
+        </nav>
 
+        {current === 1 && (
+          <>
+            <OriginRecord project={project} run={(action) => run(action)} />
+            <Section title={t("look.section")}>
+              <ReadinessCard project={project} run={(action) => run(action)} onConfirmed={() => setStep(2)} />
+              <div className="divider" />
+              <LookSection project={project} run={run} setError={setError} />
+              <div className="divider" />
+              <ReferencesSection project={project} run={run} setError={setError} />
+            </Section>
+          </>
+        )}
+
+        {current === 2 && (
         <Section
-          step={1}
           title={t("editor.shots")}
           extra={
             <div className="row">
@@ -178,6 +259,22 @@ export function Editor({ projectId }: { projectId: string }) {
             </div>
           }
         >
+          {locked && (
+            <div className="hint warn lock-hint">
+              <span>{t("steps.lockedHint")}</span>
+              <button type="button" className="btn small" onClick={() => setStep(1)}>
+                {t("steps.gotoMaterials")}
+              </button>
+            </div>
+          )}
+          {!locked && outdated.length > 0 && (
+            <div className="hint warn lock-hint">
+              <span>{t("ready.revisedShots", { list: outdated.map((i) => i + 1).join("、") })}</span>
+              <button type="button" className="btn small" onClick={() => setStep(1)}>
+                {t("steps.gotoMaterials")}
+              </button>
+            </div>
+          )}
           {project.shots.length === 0 && <p className="muted">{t("editor.noShots")}</p>}
           {expandCount > 0 && (
             <div className="hint warn expand-hint">
@@ -207,6 +304,8 @@ export function Editor({ projectId }: { projectId: string }) {
                 busy={shot.id in busy}
                 busySeconds={shot.id in busy ? Math.max(0, Math.round((now - busy[shot.id]) / 1000)) : 0}
                 aiVideo={aiVideo}
+                aiLocked={locked}
+                onGotoMaterials={() => setStep(1)}
                 videoProviders={videoProviders}
                 aiImage={aiImage}
                 sourceModes={sourceModes}
@@ -240,15 +339,13 @@ export function Editor({ projectId }: { projectId: string }) {
               />
             ))}
           </div>
+          {next(2)}
         </Section>
+        )}
 
-        <Section step={2} title={t("look.section")}>
-          <LookSection project={project} run={run} setError={setError} />
-          <div className="divider" />
-          <ReferencesSection project={project} run={run} setError={setError} />
-        </Section>
-
-        <Section step={3} title={t("editor.audio")}>
+        {current === 3 && (
+        <>
+        <Section title={t("editor.audio")}>
           <div className="field">
             <div className="field-row">
               <label htmlFor="language">{t("editor.language")}</label>
@@ -320,20 +417,9 @@ export function Editor({ projectId }: { projectId: string }) {
             />
           </div>
           <PronunciationSection project={project} canSuggest={!!llm} run={(action) => run(action)} onError={setError} />
-          <div className="divider" />
-          <BgmSection
-            project={project}
-            run={run}
-            setError={setError}
-            draft={draft}
-            setDraft={setDraft}
-          />
-          <div className="divider" />
-          <SfxSection project={project} run={run} setError={setError} />
         </Section>
 
         <Section
-          step={4}
           title={t("editor.subtitles")}
           extra={
             <label className="switch">
@@ -407,18 +493,32 @@ export function Editor({ projectId }: { projectId: string }) {
               </div>
             </div>
           )}
+          {next(3)}
         </Section>
+        </>
+        )}
 
-        <TitleSection project={project} step={5} canSuggest={!!llm} run={run} onError={setError} />
+        {current === 4 && (
+          <Section title={t("steps.music")}>
+            <BgmSection project={project} run={run} setError={setError} draft={draft} setDraft={setDraft} />
+            <div className="divider" />
+            <SfxSection project={project} run={run} setError={setError} />
+            {next(4)}
+          </Section>
+        )}
 
-        <OverlaySection project={project} run={run} />
-
-        <Versions project={project} languages={languages} />
+        {current === 5 && (
+          <>
+            <TitleSection project={project} canSuggest={!!llm} run={run} onError={setError} />
+            <OverlaySection project={project} run={run} />
+            <Versions project={project} languages={languages} />
+          </>
+        )}
       </div>
 
       <RenderPanel
         project={project}
-        paidAvailable={Boolean(aiVideo || aiImage)}
+        paidAvailable={Boolean(aiVideo || aiImage) && !locked}
         shotIndex={activeIndex}
         onShotIndex={setActiveIndex}
         onRendered={load}

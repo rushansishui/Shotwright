@@ -110,6 +110,9 @@ class WanVideo(TaskVideoProvider):
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
+    def check_target(self):
+        return f"{self.base_url}/tasks/shotwright-connection-check", self._headers, self.api_key
+
     def build_payload(self, request: Request) -> dict:
         media: list[dict] = []
         if request.mode in ("first_frame", "first_last") and request.first_frame is not None:
