@@ -3113,3 +3113,182 @@ li.missing .readiness-mark {
 .cut-mode strong {
   font-size: 15px;
 }
+
+/* ---- 一键生成 ---- */
+
+.batch-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--field);
+}
+.batch-bar.running {
+  border-color: var(--accent-soft);
+  background: var(--card);
+}
+.batch-bar.result.ok {
+  color: var(--ok);
+}
+.batch-bar.result.warn {
+  background: var(--warn-soft);
+  border-color: transparent;
+  color: var(--warn);
+}
+.batch-text {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+.batch-text progress {
+  width: 100%;
+  max-width: 420px;
+  height: 6px;
+  accent-color: var(--accent);
+}
+.batch-failures {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+/* ---- 审片 ---- */
+
+.review-intro {
+  margin: 0 0 12px;
+}
+.review-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.review-summary {
+  font-weight: 500;
+}
+.review-row {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr) 220px;
+  gap: 16px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line-soft);
+}
+.review-row.ok .review-head strong {
+  color: var(--ok);
+}
+.review-row.redo .review-head strong {
+  color: var(--accent-ink);
+}
+.review-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.review-title {
+  margin-top: 4px;
+  font-weight: 500;
+}
+.review-text {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.review-takes {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  align-items: flex-start;
+}
+.review-take {
+  position: relative;
+  flex: none;
+  width: var(--take-width, 168px);
+  aspect-ratio: var(--take-aspect, 16 / 9);
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #111;
+  cursor: pointer;
+}
+.review-take img,
+.review-take video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.review-take.on {
+  border-color: var(--accent);
+}
+.review-take.swatch {
+  cursor: default;
+}
+.review-take:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.review-picked {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+}
+.review-none {
+  margin: 0;
+}
+.review-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.review-marks {
+  display: flex;
+  gap: 8px;
+}
+.review-marks .btn.mark-ok {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: #fff;
+}
+.review-marks .btn.mark-redo {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.review-note {
+  width: 100%;
+  resize: vertical;
+}
+.review-note-hint {
+  margin: 0;
+  font-size: 12px;
+}
+.review-issue {
+  font-size: 12px;
+}
+@media (max-width: 900px) {
+  .review-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+}

@@ -19,6 +19,7 @@ from shotwright.core.models import (
     ProjectOrigin,
     Pronunciation,
     ReferenceAsset,
+    ReviewMark,
     SfxSettings,
     ShotRole,
     SpeechMode,
@@ -148,6 +149,9 @@ class VisualPatch(_Body):
     fill: FillMode | None = None
     source_volume: float | None = Field(None, ge=0.0, le=2.0)
     locked: bool | None = None
+    review: ReviewMark | None = None
+    """审片结论：ok 通过、redo 重做、空字符串清除。"""
+    review_note: str | None = Field(None, max_length=300)
 
 
 class UpdateShot(_Body):
@@ -195,6 +199,11 @@ class CandidatesRequest(ChargeConsent):
     """AI 视频镜头先出几张关键帧图片（0 表示直接生成视频）。"""
     quality: Literal["draft", "final"] = "final"
     """草稿档用较低分辨率生成 AI 视频。"""
+
+
+class GenerateAll(ChargeConsent):
+    only_redo: bool = False
+    """只重新生成审片时标记重做的镜头。"""
 
 
 class AmbienceSearch(_Body):

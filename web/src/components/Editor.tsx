@@ -20,6 +20,8 @@ import { KeywordField } from "./editor/KeywordField";
 import { PronunciationSection } from "./editor/PronunciationSection";
 import { OriginRecord } from "./editor/OriginRecord";
 import { ReadinessCard } from "./editor/ReadinessCard";
+import { GenerateAll } from "./editor/GenerateAll";
+import { ReviewBoard } from "./editor/Review";
 import { generationLocked, outdatedShots, preparedSubjects } from "../readiness";
 import type { MessageKey } from "../messages";
 
@@ -69,6 +71,10 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
   const [marginDraft, setMarginDraft] = useState<number | undefined>(undefined);
   const [styleDraft, setStyleDraft] = useState<Partial<SubtitleStyle>>({});
   const [step, setStepState] = useState<EditorStep | null>(() => loadStep(projectId));
+  /** 画面一步里切到审片视图。 */
+  const [reviewing, setReviewing] = useState(false);
+  /** 一键生成正在处理的镜头，在镜头卡片上显示"生成中"。 */
+  const [batchCurrent, setBatchCurrent] = useState<string | null>(null);
   /** 剪辑里导入的任务：返回剪辑页，顶部导航高亮「剪辑」。 */
   const isCut = !!project && (project.origin === "cut" || project.shots.some((s) => s.speech === "original"));
   useEffect(() => {
@@ -250,9 +256,16 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
 
         {current === 2 && (
         <Section
-          title={t("editor.shots")}
+          title={reviewing ? t("review.open") : t("editor.shots")}
           extra={
             <div className="row">
+              {project.shots.length > 0 && (
+                <button type="button" className="btn" onClick={() => setReviewing(!reviewing)}>
+                  {reviewing ? t("review.close") : t("review.open")}
+                </button>
+              )}
+              {!reviewing && (
+              <>
               <input
                 ref={footageInput}
                 type="file"
@@ -270,6 +283,8 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
               <button type="button" className="btn" onClick={() => run(() => api.addShot(id))}>
                 {t("editor.addShot")}
               </button>
+              </>
+              )}
             </div>
           }
         >
@@ -289,6 +304,18 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
               </button>
             </div>
           )}
+          <GenerateAll
+            project={project}
+            locked={locked}
+            onlyRedo={reviewing}
+            onChanged={load}
+            onCurrent={setBatchCurrent}
+            setError={setError}
+          />
+          {reviewing ? (
+            <ReviewBoard project={project} run={run} busy={(shotId) => shotId in busy || shotId === batchCurrent} />
+          ) : (
+          <>
           {project.shots.length === 0 && <p className="muted">{t("editor.noShots")}</p>}
           {expandCount > 0 && (
             <div className="hint warn expand-hint">
@@ -315,7 +342,7 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
                 shot={shot}
                 index={index}
                 active={index === activeIndex}
-                busy={shot.id in busy}
+                busy={shot.id in busy || shot.id === batchCurrent}
                 busySeconds={shot.id in busy ? Math.max(0, Math.round((now - busy[shot.id]) / 1000)) : 0}
                 aiVideo={aiVideo}
                 aiLocked={locked}
@@ -353,6 +380,8 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
               />
             ))}
           </div>
+          </>
+          )}
           {next(2)}
         </Section>
         )}

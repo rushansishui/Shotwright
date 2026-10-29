@@ -26,7 +26,7 @@ export function Thumb(props: { project: Project; assetId: string | null; color: 
 }
 
 /** 候选缩略图上的版本号、检查得分和问题提示。 */
-function TakeBadge({ takes, assetId, asset }: { takes: Take[]; assetId: string; asset?: Asset }) {
+export function TakeBadge({ takes, assetId, asset }: { takes: Take[]; assetId: string; asset?: Asset }) {
   const { t } = useI18n();
   const index = takes.findIndex((item) => item.asset_id === assetId);
   if (index < 0) {

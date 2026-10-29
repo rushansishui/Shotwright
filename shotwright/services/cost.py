@@ -98,21 +98,7 @@ def estimate_render_cost(project: Project, settings: Settings, quality: str = "f
 
         # ---- 画面费用 -------------------------------------------------------
         if visual.mode in ("ai", "image") and not visual.selected:
-            provider_id = visual.provider or settings.default_provider(
-                "video_gen" if visual.mode == "ai" else "image_gen"
-            )
-            if visual.mode == "ai":
-                resolution = _draft_resolution(settings, provider_id) if quality == "draft" else ""
-                price = video_price(settings, provider_id, resolution)
-                if price:
-                    duration = _shot_duration(project, shot, settings, provider_id)
-                    visual_cost = price * duration
-                    note = f"{provider_id} {duration:.0f}s"
-            else:
-                price = _IMAGE_GEN_PRICE.get(provider_id, 0.0)
-                if price:
-                    visual_cost = price
-                    note = f"{provider_id} 1 image"
+            visual_cost, note = visual_generation_cost(project, shot, settings, quality)
 
         # ---- 配音费用 -------------------------------------------------------
         shot_voice = shot.voice or project.voice
@@ -130,6 +116,23 @@ def estimate_render_cost(project: Project, settings: Settings, quality: str = "f
     estimate.total_visual = round(estimate.total_visual, 4)
     estimate.total_tts = round(estimate.total_tts, 4)
     return estimate
+
+
+def visual_generation_cost(project: Project, shot: Shot, settings: Settings, quality: str = "final") -> tuple[float, str]:
+    """给这个镜头生成一次画面（AI 视频或 AI 图片）的参考费用（元）和说明；不管它现在有没有画面。"""
+    visual = shot.visual
+    if visual.mode not in ("ai", "image"):
+        return 0.0, ""
+    provider_id = visual.provider or settings.default_provider("video_gen" if visual.mode == "ai" else "image_gen")
+    if visual.mode == "ai":
+        resolution = _draft_resolution(settings, provider_id) if quality == "draft" else ""
+        price = video_price(settings, provider_id, resolution)
+        if not price:
+            return 0.0, ""
+        duration = _shot_duration(project, shot, settings, provider_id)
+        return price * duration, f"{provider_id} {duration:.0f}s"
+    price = _IMAGE_GEN_PRICE.get(provider_id, 0.0)
+    return (price, f"{provider_id} 1 image") if price else (0.0, "")
 
 
 def _shot_duration(

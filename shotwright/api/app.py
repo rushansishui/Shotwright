@@ -42,6 +42,7 @@ from shotwright.api.schemas import (
     DefaultProvider,
     DuplicateProject,
     ExpandRequest,
+    GenerateAll,
     NormalizeBrief,
     PreviewVoice,
     ProviderValues,
@@ -66,8 +67,9 @@ from shotwright.pipeline import voice as voice_stage
 from shotwright.pipeline.render_types import RenderError
 from shotwright.pipeline.shots import MAX_SEQUENCE
 from shotwright.providers import registry
-from shotwright.providers.base import ChargeConfirmationRequired, ProviderError
+from shotwright.providers.base import BudgetExceeded, ChargeConfirmationRequired, ProviderError
 from shotwright.providers.tts.edge import VOICES
+from shotwright.services import batch as batch_service
 from shotwright.services import brief as brief_service
 from shotwright.services import (
     checkup,
@@ -1023,6 +1025,11 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
     @api.patch("/projects/{project_id}/shots/{shot_id}")
     def update_shot(project_id: str, shot_id: str, body: UpdateShot):
+        # 只改审片标记时不动镜头状态：审片不影响画面。
+        review_only = body.model_fields_set == {"visual"} and body.visual is not None and (
+            body.visual.model_fields_set <= {"review", "review_note"}
+        )
+
         def change(project: Project) -> None:
             shot = project.shot(_id(shot_id))
             if body.text is not None:
@@ -1101,7 +1108,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     # 只把第一条原因（例如「出点必须晚于入点」）返回给界面，便于翻译。
                     message = str(exc.errors()[0].get("msg", exc))
                     raise ValueError(message.removeprefix("Value error, ")) from None
-            shot.status, shot.error = "draft", None
+            if not review_only:
+                shot.status, shot.error = "draft", None
 
         return _mutate(project_id, change)
 
@@ -1328,6 +1336,94 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 setattr(target.visual, name, getattr(shot.visual, name))
 
         return _mutate(project_id, change)
+
+    # ---- 一键生成 ------------------------------------------------------------
+
+    @api.get("/projects/{project_id}/generate-all")
+    def generate_all_status(project_id: str, quality: Literal["draft", "final"] = "final", only_redo: bool = False):
+        """要生成哪些镜头、预计多少钱，以及最近一次一键生成的进度。"""
+        project = store.load(_id(project_id))
+        job = batch_service.get(project_id)
+        return {
+            "plan": batch_service.plan(project, settings, quality, only_redo),
+            "job": job.to_dict() if job else None,
+        }
+
+    @api.post("/projects/{project_id}/generate-all")
+    def generate_all(project_id: str, body: GenerateAll):
+        """把还没有画面的 AI 镜头和标记重做的镜头排队，后台依次生成。
+
+        用到收费服务时必须带 ``confirm_charge: true``，否则返回 402。
+        """
+        project = store.load(_id(project_id))
+        if readiness.generation_locked(project):
+            raise HTTPException(409, readiness.LOCKED_MESSAGE)
+        plan = batch_service.plan(project, settings, body.quality, body.only_redo)
+        if not plan["items"]:
+            raise HTTPException(409, "没有需要生成的镜头")
+        if (plan["paid"] or plan["total"] > 0) and not body.confirm_charge:
+            raise ChargeConfirmationRequired("一键生成会调用收费服务，需要确认费用后才会开始")
+        if project.budget is not None and project.cost_credits + plan["total"] > project.budget + 1e-9:
+            raise HTTPException(409, "预计费用超出项目费用上限，可以在渲染面板提高上限，或者少选几个镜头")
+        try:
+            job = batch_service.start(
+                project_id, [item["shot_id"] for item in plan["items"]], body.quality, plan["total"]
+            )
+        except batch_service.BatchRunning as exc:
+            raise HTTPException(409, str(exc)) from None
+        threading.Thread(target=_run_batch, args=(job,), name=f"batch-{project_id}", daemon=True).start()
+        return job.to_dict()
+
+    @api.post("/projects/{project_id}/generate-all/cancel")
+    def cancel_generate_all(project_id: str):
+        """停止一键生成：正在生成的镜头会做完，排在后面的不再提交。"""
+        job = batch_service.cancel(_id(project_id))
+        if job is None:
+            raise HTTPException(404, "任务已结束或不存在")
+        return job.to_dict()
+
+    def _run_batch(job: batch_service.BatchJob) -> None:
+        project_id = job.project_id
+        try:
+            for shot_id in job.shot_ids:
+                if job.cancel_requested:
+                    break
+                job.current = shot_id
+                try:
+                    project = store.load(project_id)
+                    shot = next((item for item in project.shots if item.id == shot_id), None)
+                    if shot is None or batch_service.needs_generation(project, shot) is None:
+                        # 排队期间镜头被删掉、锁定、或者已经手动生成好了。
+                        job.skipped.append(shot_id)
+                        continue
+                    redo = shot.visual.review == "redo"
+                    if redo and shot.visual.review_note:
+                        try:
+                            rewrite_shot(project_id, shot_id, RewriteShot(instruction=shot.visual.review_note[:500]))
+                        except Exception as exc:  # noqa: BLE001 - 改写失败就按原来的描述生成
+                            log.warning("一键生成：镜头 %s 按修改意见改写失败：%s", shot_id, exc)
+                    refresh_candidates(
+                        project_id, shot_id, CandidatesRequest(confirm_charge=True, quality=job.quality)
+                    )
+                    if redo:
+
+                        def clear_review(latest: Project, shot_id: str = shot_id) -> None:
+                            target = latest.shot(shot_id)
+                            target.visual.review, target.visual.review_note = "", ""
+
+                        _mutate(project_id, clear_review)
+                    job.done.append(shot_id)
+                except BudgetExceeded as exc:
+                    job.failed.append({"shot_id": shot_id, "error": str(exc)})
+                    job.stopped_reason = str(exc)
+                    break
+                except HTTPException as exc:
+                    job.failed.append({"shot_id": shot_id, "error": str(exc.detail)})
+                except Exception as exc:  # noqa: BLE001 - 一个镜头失败不影响后面的
+                    log.warning("一键生成：镜头 %s 失败：%s", shot_id, exc)
+                    job.failed.append({"shot_id": shot_id, "error": str(exc) or type(exc).__name__})
+        finally:
+            batch_service.finish(job)
 
     @api.post("/projects/{project_id}/expand")
     def expand_project(project_id: str, body: ExpandRequest | None = None):

@@ -313,6 +313,9 @@ Base URL 误填成完整的 `/chat/completions` 地址时会自动纠正。
 | GET | `/projects/{id}/in-progress` | 正在检索或生成的镜头，页面刷新后用来恢复"生成中"状态 |
 | POST | `/projects/{id}/shots/{shot}/candidates` | 为镜头检索或生成候选素材；收费生成需带 `{"confirm_charge": true}`，否则返回 402；`{"edit_selected": true}` 是改画面（把当前选中的视频交给支持视频转视频的服务）；`count`（1–3）一次生成几条、`keyframes`（2–3）先出关键帧、`quality`（`draft` / `final`）生成分辨率 |
 | DELETE | `/projects/{id}/shots/{shot}/candidates/{asset}` | 删除一个候选素材（选中的被删时自动选下一段） |
+| GET | `/projects/{id}/generate-all` | 一键生成的计划（要生成哪些镜头、每个的参考费用、合计、是否收费）和最近一次的进度；`?quality=draft` 按草稿档估价，`?only_redo=true` 只看审片标记重做的镜头 |
+| POST | `/projects/{id}/generate-all` | 一键生成：没有可用画面的 AI 视频 / 图片镜头和标记重做的镜头在后台排队，逐个调用单镜头生成（扣费确认、费用上限、防重复提交规则相同）；用到收费服务时需带 `confirm_charge`，预计费用超出项目上限返回 409；`only_redo` 只重做标记的镜头，有修改意见时先按意见改写画面描述，成功后清掉标记 |
+| POST | `/projects/{id}/generate-all/cancel` | 停止一键生成：当前镜头做完后停下 |
 | POST | `/projects/{id}/subtitle/keywords` | AI 从文案里挑字幕高亮关键词 |
 | POST | `/projects/{id}/pronunciations/suggest` | AI 检查文案里容易读错的词，返回候选读音纠正项 |
 | GET | `/fonts`、`/fonts/{name}` | 可选字体列表与字体文件（内置 + 用户导入） |

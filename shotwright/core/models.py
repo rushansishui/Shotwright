@@ -440,6 +440,7 @@ class Look(_Model):
 
 
 TakeKind = Literal["video", "image", "keyframe", "edit", "extend"]
+ReviewMark = Literal["", "ok", "redo"]
 """一次生成的结果类别：AI 视频、AI 图片、关键帧、改画面、续生成拼接的长镜头。"""
 
 
@@ -525,6 +526,10 @@ class ShotVisual(_Model):
     """已提交、尚未取回结果的收费任务；重启后据此继续轮询。"""
     takes: list[Take] = Field(default_factory=list)
     """生成版本记录（按时间先后），与候选素材对应；候选被挤掉时一并清理。"""
+    review: ReviewMark = ""
+    """审片结论：ok 通过，redo 需要重做；空表示还没审。"""
+    review_note: str = ""
+    """标记重做时写的一句修改意见；重新生成前按它改写画面描述（配了文字模型时）。"""
 
     @field_validator("candidates", "sequence", "refs")
     @classmethod
@@ -535,6 +540,11 @@ class ShotVisual(_Model):
     @classmethod
     def _check_link(cls, value: str) -> str:
         return value[:400]
+
+    @field_validator("review_note")
+    @classmethod
+    def _check_review_note(cls, value: str) -> str:
+        return value.strip()[:300]
 
     @field_validator("selected", "first_frame", "edit_asset")
     @classmethod

@@ -231,6 +231,10 @@ export interface ShotVisual {
   /** 已提交、尚未取回结果的收费任务；服务重启后会继续轮询。 */
   pending?: PendingTask | null;
   takes?: Take[];
+  /** 审片结论：ok 通过，redo 重做；空表示还没审。 */
+  review?: "" | "ok" | "redo";
+  /** 标记重做时的一句修改意见。 */
+  review_note?: string;
 }
 
 export interface Shot {
@@ -554,4 +558,46 @@ export interface CostEstimate {
   total_visual: number;
   total_tts: number;
   items: CostEstimateItem[];
+}
+
+export interface GeneratePlanItem {
+  shot_id: string;
+  shot_index: number;
+  reason: "missing" | "redo";
+  mode: VisualMode;
+  provider: string | null;
+  paid: boolean;
+  cost: number;
+  note: string;
+  review_note: string;
+}
+
+export interface GeneratePlan {
+  items: GeneratePlanItem[];
+  total: number;
+  paid: boolean;
+  spent: number;
+  budget: number | null;
+  currency: string;
+}
+
+export interface GenerateJob {
+  state: "running" | "done" | "cancelled" | "stopped";
+  total: number;
+  shot_ids: string[];
+  quality: "draft" | "final";
+  estimate: number;
+  current: string | null;
+  done: string[];
+  failed: { shot_id: string; error: string }[];
+  skipped: string[];
+  cancel_requested: boolean;
+  started_at: number;
+  finished_at: number | null;
+  stopped_reason: string;
+}
+
+export interface GenerateAllStatus {
+  plan: GeneratePlan;
+  job: GenerateJob | null;
 }

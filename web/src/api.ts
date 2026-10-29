@@ -4,6 +4,8 @@ import type {
   PlatformInfo,
   BgmSearchResult,
   CostEstimate,
+  GenerateAllStatus,
+  GenerateJob,
   FontFamily,
   Job,
   LanguageInfo,
@@ -222,6 +224,12 @@ export const api = {
     request<Project>(`/projects/${id}/shots/${shotId}/rewrite`, json("POST", { instruction })),
   /** 一键补全：扩写过短的画面描述、补衔接说明，没有全片设定时一并生成。 */
   expand: (id: string, onlyShort = true) => request<Project>(`/projects/${id}/expand`, json("POST", { only_short: onlyShort })),
+  /** 一键生成：要生成哪些镜头、预计费用，以及最近一次的进度。 */
+  generateAllStatus: (id: string, quality: "draft" | "final" = "final", onlyRedo = false) =>
+    request<GenerateAllStatus>(`/projects/${id}/generate-all?quality=${quality}&only_redo=${onlyRedo}`),
+  generateAll: (id: string, body: { confirm_charge: boolean; quality: "draft" | "final"; only_redo?: boolean }) =>
+    request<GenerateJob>(`/projects/${id}/generate-all`, json("POST", body)),
+  cancelGenerateAll: (id: string) => request<GenerateJob>(`/projects/${id}/generate-all/cancel`, json("POST")),
   /** 服务器上正在检索或生成的镜头（页面刷新后用来恢复"生成中"状态）。 */
   inProgress: (id: string) => request<Record<string, { mode: string; seconds: number }>>(`/projects/${id}/in-progress`),
   /** 检索背景音乐候选（只返回元数据+试听地址，不下载）；query 留空时由服务端用大模型提炼。 */
