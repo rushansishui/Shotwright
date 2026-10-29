@@ -403,7 +403,7 @@ export function Home() {
               <label htmlFor="title">{t("flow.title")}</label>
               <input id="title" className="input" maxLength={120} value={title} onChange={(e) => setTitle(e.target.value)} />
             </div>
-            <div className="field grow">
+            <div className="field grow script-field">
               <div className="field-row">
                 <span className="label">{t("flow.script")}</span>
                 <span className={`muted small ${Math.abs(scriptSeconds - duration) > Math.max(5, duration * 0.3) ? "bad" : ""}`}>
