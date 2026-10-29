@@ -198,12 +198,14 @@ function BatchResult({
   const headline =
     job.state === "stopped"
       ? t("batch.stopped", { reason: job.stopped_reason })
-      : t(job.state === "cancelled" ? "batch.cancelled" : "batch.finished", { done });
+      : job.state === "interrupted"
+        ? t("batch.interrupted", { done })
+        : t(job.state === "cancelled" ? "batch.cancelled" : "batch.finished", { done });
   const failed = job.failed.length ? t("batch.failed", { n: job.failed.length }) : "";
   return (
     <div className={`batch-bar result ${job.failed.length ? "warn" : "ok"}`} role="status">
       <div className="batch-text">
-        <span>{headline + (job.state === "stopped" ? "" : failed)}</span>
+        <span>{headline + (job.state === "stopped" || job.state === "interrupted" ? "" : failed)}</span>
         {job.failed.length > 0 && job.state !== "stopped" && (
           <ul className="batch-failures">
             {job.failed.map((item) => (

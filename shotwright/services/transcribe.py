@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from shotwright.config import Settings
+from shotwright.core import limits
 from shotwright.core.models import Project, Shot, ShotVisual
 from shotwright.core.store import ProjectStore, read_json, write_json
 from shotwright.media.ffmpeg import MediaError, detect_scenes, probe, run_ffmpeg
@@ -189,16 +190,20 @@ def start(
     def run() -> None:
         started = time.monotonic()
         try:
-            with tempfile.TemporaryDirectory(prefix="shotwright-asr-") as temp:
-                audio = Path(temp) / "speech.mp3"
-                _extract_audio(source, audio)
-                progress(0.0, "recognize")
-                result: Transcript = asr.transcribe(audio, language=lang, progress=progress)
+            # 本地识别吃 CPU，同时开多个会把机器拖垮；这里按配置排队。
+            with limits.limit("asr", settings.asr_concurrency):
+                with tempfile.TemporaryDirectory(prefix="shotwright-asr-") as temp:
+                    audio = Path(temp) / "speech.mp3"
+                    _extract_audio(source, audio)
+                    progress(0.0, "recognize")
+                    result: Transcript = asr.transcribe(audio, language=lang, progress=progress)
             write_json(
                 path,
                 {
                     "state": "done",
                     "language": result.language or lang,
+                    # 选的语言；和识别出的语言不同时，页面提示已按实际语言识别。
+                    "requested_language": None if language == "auto" else lang,
                     "provider": provider_id or settings.default_provider("asr"),
                     "duration": asset.duration,
                     "words": [[w.text, w.start, w.end] for w in result.words],
@@ -212,7 +217,8 @@ def start(
                 len(result.words),
                 time.monotonic() - started,
             )
-            if language == "auto" and result.language:
+            if result.language and (language == "auto" or not _same_language(result.language, lang)):
+                # 自动识别，或者选的语言和实际说的不一样：项目语言（字幕字体、配音）跟着实际语言走。
                 _adopt_language(store, project.id, result.language)
         except (ProviderError, MediaError) as exc:
             write_json(path, {"state": "failed", "error": str(exc)})
@@ -225,6 +231,10 @@ def start(
 
     threading.Thread(target=run, name=f"asr-{asset_id}", daemon=True).start()
     return {"state": "running", "progress": 0.0, "stage": "extract", "elapsed": 0.0}
+
+
+def _same_language(a: str | None, b: str | None) -> bool:
+    return (a or "").split("-")[0].lower() == (b or "").split("-")[0].lower()
 
 
 def _adopt_language(store: ProjectStore, project_id: str, detected: str) -> None:

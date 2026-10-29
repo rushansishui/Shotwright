@@ -266,6 +266,43 @@ def test_auto_language_adopts_detected_language(client, settings, store, tmp_pat
     assert store.load(pid).language == "zh-CN"
 
 
+def test_chosen_language_that_does_not_match_speech_is_corrected(client, settings, store, tmp_path):
+    """选了英语、实际说中文（反过来也一样）：按实际语言识别后，项目语言跟着改，并记下当初选的语言。"""
+    settings.defaults["asr"] = "fakeasr"
+    project = client.post(
+        "/api/v2/projects", json={"mode": "empty", "language": "en-US", "voice": {"provider": "silent"}}
+    ).json()
+    pid = project["id"]
+    with _clip_with_audio(tmp_path / "talk.mp4").open("rb") as handle:
+        asset = client.post(f"/api/v2/projects/{pid}/assets", files={"file": ("talk.mp4", handle)}).json()[
+            "id"
+        ]
+    client.post(f"/api/v2/projects/{pid}/transcripts/{asset}", json={"language": "en-US"})
+    data = _wait_done(client, pid, asset)
+    assert data["state"] == "done" and data["requested_language"] == "en-US" and data["language"] == "zh"
+    assert store.load(pid).language == "zh-CN"
+
+
+def test_whisper_checks_spoken_language_before_transcribing():
+    from shotwright.providers.asr import faster_whisper as fw
+
+    class Model:
+        def __init__(self, detected, probability):
+            self.result = (detected, probability, [])
+
+        def detect_language(self, samples, **kwargs):
+            return self.result
+
+    # 很有把握是英语：选了中文也按英语识别，不再把英语写成谐音中文。
+    assert fw._check_language(Model("en", 0.95), [], "zh") == "en"
+    # 没把握时尊重用户选的语言。
+    assert fw._check_language(Model("en", 0.4), [], "zh") == "zh"
+    # 自动识别：先定下语言（中文才能用上简体加标点的提示）。
+    assert fw._check_language(Model("zh", 0.6), [], None) == "zh"
+    # 旧版没有 detect_language：按选的语言识别。
+    assert fw._check_language(object(), [], "zh") == "zh"
+
+
 def test_faster_whisper_download_falls_back_to_mirror(monkeypatch, tmp_path):
     """连不上 Hugging Face 时换 hf-mirror.com 下载，而不是一直卡住；都连不上时给出明确的报错。"""
     pytest.importorskip("faster_whisper")

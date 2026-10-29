@@ -19,6 +19,9 @@ auto_fetch_visuals = true
 # 允许跨域访问的来源。只有前端跑在别的端口（例如 npm run dev 的 5173）时才需要，
 # 默认允许本地开发端口；正式部署时留空即可。
 # cors_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+# 同时在跑的并发上限。几个项目一起「一键生成」时，超过上限的会排队，不会一起猛打收费接口。
+# ai_concurrency = 4           # 同时调用 AI 视频 / 图片服务的个数
+# asr_concurrency = 1          # 同时在本机做语音识别的个数（faster-whisper 吃 CPU）
 # 用户导入字体的存放目录；留空时用内置的 resources/fonts
 # fonts_dir = "storage/fonts"
 

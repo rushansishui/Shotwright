@@ -86,7 +86,13 @@ shotwright/
 │   ├── shots.py         镜头渲染：入出点、慢放定格 / 循环、取景、原声与压低
 │   ├── metadata.py      成片元数据：AI 生成标识、背景音乐署名
 │   └── render_types.py  阶段记录、渲染结果等公共类型
-├── api/                 FastAPI 应用、请求体、任务队列
+├── api/
+│   ├── app.py           创建应用：中间件、异常处理、启动时恢复收费任务
+│   ├── context.py       路由共用的依赖（存储、配置、渲染队列、改项目的锁内读写）
+│   ├── routes/          按主题分的接口：system、settings、projects、shots、transcripts、
+│   │                    generation（生成与一键生成）、assets（素材与音乐）、renders
+│   ├── schemas.py       请求体
+│   └── jobs.py          渲染任务队列
 ├── config.py            config.toml + 环境变量
 └── cli.py
 web/                     React + Vite 前端
@@ -331,6 +337,8 @@ Base URL 误填成完整的 `/chat/completions` 地址时会自动纠正。
 错误响应的 `detail` 会按请求的 `Accept-Language` 返回中文或英文；带变量的消息（例如"镜头 2 配音失败：…"）保持原文。
 
 渲染任务在进程内的单线程队列中执行。需要多进程或多机部署时，把 `api/jobs.py` 换成 Redis 等外部队列即可，接口不变。
+
+收费生成和本地语音识别各有一个进程级的并发上限（`core/limits.py`，默认 AI 视频 / 图片同时 4 个、语音识别 1 个，可在 `config.toml` 的 `[app]` 里用 `ai_concurrency`、`asr_concurrency` 修改）：几个项目同时一键生成时，超出的请求排队等待。一键生成的进度写在项目的 `cache/batch/batch.json` 里，服务重启后显示为「已中断」，已生成的镜头保留。
 
 ## 安全约束
 

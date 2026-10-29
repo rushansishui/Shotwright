@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Literal
 
 from shotwright.config import Settings
+from shotwright.core import limits
 from shotwright.core.fingerprint import fingerprint
 from shotwright.core.ids import new_id
 from shotwright.core.models import (
@@ -688,6 +689,11 @@ def generate_ai_candidate(
         extra = {"reference_images": references} if references else {}
 
         def generate_once(text: str, frame: Path | None, kwargs: dict) -> tuple[Path, list[float]]:
+            # 几个项目一起一键生成时，这里排队，避免同时猛打收费接口。
+            with limits.limit("ai", settings.ai_concurrency):
+                return _generate_or_extend(text, frame, kwargs)
+
+        def _generate_or_extend(text: str, frame: Path | None, kwargs: dict) -> tuple[Path, list[float]]:
             if not extend:
                 path = provider.generate(
                     text,
@@ -874,11 +880,14 @@ def generate_image_candidate(
             raise ProviderError("这个镜头的参考图都无法读取，已停止生成；请在全片设定里重新上传参考图后再试")
         if references:
             meta["references"] = ",".join(ref.asset_id for ref in used_refs)
-            path = provider.generate(
-                prompt, aspect=project.canvas.aspect, output=work / "gen", references=references
-            )
-        else:
-            path = provider.generate(prompt, aspect=project.canvas.aspect, output=work / "gen")
+        # AI 图片也是收费调用，和 AI 视频共用同一个并发上限。
+        with limits.limit("ai", settings.ai_concurrency):
+            if references:
+                path = provider.generate(
+                    prompt, aspect=project.canvas.aspect, output=work / "gen", references=references
+                )
+            else:
+                path = provider.generate(prompt, aspect=project.canvas.aspect, output=work / "gen")
         asset = _register_media(
             store,
             project,
@@ -929,10 +938,11 @@ def generate_subject_image(
                     )
                 except MediaError as exc:
                     log.warning("项目 %s：参考图 %s 无法读取，跳过：%s", project.id, image, exc)
-        if references:
-            path = provider.generate(prompt, aspect="1:1", output=work / "gen", references=references)
-        else:
-            path = provider.generate(prompt, aspect="1:1", output=work / "gen")
+        with limits.limit("ai", settings.ai_concurrency):
+            if references:
+                path = provider.generate(prompt, aspect="1:1", output=work / "gen", references=references)
+            else:
+                path = provider.generate(prompt, aspect="1:1", output=work / "gen")
         asset = _register_media(
             store,
             project,

@@ -47,6 +47,10 @@ class Settings:
     )
     allowed_hosts: list[str] = field(default_factory=list)
     """额外放行的 Host（例如局域网部署时的 192.168.x.x）。本机地址始终放行。"""
+    ai_concurrency: int = 4
+    """同时调用 AI 视频 / 图片服务的上限。几个项目一起一键生成时，避免同时猛打收费接口。"""
+    asr_concurrency: int = 1
+    """同时在本机做语音识别的上限。faster-whisper 吃 CPU，默认一次只跑一个。"""
     config_path: Path | None = None
     """读取的 config.toml 路径；在设置页修改配置时写回这个文件。为空时不能在界面里改配置。"""
 
@@ -67,6 +71,15 @@ def _resolve_tool(name: str, configured: str | None) -> str:
     if configured:
         return configured
     return shutil.which(name) or name
+
+
+def _positive_int(value, fallback: int) -> int:
+    """配置里的并发数：非正整数（含留空、写错）时用默认值。"""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return number if number >= 1 else fallback
 
 
 def load_settings(path: str | Path | None = None) -> Settings:
@@ -95,6 +108,8 @@ def load_settings(path: str | Path | None = None) -> Settings:
         settings.cors_origins = [str(item) for item in app["cors_origins"]]
     if isinstance(app.get("allowed_hosts"), list):
         settings.allowed_hosts = [str(item) for item in app["allowed_hosts"]]
+    settings.ai_concurrency = _positive_int(app.get("ai_concurrency"), settings.ai_concurrency)
+    settings.asr_concurrency = _positive_int(app.get("asr_concurrency"), settings.asr_concurrency)
 
     defaults = data.get("defaults", {})
     for kind in PROVIDER_KINDS:
