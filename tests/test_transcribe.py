@@ -115,7 +115,12 @@ def _wait_done(client, pid, asset):
     raise AssertionError("识别一直没完成")
 
 
-def test_cut_flow_builds_original_speech_shots_and_renders(client, settings, store, tmp_path):
+def test_cut_flow_builds_original_speech_shots_and_renders(client, settings, store, tmp_path, monkeypatch):
+    from shotwright.media import silence
+
+    # 测试音是持续的正弦波，没有真正的静音，对齐静音只会随 FFmpeg 版本产生几毫秒的抖动；
+    # 这里关掉对齐，按识别时间核对剪辑结果。对齐本身见 test_cut_points_snap_to_nearby_silence。
+    monkeypatch.setattr(silence, "snap_ranges", lambda samples, ranges, total: ranges)
     settings.defaults["asr"] = "fakeasr"
     FakeASR.calls.clear()
     pid = client.post("/api/v2/projects", json={"mode": "empty", "voice": {"provider": "silent"}}).json()[
@@ -155,12 +160,11 @@ def test_cut_flow_builds_original_speech_shots_and_renders(client, settings, sto
     assert shot["text"] == "大家好，今天介绍羽绒服。轻薄很保暖。"
     assert shot["visual"]["trim_start"] == 0.0
     assert shot["visual"]["trim_end"] == pytest.approx(6.45, abs=0.01)
-    # 剪点会挪到附近最安静的地方（这段测试音是持续的正弦波，挪动很小）。
     assert [tuple(x) for x in shot["visual"]["skips"]] == [
-        pytest.approx((1.28, 1.72), abs=0.03),
-        pytest.approx((3.45, 4.95), abs=0.03),
+        pytest.approx((1.28, 1.72), abs=0.01),
+        pytest.approx((3.45, 4.95), abs=0.01),
     ]
-    assert shot["duration"] == pytest.approx(4.51, abs=0.05)
+    assert shot["duration"] == pytest.approx(4.51, abs=0.02)
     # 改过的错字记回识别结果。
     assert client.get(f"/api/v2/projects/{pid}/transcripts/{asset}").json()["words"][6][0] == "很保暖。"
 
@@ -179,8 +183,8 @@ def test_cut_flow_builds_original_speech_shots_and_renders(client, settings, sto
     r = client.post(f"/api/v2/projects/{pid}/shots/{shot['id']}/split", json={"at": 2.0})
     assert r.status_code in (200, 201), r.text
     first, second = r.json()["shots"]
-    assert first["visual"]["trim_end"] == pytest.approx(2.44, abs=0.03)
-    assert [tuple(x) for x in first["visual"]["skips"]] == [pytest.approx((1.28, 1.72), abs=0.03)]
+    assert first["visual"]["trim_end"] == pytest.approx(2.44, abs=0.01)
+    assert [tuple(x) for x in first["visual"]["skips"]] == [pytest.approx((1.28, 1.72), abs=0.01)]
     assert first["text"] == "大家好，今天介绍" and second["text"] == "羽绒服。轻薄很保暖。"
     # 再合并回去：中间没有空隙，剪掉的片段保留。
     r = client.post(f"/api/v2/projects/{pid}/shots/{first['id']}/merge")
