@@ -231,7 +231,7 @@ export const api = {
     request<GenerateJob>(`/projects/${id}/generate-all`, json("POST", body)),
   cancelGenerateAll: (id: string) => request<GenerateJob>(`/projects/${id}/generate-all/cancel`, json("POST")),
   /** 服务器上正在检索或生成的镜头（页面刷新后用来恢复"生成中"状态）。 */
-  inProgress: (id: string) => request<Record<string, { mode: string; seconds: number }>>(`/projects/${id}/in-progress`),
+  inProgress: (id: string) => request<Record<string, { mode: string; seconds: number; queued?: boolean }>>(`/projects/${id}/in-progress`),
   /** 检索背景音乐候选（只返回元数据+试听地址，不下载）；query 留空时由服务端用大模型提炼。 */
   bgmCandidates: (id: string, query = "") =>
     request<BgmSearchResult>(`/projects/${id}/bgm/candidates`, json("POST", { query })),

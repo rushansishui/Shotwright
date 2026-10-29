@@ -50,6 +50,7 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
     error,
     setError,
     busy,
+    queued,
     now,
     activeIndex,
     setActiveIndex,
@@ -344,6 +345,7 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
                 active={index === activeIndex}
                 busy={shot.id in busy || shot.id === batchCurrent}
                 busySeconds={shot.id in busy ? Math.max(0, Math.round((now - busy[shot.id]) / 1000)) : 0}
+                queued={queued.has(shot.id)}
                 aiVideo={aiVideo}
                 aiLocked={locked}
                 onGotoMaterials={() => setStep(1)}

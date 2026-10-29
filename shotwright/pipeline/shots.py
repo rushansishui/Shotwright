@@ -16,7 +16,7 @@ from shotwright.media.ffmpeg import LOCAL_PROTOCOLS, MediaCancelled, probe, run_
 
 from .render_types import AUDIO_ARGS, KEN_BURNS, RenderCancelled, StageRecord
 
-CLIP_VERSION = "clip-1"
+CLIP_VERSION = "clip-2"
 """视频片段处理方式（入出点、慢放定格、原声）的版本；改动处理逻辑时更新，旧缓存随之失效。"""
 
 
@@ -357,6 +357,12 @@ def render_shot(
                 original = "[0:a]asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo"
                 if clip.speed < 1.0:
                     original += f",atempo={clip.speed:.4f}"
+                # 镜头首尾也是剪点：原声在这里淡入淡出几毫秒，镜头接镜头时不会有截断的「咔」声。
+                heard = clip.length / clip.speed
+                if heard > CUT_FADE * 4:
+                    original += (
+                        f",afade=t=in:st=0:d={CUT_FADE},afade=t=out:st={heard - CUT_FADE:.4f}:d={CUT_FADE}"
+                    )
                 original += f",volume={visual.source_volume:.3f}[src]"
                 parts.append(original)
                 parts.append(f"{voice},asplit=2[voice][key]")
@@ -570,8 +576,30 @@ def _render_sequence(
     return fp, output
 
 
+CUT_FADE = 0.012
+"""剪点两边声音的淡入淡出（秒）。直接截断时波形会跳变，耳机里能听到「咔」一声。"""
+
+
+def _kept_parts(clip: ClipPlan) -> list[tuple[float, float]]:
+    """选段里保留的部分（相对选段开头的秒数），即去掉 skips 之后剩下的。"""
+    parts: list[tuple[float, float]] = []
+    cursor = 0.0
+    for a, b in sorted(clip.skips):
+        a, b = max(0.0, a - clip.start), min(clip.span, b - clip.start)
+        if a - cursor > 1e-3:
+            parts.append((cursor, a))
+        cursor = max(cursor, b)
+    if clip.span - cursor > 1e-3:
+        parts.append((cursor, clip.span))
+    return parts
+
+
 def _cut_skips(source: Path, output: Path, clip: ClipPlan, cancel: threading.Event) -> None:
-    """把选段里剪掉的片段去掉，画面和原声一起剪，输出一个连续的临时文件。"""
+    """把选段里剪掉的片段去掉，画面和原声一起剪，输出一个连续的临时文件。
+
+    画面按时间挑帧；声音按保留的几段分别截出，在每个剪点两边做几毫秒的淡入淡出再拼起来，
+    剪掉口误、停顿的地方听不到截断的「咔哒」声。
+    """
     keep = " + ".join(f"between(t,{a - clip.start:.3f},{b - clip.start:.3f})" for a, b in clip.skips)
     args = [
         "-ss",
@@ -582,15 +610,24 @@ def _cut_skips(source: Path, output: Path, clip: ClipPlan, cancel: threading.Eve
         LOCAL_PROTOCOLS,
         "-i",
         str(source),
-        "-vf",
-        f"select='not({keep})',setpts=N/FRAME_RATE/TB",
-        "-map",
-        "0:v:0",
     ]
-    if clip.audio:
-        args += ["-af", f"aselect='not({keep})',asetpts=N/SR/TB", "-map", "0:a:0", *AUDIO_ARGS]
+    graph = [f"[0:v]select='not({keep})',setpts=N/FRAME_RATE/TB[v]"]
+    parts = _kept_parts(clip)
+    if clip.audio and parts:
+        labels = []
+        for index, (a, b) in enumerate(parts):
+            fade = min(CUT_FADE, (b - a) / 3)
+            chain = f"[0:a]atrim=start={a:.4f}:end={b:.4f},asetpts=PTS-STARTPTS"
+            if index > 0:
+                chain += f",afade=t=in:st=0:d={fade:.4f}"
+            if index < len(parts) - 1:
+                chain += f",afade=t=out:st={b - a - fade:.4f}:d={fade:.4f}"
+            graph.append(f"{chain}[a{index}]")
+            labels.append(f"[a{index}]")
+        graph.append(f"{''.join(labels)}concat=n={len(labels)}:v=0:a=1[a]")
+        args += ["-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[a]", *AUDIO_ARGS]
     else:
-        args += ["-an"]
+        args += ["-filter_complex", graph[0], "-map", "[v]", "-an"]
     run_ffmpeg(
         [
             *args,

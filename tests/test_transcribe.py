@@ -155,11 +155,12 @@ def test_cut_flow_builds_original_speech_shots_and_renders(client, settings, sto
     assert shot["text"] == "大家好，今天介绍羽绒服。轻薄很保暖。"
     assert shot["visual"]["trim_start"] == 0.0
     assert shot["visual"]["trim_end"] == pytest.approx(6.45, abs=0.01)
+    # 剪点会挪到附近最安静的地方（这段测试音是持续的正弦波，挪动很小）。
     assert [tuple(x) for x in shot["visual"]["skips"]] == [
-        pytest.approx((1.28, 1.72), abs=0.01),
-        pytest.approx((3.45, 4.95), abs=0.01),
+        pytest.approx((1.28, 1.72), abs=0.03),
+        pytest.approx((3.45, 4.95), abs=0.03),
     ]
-    assert shot["duration"] == pytest.approx(4.51, abs=0.02)
+    assert shot["duration"] == pytest.approx(4.51, abs=0.05)
     # 改过的错字记回识别结果。
     assert client.get(f"/api/v2/projects/{pid}/transcripts/{asset}").json()["words"][6][0] == "很保暖。"
 
@@ -178,8 +179,8 @@ def test_cut_flow_builds_original_speech_shots_and_renders(client, settings, sto
     r = client.post(f"/api/v2/projects/{pid}/shots/{shot['id']}/split", json={"at": 2.0})
     assert r.status_code in (200, 201), r.text
     first, second = r.json()["shots"]
-    assert first["visual"]["trim_end"] == pytest.approx(2.44, abs=0.01)
-    assert [tuple(x) for x in first["visual"]["skips"]] == [pytest.approx((1.28, 1.72), abs=0.01)]
+    assert first["visual"]["trim_end"] == pytest.approx(2.44, abs=0.03)
+    assert [tuple(x) for x in first["visual"]["skips"]] == [pytest.approx((1.28, 1.72), abs=0.03)]
     assert first["text"] == "大家好，今天介绍" and second["text"] == "羽绒服。轻薄很保暖。"
     # 再合并回去：中间没有空隙，剪掉的片段保留。
     r = client.post(f"/api/v2/projects/{pid}/shots/{first['id']}/merge")
@@ -281,6 +282,31 @@ def test_chosen_language_that_does_not_match_speech_is_corrected(client, setting
     data = _wait_done(client, pid, asset)
     assert data["state"] == "done" and data["requested_language"] == "en-US" and data["language"] == "zh"
     assert store.load(pid).language == "zh-CN"
+
+
+def test_cut_points_snap_to_nearby_silence():
+    """识别时间有误差：剪点挪到附近最安静的地方，不切字头、不留半个尾音。"""
+    from array import array
+
+    from shotwright.media import silence
+
+    rate = silence.SAMPLE_RATE
+    # 0–1.00 秒说话，1.00–1.30 秒静音，1.30–3.00 秒说话。
+    samples = array("h", [8000 if (i // 4) % 2 else -8000 for i in range(3 * rate)])
+    for i in range(int(1.0 * rate), int(1.3 * rate)):
+        samples[i] = 0
+    # 识别说第一段到 1.08 秒才结束、第二段 1.22 秒才开始：都落在静音里，基本不动。
+    assert 1.0 <= silence.quietest(samples, 1.08) <= 1.3
+    # 识别把剪点放在 0.92 秒（还在说话），挪进后面的静音里。
+    assert 1.0 <= silence.quietest(samples, 0.92) <= 1.1
+    # 剪点放在 1.40 秒（第二段已经开口），挪回前面的静音里。
+    assert 1.2 <= silence.quietest(samples, 1.40) <= 1.3
+    # 前后都在说话、附近没有静音：差不多的情况下留在原处附近。
+    assert abs(silence.quietest(samples, 2.5) - 2.5) <= 0.02
+    # 片头片尾不动，段落先后不乱。
+    ranges = silence.snap_ranges(samples, [(0.0, 0.92), (1.40, 3.0)], 3.0)
+    assert ranges[0][0] == 0.0 and ranges[-1][1] == 3.0
+    assert 1.0 <= ranges[0][1] <= ranges[1][0] <= 1.3
 
 
 def test_whisper_checks_spoken_language_before_transcribing():

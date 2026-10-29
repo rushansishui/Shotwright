@@ -23,6 +23,7 @@ from shotwright.config import Settings
 from shotwright.core import limits
 from shotwright.core.models import Project, Shot, ShotVisual
 from shotwright.core.store import ProjectStore, read_json, write_json
+from shotwright.media import silence
 from shotwright.media.ffmpeg import MediaError, detect_scenes, probe, run_ffmpeg
 from shotwright.providers import registry
 from shotwright.providers.base import ASRProvider, LLMProvider, ProviderError, Transcript
@@ -399,17 +400,24 @@ def build_shots(
     if not ranges:
         raise ProviderError("全部内容都被剪掉了，至少保留一段")
 
+    has_audio = True
+    try:
+        has_audio = probe(source).has_audio
+    except MediaError:
+        pass
+    if has_audio and (ranges[0][0] > 1e-3 or ranges[-1][1] < total - 1e-3 or len(ranges) > 1):
+        # 识别出的逐词时间有误差，剪点挪到附近最安静的地方，避免切掉字头、留下半个尾音。
+        try:
+            ranges = silence.snap_ranges(silence.decode(source), ranges, total)
+        except MediaError as exc:
+            log.warning("剪点对齐静音失败，按识别时间剪：%s", exc)
+
     scenes: list[float] = []
     if split_scenes and asset.kind == "video":
         try:
             scenes = detect_scenes(source)
         except MediaError as exc:
             log.warning("原片切镜检测失败，只按句子切：%s", exc)
-    has_audio = True
-    try:
-        has_audio = probe(source).has_audio
-    except MediaError:
-        pass
 
     kept_words = [w for i, w in enumerate(words) if i not in removed]
     # 先把每段保留内容在画面切换处、较长时在句末切开（这些是镜头的分界）；

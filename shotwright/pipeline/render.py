@@ -729,7 +729,6 @@ class Renderer:
             item.model_copy(update={"margin": safe_margin(project, item.position, item.margin)})
             for item in text_overlays
         ]
-        margin_l, margin_r = side_margins(project)
         reencode = self.quality == "final" and project.delivery != platforms.DEFAULT_PLATFORM
         needs_ass = bool(cues or text_overlays or project.ai_badge or has_titles)
         faces = self._text_faces(project) if needs_ass else None
@@ -769,72 +768,27 @@ class Renderer:
             with tempfile.TemporaryDirectory(prefix="shotwright-final-") as work_dir:
                 work = Path(work_dir)
                 args = ["-protocol_whitelist", LOCAL_PROTOCOLS, "-i", str(assembly)]
-                filters: list[str] = []
-                # 依次串起来的视频标签，每个叠加步骤接上一个。
-                video_in, video_out = "0:v", "v0"
-                step = 0
-
+                chain = _VideoChain()
                 if grade:
                     # 统一调色放在字幕和叠加文字之前，文字颜色不受影响。
-                    filters.append(f"[{video_in}]{grade}[{video_out}]")
-                    video_in = video_out
-                    step += 1
-                    video_out = f"v{step}"
-
-                title_styles: list[str] = []
-                title_events: list[str] = []
-                if has_titles and faces is not None:
-                    title_styles, title_events = subs.title_layers(
-                        titles,
-                        width=project.canvas.width,
-                        height=project.canvas.height,
-                        families={kind: faces[kind].ass_family for kind in ("headline", "intro", "shot")},
-                        headline_margin=safe_margin(project, "top", titles.headline.margin),
-                        shot_margin=shot_title_margin(project),
-                        margin_l=margin_l,
-                        margin_r=margin_r,
-                        fallback_title=project.title,
-                        shot_titles=shot_titles,
-                        total=duration,
+                    chain.add(grade)
+                if needs_ass and faces is not None and font is not None:
+                    self._write_text_layers(
+                        project,
+                        work,
+                        faces,
+                        used_faces,
+                        cues,
+                        style,
+                        text_overlays,
+                        shot_titles,
+                        duration,
+                        has_titles,
                     )
-                if needs_ass and font is not None:
-                    (work / "fonts").mkdir()
-                    for path in used_faces:
-                        shutil.copyfile(path, work / "fonts" / path.name)
-                    family = faces["subtitle"].ass_family
-                    (work / "subs.ass").write_text(
-                        subs.to_ass(
-                            cues,
-                            style,
-                            width=project.canvas.width,
-                            height=project.canvas.height,
-                            family=family,
-                            overlays=text_overlays,
-                            margin_l=margin_l,
-                            margin_r=margin_r,
-                            extra_styles=title_styles,
-                            extra_events=title_events,
-                        ),
-                        encoding="utf-8",
-                    )
-                    filters.append(f"[{video_in}]ass=subs.ass:fontsdir=fonts[{video_out}]")
-                    video_in = video_out
-                    step += 1
-                    video_out = f"v{step}"
+                    chain.add("ass=subs.ass:fontsdir=fonts")
                     if project.ai_badge:
-                        # 角标：右下角一行小字，提示这是 AI 生成内容。
-                        badge = "AI"
-                        filters.append(
-                            f"[{video_in}]drawtext=fontfile=fonts/{font.name}:text='{badge}':"
-                            f"fontcolor=white@0.75:fontsize="
-                            f"{max(16, project.canvas.height // 40)}:x=w-tw-24:y=h-th-24:"
-                            f"box=1:boxcolor=black@0.35:boxborderw=8[{video_out}]"
-                        )
-                        video_in = video_out
-                        step += 1
-                        video_out = f"v{step}"
-
-                # 图片叠加：按位置缩放到合适大小，在指定时间段内显示。
+                        chain.add(_badge_filter(project, font))
+                # 图片叠加：每张图是一个额外输入，按位置缩放后在指定时间段内叠上去。
                 for index, (item, asset) in enumerate(image_overlays, start=1):
                     args += [
                         "-protocol_whitelist",
@@ -842,71 +796,25 @@ class Renderer:
                         "-i",
                         str(self.store.asset_path(project, asset.id)),
                     ]
-                    height = max(24, item.size * 2)
-                    label_in = f"img{index}"
-                    filters.append(f"[{index}:v]scale=-2:{height}[{label_in}]")
-                    x, y = _overlay_position(item, project)
-                    enable = (
-                        f":enable='between(t,{item.start:.2f},{_overlay_end(item):.2f})'"
-                        if item.duration
-                        else (f":enable='gte(t,{item.start:.2f})'")
-                    )
-                    filters.append(f"[{video_in}][{label_in}]overlay=x={x}:y={y}{enable}[{video_out}]")
-                    video_in = video_out
-                    step += 1
-                    video_out = f"v{step}"
+                    chain.overlay(index, item, project)
 
-                audio_map = "0:a"
-                bgm_index = None
-                if bgm_asset is not None:
-                    bgm_index = 1 + len(image_overlays)
-                    args += [
-                        "-stream_loop",
-                        "-1",
-                        "-protocol_whitelist",
-                        LOCAL_PROTOCOLS,
-                        "-i",
-                        str(self.store.asset_path(project, bgm_asset.id)),
-                    ]
-                ambience_index = whoosh_index = None
-                next_index = 1 + len(image_overlays) + (1 if bgm_asset is not None else 0)
-                if ambience is not None:
-                    ambience_index = next_index
-                    next_index += 1
-                    args += [
-                        "-stream_loop",
-                        "-1",
-                        "-protocol_whitelist",
-                        LOCAL_PROTOCOLS,
-                        "-i",
-                        str(self.store.asset_path(project, ambience.id)),
-                    ]
-                if whoosh:
-                    whoosh_index = next_index
-                    args += ["-protocol_whitelist", LOCAL_PROTOCOLS, "-i", str(self._whoosh(project))]
-                audio_graph = audio_filter(
-                    project,
-                    bgm_index,
-                    duration,
-                    ambience_index=ambience_index,
-                    whoosh_index=whoosh_index,
-                    cuts=cuts if whoosh else (),
+                audio_args, audio_graph = self._audio_inputs(
+                    project, 1 + len(image_overlays), bgm_asset, ambience, whoosh, cuts, duration
                 )
+                args += audio_args
+                filters = chain.filters
+                audio_map = "0:a"
                 if audio_graph:
                     filters.append(audio_graph)
                     audio_map = "[a]"
-                if reencode and not video_in.startswith("v"):
+                if reencode and not chain.filtered:
                     # 交付平台有码率和编码要求，没有滤镜时也要重新编码一次。
-                    filters.append(f"[{video_in}]null[{video_out}]")
-                    video_in = video_out
+                    chain.add("null")
                 command = [*args]
                 if filters:
                     command += ["-filter_complex", ";".join(filters)]
-                # 视频没经过滤镜时直接引用输入流（0:v），不能写成 [0:v]——
-                # 方括号形式只在滤镜图里有同名的输出标签时才成立。
-                video_map = f"[{video_in}]" if video_in.startswith("v") else video_in
-                command += ["-map", video_map, "-map", audio_map]
-                if not video_in.startswith("v"):
+                command += ["-map", chain.output, "-map", audio_map]
+                if not chain.filtered:
                     command += ["-c:v", "copy"]
                 elif reencode:
                     command += platforms.encode_args(project.delivery, project.canvas.fps)
@@ -936,6 +844,148 @@ class Renderer:
         except MediaError as exc:
             raise RenderError(f"合成字幕与背景音乐失败：{exc}") from exc
         return output
+
+    def _write_text_layers(
+        self,
+        project: Project,
+        work: Path,
+        faces: dict,
+        used_faces: list[Path],
+        cues: list[subs.Cue],
+        style,
+        text_overlays: list,
+        shot_titles: list[tuple[str, float, float]] | None,
+        duration: float,
+        has_titles: bool,
+    ) -> None:
+        """把字幕、叠加文字和标题写成一个 ASS 文件，并把用到的字体拷到 fonts/ 下供 ass 滤镜加载。"""
+        titles = project.titles
+        margin_l, margin_r = side_margins(project)
+        title_styles: list[str] = []
+        title_events: list[str] = []
+        if has_titles:
+            title_styles, title_events = subs.title_layers(
+                titles,
+                width=project.canvas.width,
+                height=project.canvas.height,
+                families={kind: faces[kind].ass_family for kind in ("headline", "intro", "shot")},
+                headline_margin=safe_margin(project, "top", titles.headline.margin),
+                shot_margin=shot_title_margin(project),
+                margin_l=margin_l,
+                margin_r=margin_r,
+                fallback_title=project.title,
+                shot_titles=shot_titles,
+                total=duration,
+            )
+        (work / "fonts").mkdir()
+        for path in used_faces:
+            shutil.copyfile(path, work / "fonts" / path.name)
+        (work / "subs.ass").write_text(
+            subs.to_ass(
+                cues,
+                style,
+                width=project.canvas.width,
+                height=project.canvas.height,
+                family=faces["subtitle"].ass_family,
+                overlays=text_overlays,
+                margin_l=margin_l,
+                margin_r=margin_r,
+                extra_styles=title_styles,
+                extra_events=title_events,
+            ),
+            encoding="utf-8",
+        )
+
+    def _audio_inputs(
+        self,
+        project: Project,
+        first_index: int,
+        bgm_asset,
+        ambience,
+        whoosh: bool,
+        cuts: list[float],
+        duration: float,
+    ) -> tuple[list[str], str | None]:
+        """背景音乐、环境声、转场音效的输入参数和混音滤镜（没有需要混的就返回 None）。"""
+        args: list[str] = []
+        next_index = first_index
+        bgm_index = ambience_index = whoosh_index = None
+        if bgm_asset is not None:
+            bgm_index = next_index
+            next_index += 1
+            args += ["-stream_loop", "-1", "-protocol_whitelist", LOCAL_PROTOCOLS]
+            args += ["-i", str(self.store.asset_path(project, bgm_asset.id))]
+        if ambience is not None:
+            ambience_index = next_index
+            next_index += 1
+            args += ["-stream_loop", "-1", "-protocol_whitelist", LOCAL_PROTOCOLS]
+            args += ["-i", str(self.store.asset_path(project, ambience.id))]
+        if whoosh:
+            whoosh_index = next_index
+            args += ["-protocol_whitelist", LOCAL_PROTOCOLS, "-i", str(self._whoosh(project))]
+        graph = audio_filter(
+            project,
+            bgm_index,
+            duration,
+            ambience_index=ambience_index,
+            whoosh_index=whoosh_index,
+            cuts=cuts if whoosh else (),
+        )
+        return args, graph or None
+
+
+class _VideoChain:
+    """成片阶段的视频滤镜链：每一步接在上一步的输出后面，标签依次是 v0、v1……"""
+
+    def __init__(self) -> None:
+        self.filters: list[str] = []
+        self.current = "0:v"
+        self.step = 0
+
+    @property
+    def filtered(self) -> bool:
+        """视频是否经过了滤镜；没经过时直接复制视频流。"""
+        return self.current != "0:v"
+
+    @property
+    def output(self) -> str:
+        # 视频没经过滤镜时直接引用输入流（0:v），不能写成 [0:v]——
+        # 方括号形式只在滤镜图里有同名的输出标签时才成立。
+        return f"[{self.current}]" if self.filtered else self.current
+
+    def _next(self) -> str:
+        label = f"v{self.step}"
+        self.step += 1
+        return label
+
+    def add(self, body: str) -> None:
+        label = self._next()
+        self.filters.append(f"[{self.current}]{body}[{label}]")
+        self.current = label
+
+    def overlay(self, index: int, item, project: Project) -> None:
+        """把第 ``index`` 个输入（一张图片）按叠加设置缩放后叠到画面上。"""
+        image = f"img{index}"
+        self.filters.append(f"[{index}:v]scale=-2:{max(24, item.size * 2)}[{image}]")
+        x, y = _overlay_position(item, project)
+        enable = (
+            f":enable='between(t,{item.start:.2f},{_overlay_end(item):.2f})'"
+            if item.duration
+            else f":enable='gte(t,{item.start:.2f})'"
+        )
+        label = self._next()
+        self.filters.append(f"[{self.current}][{image}]overlay=x={x}:y={y}{enable}[{label}]")
+        self.current = label
+
+
+def _badge_filter(project: Project, font: Path) -> str:
+    """右下角一行小字「AI」，提示这是 AI 生成内容。"""
+    return (
+        f"drawtext=fontfile=fonts/{font.name}:text='AI':"
+        f"fontcolor=white@0.75:fontsize="
+        f"{max(16, project.canvas.height // 40)}:x=w-tw-24:y=h-th-24:"
+        f"box=1:boxcolor=black@0.35:boxborderw=8"
+    )
 
 
 def audio_filter(

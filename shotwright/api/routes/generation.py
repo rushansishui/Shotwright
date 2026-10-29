@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 
 from shotwright.api.context import ApiContext, log
 from shotwright.api.schemas import CandidatesRequest, ExpandRequest, GenerateAll, RewriteShot
+from shotwright.core import limits
 from shotwright.core.models import Project
 from shotwright.core.store import ProjectNotFound
 from shotwright.providers import registry
@@ -51,6 +52,8 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
                     result[shot_id] = {
                         "mode": info["mode"],
                         "seconds": round(now - info["since"], 1),
+                        # 并发已满、还在等前面的生成做完。
+                        "queued": limits.is_waiting(info.get("thread")),
                     }
         return result
 
@@ -83,6 +86,7 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
             in_progress[key] = {
                 "mode": "image" if keyframes else "ai" if edit else shot.visual.mode,
                 "since": time.time(),
+                "thread": threading.get_ident(),
             }
         # 关键帧只是候选图片，不改变当前选中的画面。
         generated = (edit or shot.visual.mode in ("ai", "image")) and not keyframes

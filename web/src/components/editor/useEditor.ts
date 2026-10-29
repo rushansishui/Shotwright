@@ -9,6 +9,8 @@ export function useEditor(projectId: string) {
   const [project, setProject] = useState<Project | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<Record<string, number>>({});
+  /** 并发已满、正在排队的镜头。 */
+  const [queued, setQueued] = useState<Set<string>>(() => new Set());
   const [now, setNow] = useState(Date.now());
   const inflight = useRef(new Set<string>());
   const [activeIndex, setActiveIndex] = useState(0);
@@ -46,6 +48,10 @@ export function useEditor(projectId: string) {
       try {
         const remote = await api.inProgress(projectId);
         if (stopped) return;
+        const waiting = Object.keys(remote).filter((shotId) => remote[shotId].queued);
+        setQueued((prev) =>
+          prev.size === waiting.length && waiting.every((shotId) => prev.has(shotId)) ? prev : new Set(waiting),
+        );
         let finished = false;
         setBusy((prev) => {
           const next = { ...prev };
@@ -121,6 +127,7 @@ export function useEditor(projectId: string) {
     error,
     setError,
     busy,
+    queued,
     now,
     activeIndex,
     setActiveIndex,
