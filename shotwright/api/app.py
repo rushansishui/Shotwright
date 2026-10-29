@@ -37,6 +37,7 @@ from shotwright.api.schemas import (
     ChargeConsent,
     CreateProject,
     CreateVersion,
+    CutDraft,
     CutRequest,
     DefaultProvider,
     DuplicateProject,
@@ -1165,6 +1166,16 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         llm = registry.create("llm", None, settings)
         return {"remove": transcribe.suggest_retakes(llm, data)}  # type: ignore[arg-type]
 
+    @api.put("/projects/{project_id}/transcripts/{asset_id}/draft")
+    def save_cut_draft(project_id: str, asset_id: str, body: CutDraft):
+        """保存剪辑进度：页面上每次删词、改字后自动保存。"""
+        project = store.load(_id(project_id))
+        _media_asset(project, asset_id)
+        try:
+            return transcribe.save_draft(store, project.id, asset_id, body.model_dump())
+        except ProviderError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
     @api.post("/projects/{project_id}/cut")
     def cut_by_text(project_id: str, body: CutRequest):
         """按剪辑结果生成原声镜头，替换项目里现有的镜头。"""
@@ -1185,6 +1196,19 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 max_pause=body.max_pause,
                 split_scenes=body.split_scenes,
                 texts=texts,
+            )
+            # 生成分镜用的设置也记为剪辑进度，回到剪辑页时还是这一版。
+            transcribe.save_draft(
+                store,
+                project.id,
+                body.asset_id,
+                {
+                    "removed": body.removed,
+                    "texts": body.texts,
+                    "pauses": body.max_pause is not None,
+                    "max_pause": body.max_pause,
+                    "scenes": body.split_scenes,
+                },
             )
             project.video_type = "footage"
             project.origin = "cut"

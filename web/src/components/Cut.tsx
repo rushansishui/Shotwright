@@ -211,7 +211,7 @@ function CutUpload() {
   );
 }
 
-interface Draft {
+interface LegacyDraft {
   removed: number[];
   texts: Record<string, string>;
   pauses: boolean;
@@ -219,10 +219,11 @@ interface Draft {
   scenes: boolean;
 }
 
-function loadDraft(key: string): Draft | null {
+/** 旧版把剪辑进度存在浏览器里；第一次打开时搬到服务端。 */
+function legacyDraft(key: string): LegacyDraft | null {
   try {
     const raw = window.localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as Draft) : null;
+    return raw ? (JSON.parse(raw) as LegacyDraft) : null;
   } catch {
     return null;
   }
@@ -231,15 +232,17 @@ function loadDraft(key: string): Draft | null {
 function CutEditor({ projectId, assetId }: { projectId: string; assetId: string }) {
   const { t } = useI18n();
   const draftKey = `shotwright.cut.${projectId}.${assetId}`;
-  const saved = useMemo(() => loadDraft(draftKey), [draftKey]);
   const [project, setProject] = useState<Project | null>(null);
   const [data, setData] = useState<TranscriptData | null>(null);
   const [error, setError] = useState("");
-  const [removed, setRemoved] = useState<Set<number>>(() => new Set(saved?.removed ?? []));
-  const [texts, setTexts] = useState<Record<string, string>>(saved?.texts ?? {});
-  const [pauses, setPauses] = useState(saved?.pauses ?? false);
-  const [maxPause, setMaxPause] = useState(saved?.maxPause ?? 0.8);
-  const [scenes, setScenes] = useState(saved?.scenes ?? true);
+  const [removed, setRemoved] = useState<Set<number>>(() => new Set());
+  const [texts, setTexts] = useState<Record<string, string>>({});
+  const [pauses, setPauses] = useState(false);
+  const [maxPause, setMaxPause] = useState(0.8);
+  const [scenes, setScenes] = useState(true);
+  /** 剪辑进度已经从服务端读进来了；读进来之前不保存，免得用空白覆盖。 */
+  const [draftReady, setDraftReady] = useState(false);
+  const [saveState, setSaveState] = useState<"" | "saving" | "saved" | "failed">("");
   const [skip, setSkip] = useState(true);
   const [selection, setSelection] = useState<[number, number] | null>(null);
   const [anchor, setAnchor] = useState<number | null>(null);
@@ -270,14 +273,49 @@ function CutEditor({ projectId, assetId }: { projectId: string; assetId: string 
     };
   }, [projectId, assetId, tick]);
 
+  // 识别完成后读入剪辑进度：服务端有就用服务端的，没有时把旧版存在浏览器里的搬过来。
   useEffect(() => {
-    try {
-      const draft: Draft = { removed: [...removed], texts, pauses, maxPause, scenes };
-      window.localStorage.setItem(draftKey, JSON.stringify(draft));
-    } catch {
-      /* 浏览器不让存就算了 */
+    if (draftReady || data?.state !== "done") return;
+    const server = data.draft;
+    const local = server ? null : legacyDraft(draftKey);
+    const draft = server
+      ? { removed: server.removed, texts: server.texts, pauses: server.pauses, maxPause: server.max_pause ?? 0.8, scenes: server.scenes }
+      : local;
+    if (draft) {
+      setRemoved(new Set(draft.removed ?? []));
+      setTexts(draft.texts ?? {});
+      setPauses(!!draft.pauses);
+      setMaxPause(draft.maxPause ?? 0.8);
+      setScenes(draft.scenes ?? true);
     }
-  }, [draftKey, removed, texts, pauses, maxPause, scenes]);
+    setDraftReady(true);
+  }, [data, draftReady, draftKey]);
+
+  // 每次改动后停 0.8 秒自动保存到服务端，换浏览器、换电脑打开还在。
+  useEffect(() => {
+    if (!draftReady) return;
+    const timer = window.setTimeout(() => {
+      setSaveState("saving");
+      api
+        .saveCutDraft(projectId, assetId, {
+          removed: [...removed].sort((a, b) => a - b),
+          texts,
+          pauses,
+          max_pause: pauses ? maxPause : null,
+          scenes,
+        })
+        .then(() => {
+          setSaveState("saved");
+          try {
+            window.localStorage.removeItem(draftKey);
+          } catch {
+            /* 无所谓 */
+          }
+        })
+        .catch(() => setSaveState("failed"));
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [draftReady, projectId, assetId, draftKey, removed, texts, pauses, maxPause, scenes]);
 
   const words: WordTuple[] = useMemo(
     () => (data?.words ?? []).map((w, i) => [texts[i] ?? w[0], w[1], w[2]] as WordTuple),
@@ -480,6 +518,9 @@ function CutEditor({ projectId, assetId }: { projectId: string; assetId: string 
             <p className="cut-stats">
               {t("cut.stats", { source: formatClock(total), kept: formatClock(kept) })}
               {removed.size > 0 && <span className="muted small"> · {t("cut.removedCount", { n: removed.size })}</span>}
+              {saveState && (
+                <span className={`muted small cut-save ${saveState}`}> · {t(`cut.save.${saveState}` as MessageKey)}</span>
+              )}
             </p>
             <label className="check small">
               <input type="checkbox" checked={skip} onChange={(e) => setSkip(e.target.checked)} />

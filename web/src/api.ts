@@ -13,6 +13,7 @@ import type {
   Providers,
   SettingsData,
   TranscriptData,
+  CutDraft,
   RenderResult,
   Shot,
   ShotRole,
@@ -74,6 +75,11 @@ export const api = {
   transcript: (id: string, asset: string) => request<TranscriptData>(`/projects/${id}/transcripts/${asset}`),
   startTranscript: (id: string, asset: string, body: { provider?: string | null; language?: string | null } = {}) =>
     request<TranscriptData>(`/projects/${id}/transcripts/${asset}`, json("POST", body)),
+  saveCutDraft: (
+    id: string,
+    asset: string,
+    draft: { removed: number[]; texts: Record<string, string>; pauses: boolean; max_pause: number | null; scenes: boolean },
+  ) => request<CutDraft>(`/projects/${id}/transcripts/${asset}/draft`, json("PUT", draft)),
   suggestRetakes: (id: string, asset: string) =>
     request<{ remove: number[] }>(`/projects/${id}/transcripts/${asset}/retakes`, json("POST")),
   cut: (

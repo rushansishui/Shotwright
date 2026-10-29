@@ -90,6 +90,29 @@ def load(store: ProjectStore, project_id: str, asset_id: str) -> dict:
     return data
 
 
+_draft_lock = threading.Lock()
+
+
+def save_draft(store: ProjectStore, project_id: str, asset_id: str, draft: dict) -> dict:
+    """保存剪辑进度（删了哪些词、改了哪些字、停顿和分镜设置），换浏览器、换电脑打开还在。"""
+    path = transcript_path(store, project_id, asset_id)
+    with _draft_lock:
+        data = read_json(path)
+        if not data or data.get("state") != "done":
+            raise ProviderError("这段原片还没有识别完成")
+        count = len(data.get("words") or [])
+        data["draft"] = {
+            "removed": sorted({i for i in draft.get("removed", []) if 0 <= i < count}),
+            "texts": {str(k): str(v)[:200] for k, v in (draft.get("texts") or {}).items() if str(k).isdigit() and int(k) < count},
+            "max_pause": draft.get("max_pause"),
+            "pauses": bool(draft.get("pauses")),
+            "scenes": bool(draft.get("scenes", True)),
+            "saved_at": time.time(),
+        }
+        write_json(path, data)
+    return data["draft"]
+
+
 def words_of(data: dict) -> list[Word]:
     return [Word(str(w[0]), float(w[1]), float(w[2])) for w in data.get("words") or [] if len(w) == 3]
 

@@ -271,6 +271,17 @@ export interface TranscriptData {
   words?: [string, number, number][];
   sentences?: [number, number][];
   fillers?: number[];
+  /** 剪辑进度（服务端保存）。 */
+  draft?: CutDraft;
+}
+
+export interface CutDraft {
+  removed: number[];
+  texts: Record<string, string>;
+  pauses: boolean;
+  max_pause: number | null;
+  scenes: boolean;
+  saved_at?: number;
 }
 
 export interface Asset {

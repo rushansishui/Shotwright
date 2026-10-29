@@ -346,3 +346,13 @@ class CutRequest(_Body):
     split_scenes: bool = True
     texts: dict[str, str] = Field(default_factory=dict, max_length=5000)
     """改过错字的词：下标 → 新文字。"""
+
+
+class CutDraft(_Body):
+    """剪辑页的进度：删掉的词、改过的字、停顿和分镜设置。"""
+
+    removed: list[int] = Field(default_factory=list, max_length=50000)
+    texts: dict[str, str] = Field(default_factory=dict, max_length=5000)
+    pauses: bool = False
+    max_pause: float | None = Field(None, ge=0.3, le=10.0)
+    scenes: bool = True

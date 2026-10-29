@@ -300,3 +300,23 @@ def test_old_cut_task_without_origin_is_listed_under_cut(client, settings, store
     _wait_done(client, pid, asset)
     listed = {p["id"]: p for p in client.get("/api/v2/projects").json()}
     assert listed[pid]["origin"] == "cut" and listed[pid]["source_asset"] == asset
+
+
+def test_cut_draft_is_saved_on_server(client, settings, tmp_path):
+    """剪辑进度存在服务端：换浏览器打开还在；生成分镜时用的设置也记下来。"""
+    settings.defaults["asr"] = "fakeasr"
+    pid = client.post("/api/v2/projects", json={"mode": "empty"}).json()["id"]
+    with _clip_with_audio(tmp_path / "talk.mp4").open("rb") as handle:
+        asset = client.post(f"/api/v2/projects/{pid}/assets", files={"file": ("talk.mp4", handle)}).json()["id"]
+    url = f"/api/v2/projects/{pid}/transcripts/{asset}"
+    # 识别完成前不能保存
+    assert client.put(f"{url}/draft", json={"removed": [1]}).status_code == 409
+    client.post(url, json={})
+    _wait_done(client, pid, asset)
+    r = client.put(f"{url}/draft", json={"removed": [1, 99, 1], "texts": {"6": "很保暖。", "x": "?"}, "pauses": True, "max_pause": 1.2})
+    assert r.status_code == 200, r.text
+    draft = client.get(url).json()["draft"]
+    assert draft["removed"] == [1] and draft["texts"] == {"6": "很保暖。"} and draft["max_pause"] == 1.2
+    client.post(f"/api/v2/projects/{pid}/cut", json={"asset_id": asset, "removed": [0, 1], "max_pause": None})
+    draft = client.get(url).json()["draft"]
+    assert draft["removed"] == [0, 1] and draft["pauses"] is False
