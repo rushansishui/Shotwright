@@ -309,8 +309,6 @@ def to_srt(cues: list[Cue]) -> str:
     return "\n".join(blocks)
 
 
-
-
 # ---------------------------------------------------------------------------
 # ASS 样式与入场效果（字幕和标题共用）
 
@@ -343,7 +341,9 @@ def box_padding_y(size: int) -> int:
     return 0
 
 
-def ass_style(name: str, family: str, size: int, style, align_code: int, margin_l: int, margin_r: int, margin_v: int) -> str:
+def ass_style(
+    name: str, family: str, size: int, style, align_code: int, margin_l: int, margin_r: int, margin_v: int
+) -> str:
     """一条 ASS Style。``style`` 是 :class:`TextStyle`（或带同名字段的对象）。
 
     开底框时用 BorderStyle 3：底框颜色占用描边颜色，描边宽度变成底框内边距。
@@ -369,7 +369,9 @@ def ass_style(name: str, family: str, size: int, style, align_code: int, margin_
     )
 
 
-def anchor(align_code: int, width: int, height: int, margin_l: int, margin_r: int, margin_v: int) -> tuple[int, int]:
+def anchor(
+    align_code: int, width: int, height: int, margin_l: int, margin_r: int, margin_v: int
+) -> tuple[int, int]:
     """对齐点的像素坐标（\\pos / \\move 用）。"""
     column = (align_code - 1) % 3
     row = (align_code - 1) // 3
@@ -406,7 +408,9 @@ def keyword_spans(text: str, words) -> list[tuple[int, int]]:
             start = i + 1
             if any(taken[i:j]) or "\n" in text[i:j]:
                 continue
-            if latin and ((i > 0 and _ASCII_WORD.match(text[i - 1])) or (j < len(text) and _ASCII_WORD.match(text[j]))):
+            if latin and (
+                (i > 0 and _ASCII_WORD.match(text[i - 1])) or (j < len(text) and _ASCII_WORD.match(text[j]))
+            ):
                 continue
             spans.append((i, j))
             for k in range(i, j):
@@ -479,7 +483,9 @@ def _reveal_plan(text: str, total: float) -> list[list[tuple[int, str, int]]]:
     return lines
 
 
-def _reveal_tags(text: str, tag: str, total: float, *, line: int | None = None, marker: _Marker | None = None) -> str:
+def _reveal_tags(
+    text: str, tag: str, total: float, *, line: int | None = None, marker: _Marker | None = None
+) -> str:
     """逐字效果：每个字（拉丁文每个词）前面加 ``\\k`` 类标签，总时长 ``total`` 秒。
 
     ``line`` 给出时只输出这一行，前面用一段空的 ``\\k`` 等到前几行显示完。
@@ -517,7 +523,9 @@ def _loop_tags(loop: str, begin: int, end: int) -> str:
     for n in range(count):
         t = begin + n * period
         if loop == "pulse":
-            out.append(f"\\t({t},{t + half},\\fscx107\\fscy107)\\t({t + half},{t + period},\\fscx100\\fscy100)")
+            out.append(
+                f"\\t({t},{t + half},\\fscx107\\fscy107)\\t({t + half},{t + period},\\fscx100\\fscy100)"
+            )
         else:
             quarter = period // 4
             out.append(
@@ -681,8 +689,17 @@ def dialogues(
 
     def body(st, row, at, pinned) -> str:
         return styled_text(
-            st, text, duration=duration, size=size, point=at, fade_out=fade_out, allow_karaoke=allow_karaoke,
-            pin=pinned, line=row, keywords=keywords, finite=finite,
+            st,
+            text,
+            duration=duration,
+            size=size,
+            point=at,
+            fade_out=fade_out,
+            allow_karaoke=allow_karaoke,
+            pin=pinned,
+            line=row,
+            keywords=keywords,
+            finite=finite,
         )
 
     def event(level: int, extra: str, content: str) -> str:
@@ -704,7 +721,9 @@ def dialogues(
             tags = f"\\bord{style.outline + outline2:g}\\3c{_bgr(style.outline2_color)}\\3a&H{alpha}&\\shad0"
             out.append(event(1, "", _insert_tags(main, tags)))
         if box_layer:
-            plain = style.model_copy(update={"animation": "fade" if animation == "typewriter" else "none", "glow": 0})
+            plain = style.model_copy(
+                update={"animation": "fade" if animation == "typewriter" else "none", "glow": 0}
+            )
             box = body(plain, row, at, pinned)
             out.append(event(2, "{\\1a&HFF&\\2a&HFF&\\4a&HFF&}", box))
             out.append(event(3, "{\\3a&HFF&\\4a&HFF&}", main))
@@ -781,7 +800,16 @@ def to_ass(
         line
         for c in cues
         for line in dialogues(
-            0, c.start, c.end, "Default", style, c.text, size=style.size, point=point, code=code, keywords=keywords
+            0,
+            c.start,
+            c.end,
+            "Default",
+            style,
+            c.text,
+            size=style.size,
+            point=point,
+            code=code,
+            keywords=keywords,
         )
     ]
     return (
@@ -825,27 +853,54 @@ def title_layers(
     if headline.enabled and headline.text.strip():
         code = alignment("top", headline.align)
         styles.append(
-            ass_style("Headline", families["headline"], headline.size, headline, code, margin_l, margin_r, headline_margin)
+            ass_style(
+                "Headline",
+                families["headline"],
+                headline.size,
+                headline,
+                code,
+                margin_l,
+                margin_r,
+                headline_margin,
+            )
         )
         events += dialogues(
-            30, intro_end if total else _ass_time(intro_end), total or forever, "Headline", headline, headline.text.strip(),
-            size=headline.size, point=anchor(code, width, height, margin_l, margin_r, headline_margin),
-            allow_karaoke=False, code=code,
+            30,
+            intro_end if total else _ass_time(intro_end),
+            total or forever,
+            "Headline",
+            headline,
+            headline.text.strip(),
+            size=headline.size,
+            point=anchor(code, width, height, margin_l, margin_r, headline_margin),
+            allow_karaoke=False,
+            code=code,
         )
 
     shot = titles.shot
     shot_lines = [(text.strip(), start, end) for text, start, end in shot_titles or [] if text.strip()]
     if shot_lines:
         code = alignment(shot.position, shot.align)
-        styles.append(ass_style("ShotTitle", families["shot"], shot.size, shot, code, margin_l, margin_r, shot_margin))
+        styles.append(
+            ass_style("ShotTitle", families["shot"], shot.size, shot, code, margin_l, margin_r, shot_margin)
+        )
         point = anchor(code, width, height, margin_l, margin_r, shot_margin)
         for text, start, end in shot_lines:
             begin = max(start, intro_end)
             if end - begin < 0.2:
                 continue
             events += dialogues(
-                20, begin, end, "ShotTitle", shot, text, size=shot.size, point=point, fade_out=150,
-                allow_karaoke=False, code=code,
+                20,
+                begin,
+                end,
+                "ShotTitle",
+                shot,
+                text,
+                size=shot.size,
+                point=point,
+                fade_out=150,
+                allow_karaoke=False,
+                code=code,
             )
 
     if intro_text:
@@ -854,7 +909,12 @@ def title_layers(
         sub_size = max(24, intro.size * 45 // 100)
         styles.append(ass_style("Intro", families["intro"], intro.size, intro, 5, margin_l, margin_r, 0))
         sub_style = intro.model_copy(
-            update={"bold": False, "outline": intro.outline / 2, "shadow": intro.shadow / 2, "underline": False}
+            update={
+                "bold": False,
+                "outline": intro.outline / 2,
+                "shadow": intro.shadow / 2,
+                "underline": False,
+            }
         )
         styles.append(ass_style("IntroSub", families["intro"], sub_size, sub_style, 5, margin_l, margin_r, 0))
         if intro.dim > 0:
@@ -868,13 +928,31 @@ def title_layers(
         lift = intro.size // 2 if has_sub else 0
         main_point = (width // 2, height // 2 - lift)
         events += dialogues(
-            50, 0.0, intro.duration, "Intro", intro, intro_text, size=intro.size, point=main_point,
-            fade_out=fade_out, allow_karaoke=False, pin=5,
+            50,
+            0.0,
+            intro.duration,
+            "Intro",
+            intro,
+            intro_text,
+            size=intro.size,
+            point=main_point,
+            fade_out=fade_out,
+            allow_karaoke=False,
+            pin=5,
         )
         if has_sub:
             sub_point = (width // 2, height // 2 + intro.size // 2 + intro.size * 45 // 200)
             events += dialogues(
-                50, 0.0, intro.duration, "IntroSub", sub_style, intro.subtitle.strip(), size=sub_size,
-                point=sub_point, fade_out=fade_out, allow_karaoke=False, pin=5,
+                50,
+                0.0,
+                intro.duration,
+                "IntroSub",
+                sub_style,
+                intro.subtitle.strip(),
+                size=sub_size,
+                point=sub_point,
+                fade_out=fade_out,
+                allow_karaoke=False,
+                pin=5,
             )
     return styles, events

@@ -90,18 +90,27 @@ def rewrite_shot(llm: LLMProvider, project: Project, shot: Shot, instruction: st
     index = next(i for i, item in enumerate(project.shots) if item.id == shot.id)
     neighbours = {
         "上一个镜头": _shot_brief(index - 1, project.shots[index - 1]) if index > 0 else None,
-        "下一个镜头": _shot_brief(index + 1, project.shots[index + 1]) if index + 1 < len(project.shots) else None,
+        "下一个镜头": _shot_brief(index + 1, project.shots[index + 1])
+        if index + 1 < len(project.shots)
+        else None,
     }
     user = "\n".join(
         [
             f"全片设定：{_look_json(project)}",
-            *(f"{name}：{json.dumps(value, ensure_ascii=False)}" for name, value in neighbours.items() if value),
+            *(
+                f"{name}：{json.dumps(value, ensure_ascii=False)}"
+                for name, value in neighbours.items()
+                if value
+            ),
             f"要改写的镜头：{json.dumps(_shot_brief(index, shot), ensure_ascii=False)}",
             f"修改要求：{instruction[:500]}",
         ]
     )
     reply = llm.complete(
-        [{"role": "system", "content": REWRITE_PROMPT.format(rules=_rules(lang))}, {"role": "user", "content": user}],
+        [
+            {"role": "system", "content": REWRITE_PROMPT.format(rules=_rules(lang))},
+            {"role": "user", "content": user},
+        ],
         json_mode=True,
     )
     return _apply(shot, _extract_json(reply))
@@ -121,7 +130,8 @@ def expand_project(llm: LLMProvider, project: Project, *, only_short: bool = Tru
     targets = [
         index
         for index, shot in enumerate(project.shots)
-        if not shot.visual.locked and (needs_expansion(project, shot) if only_short else shot.visual.mode != "color")
+        if not shot.visual.locked
+        and (needs_expansion(project, shot) if only_short else shot.visual.mode != "color")
     ]
     need_look = project.look.is_empty()
     if not targets and not need_look:
@@ -149,7 +159,9 @@ def expand_project(llm: LLMProvider, project: Project, *, only_short: bool = Tru
         ]
     )
     data = _extract_json(
-        llm.complete([{"role": "system", "content": system}, {"role": "user", "content": user}], json_mode=True)
+        llm.complete(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}], json_mode=True
+        )
     )
     if need_look:
         look = _parse_look(data.get("look"))

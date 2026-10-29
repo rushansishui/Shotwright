@@ -52,7 +52,9 @@ class OpenAIImages:
             payload["watermark"] = self.watermark
         return payload
 
-    def generate(self, prompt: str, *, aspect: str, output: Path, references: list[Path] | None = None) -> Path:
+    def generate(
+        self, prompt: str, *, aspect: str, output: Path, references: list[Path] | None = None
+    ) -> Path:
         """``references`` 是主体参考图（产品实拍、人物照片），只有 Seedream 会带上。"""
         paid_task.log.info("%s 提交生图请求：模型 %s", self.label, self.model)
         refs = list(references or []) if self.extra_watermark else []
@@ -74,7 +76,9 @@ class OpenAIImages:
         paid_task.log.info("%s 生图完成：%s", self.label, path.name)
         return path
 
-    def _generate(self, prompt: str, *, aspect: str, output: Path, references: list[Path] | None = None) -> Path:
+    def _generate(
+        self, prompt: str, *, aspect: str, output: Path, references: list[Path] | None = None
+    ) -> Path:
         if not prompt.strip():
             raise ProviderError("缺少画面提示词")
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
@@ -82,7 +86,9 @@ class OpenAIImages:
         with httpx.Client(timeout=self.timeout, proxy=self.proxy) as client:
             # 同步接口：一次请求就是一次扣费，同样不自动重试。
             try:
-                response = client.post(url, json=self.build_payload(prompt, aspect, references), headers=headers)
+                response = client.post(
+                    url, json=self.build_payload(prompt, aspect, references), headers=headers
+                )
             except httpx.HTTPError as exc:
                 raise UnconfirmedTaskError(
                     f"{self.label} 请求没有收到响应，可能已经扣费，请到服务商控制台确认（{type(exc).__name__}）"

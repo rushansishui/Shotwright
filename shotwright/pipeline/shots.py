@@ -20,7 +20,9 @@ CLIP_VERSION = "clip-1"
 """视频片段处理方式（入出点、慢放定格、原声）的版本；改动处理逻辑时更新，旧缓存随之失效。"""
 
 
-def fit_graph(source: str, target: str, width: int, height: int, fit: str, fx: float = 0.5, fy: float = 0.5) -> str:
+def fit_graph(
+    source: str, target: str, width: int, height: int, fit: str, fx: float = 0.5, fy: float = 0.5
+) -> str:
     """把 ``[source]`` 适配到 width×height，输出 ``[target]``。
 
     - cover：等比放大铺满，按取景中心 (fx, fy) 裁掉多出的部分；
@@ -45,7 +47,15 @@ def fit_graph(source: str, target: str, width: int, height: int, fit: str, fx: f
 
 
 def ken_burns_graph(
-    source: str, target: str, width: int, height: int, fps: int, duration: float, fit: str, fx: float, fy: float
+    source: str,
+    target: str,
+    width: int,
+    height: int,
+    fps: int,
+    duration: float,
+    fit: str,
+    fx: float,
+    fy: float,
 ) -> str:
     """图片慢推：先按两倍画布适配（减少缩放抖动），再从 1.0 匀速放大到 1.1 倍。"""
     frames = math.ceil(duration * fps) + 1
@@ -78,7 +88,14 @@ class ClipPlan:
     """含剪掉片段在内的选段长度。"""
 
     def key(self) -> tuple:
-        return (round(self.start, 3), round(self.length, 3), round(self.speed, 4), self.loop, self.audio, self.skips)
+        return (
+            round(self.start, 3),
+            round(self.length, 3),
+            round(self.speed, 4),
+            self.loop,
+            self.audio,
+            self.skips,
+        )
 
 
 def plan_clip(visual: ShotVisual, source_duration: float, duration: float, has_audio: bool) -> ClipPlan:
@@ -115,20 +132,32 @@ def _video_args(fps: int, quality: str = "final") -> list[str]:
     """编码参数。``draft`` 档用更快的预设和较低质量，用于快速预览。"""
     if quality == "draft":
         return [
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-crf", "30",
-            "-pix_fmt", "yuv420p",
-            "-r", str(fps),
-            "-g", str(fps * 2),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "30",
+            "-pix_fmt",
+            "yuv420p",
+            "-r",
+            str(fps),
+            "-g",
+            str(fps * 2),
         ]
     return [
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "20",
-        "-pix_fmt", "yuv420p",
-        "-r", str(fps),
-        "-g", str(fps * 2),
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "20",
+        "-pix_fmt",
+        "yuv420p",
+        "-r",
+        str(fps),
+        "-g",
+        str(fps * 2),
     ]
 
 
@@ -208,7 +237,16 @@ def render_shot(
     assets = shot_assets(project, shot)
     if len(assets) > 1:
         return _render_sequence(
-            store, project, shot, assets, voice_fp, voice_path, duration, stages=stages, cancel=cancel, quality=quality
+            store,
+            project,
+            shot,
+            assets,
+            voice_fp,
+            voice_path,
+            duration,
+            stages=stages,
+            cancel=cancel,
+            quality=quality,
         )
     visual = shot.visual.effective_edit()
     asset = project.assets.get(visual.selected) if visual.selected and visual.mode != "color" else None
@@ -249,8 +287,10 @@ def render_shot(
         try:
             if asset is None:
                 video_input = [
-                    "-f", "lavfi",
-                    "-i", f"color=c=0x{visual.color[1:]}:s={width}x{height}:r={fps}",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    f"color=c=0x{visual.color[1:]}:s={width}x{height}:r={fps}",
                 ]
             elif asset.kind == "image":
                 video_input = ["-protocol_whitelist", LOCAL_PROTOCOLS, "-i", str(source)]
@@ -270,19 +310,32 @@ def render_shot(
                     _cut_clip(source, scratch, clip, fps, cancel)
                     source = scratch
                 if clip.loop:
-                    video_input = ["-stream_loop", "-1", "-protocol_whitelist", LOCAL_PROTOCOLS, "-i", str(source)]
+                    video_input = [
+                        "-stream_loop",
+                        "-1",
+                        "-protocol_whitelist",
+                        LOCAL_PROTOCOLS,
+                        "-i",
+                        str(source),
+                    ]
                 else:
                     video_input = [
-                        "-ss", f"{clip_start:.3f}",
-                        "-t", f"{clip.length:.3f}",
-                        "-protocol_whitelist", LOCAL_PROTOCOLS,
-                        "-i", str(source),
+                        "-ss",
+                        f"{clip_start:.3f}",
+                        "-t",
+                        f"{clip.length:.3f}",
+                        "-protocol_whitelist",
+                        LOCAL_PROTOCOLS,
+                        "-i",
+                        str(source),
                     ]
 
             parts: list[str] = []
             if asset is not None and asset.kind == "image":
                 parts.append(
-                    ken_burns_graph("0:v", "v", width, height, fps, duration, visual.fit, visual.focus_x, visual.focus_y)
+                    ken_burns_graph(
+                        "0:v", "v", width, height, fps, duration, visual.fit, visual.focus_x, visual.focus_y
+                    )
                 )
             else:
                 pre = "[0:v]"
@@ -291,7 +344,9 @@ def render_shot(
                 elif clip is not None:
                     pre = "[0:v]setpts=PTS-STARTPTS,"
                 parts.append(f"{pre}null[raw]")
-                parts.append(fit_graph("raw", "fit", width, height, visual.fit, visual.focus_x, visual.focus_y))
+                parts.append(
+                    fit_graph("raw", "fit", width, height, visual.fit, visual.focus_x, visual.focus_y)
+                )
                 tail = f"fps={fps}"
                 if clip is not None and clip.hold > 0:
                     tail += f",tpad=stop_mode=clone:stop_duration={clip.hold + 0.5:.3f}"
@@ -315,16 +370,24 @@ def render_shot(
             run_ffmpeg(
                 [
                     *video_input,
-                    "-protocol_whitelist", LOCAL_PROTOCOLS,
-                    "-i", str(voice_path),
-                    "-filter_complex", ";".join(parts),
-                    "-map", "[v]",
-                    "-map", "[a]",
-                    "-t", f"{duration:.3f}",
+                    "-protocol_whitelist",
+                    LOCAL_PROTOCOLS,
+                    "-i",
+                    str(voice_path),
+                    "-filter_complex",
+                    ";".join(parts),
+                    "-map",
+                    "[v]",
+                    "-map",
+                    "[a]",
+                    "-t",
+                    f"{duration:.3f}",
                     *_video_args(fps, quality),
                     *AUDIO_ARGS,
-                    "-movflags", "+faststart",
-                    "-f", "mp4",
+                    "-movflags",
+                    "+faststart",
+                    "-f",
+                    "mp4",
                     str(temp),
                 ],
                 cancel=cancel,
@@ -349,6 +412,7 @@ def render_shot(
         temp.unlink(missing_ok=True)
     stages.append(StageRecord(f"{shot.id}:shot", "shot", fp, False, round(time.monotonic() - started, 3)))
     return fp, output
+
 
 def _render_sequence(
     store: ProjectStore,
@@ -423,7 +487,14 @@ def _render_sequence(
                     _cut_clip(source, scratch, clip, fps, cancel)
                     source = scratch
                 if clip.loop:
-                    video_input = ["-stream_loop", "-1", "-protocol_whitelist", LOCAL_PROTOCOLS, "-i", str(source)]
+                    video_input = [
+                        "-stream_loop",
+                        "-1",
+                        "-protocol_whitelist",
+                        LOCAL_PROTOCOLS,
+                        "-i",
+                        str(source),
+                    ]
                 else:
                     video_input = [
                         "-ss", f"{clip.start:.3f}",
@@ -431,7 +502,11 @@ def _render_sequence(
                         "-protocol_whitelist", LOCAL_PROTOCOLS,
                         "-i", str(source),
                     ]  # fmt: skip
-                pre = f"[0:v]setpts=(PTS-STARTPTS)/{clip.speed:.4f}," if clip.speed < 1.0 else "[0:v]setpts=PTS-STARTPTS,"
+                pre = (
+                    f"[0:v]setpts=(PTS-STARTPTS)/{clip.speed:.4f},"
+                    if clip.speed < 1.0
+                    else "[0:v]setpts=PTS-STARTPTS,"
+                )
                 tail = f"fps={fps}"
                 if clip.hold > 0:
                     tail += f",tpad=stop_mode=clone:stop_duration={clip.hold + 0.5:.3f}"
@@ -497,23 +572,40 @@ def _render_sequence(
 
 def _cut_skips(source: Path, output: Path, clip: ClipPlan, cancel: threading.Event) -> None:
     """把选段里剪掉的片段去掉，画面和原声一起剪，输出一个连续的临时文件。"""
-    keep = " + ".join(
-        f"between(t,{a - clip.start:.3f},{b - clip.start:.3f})" for a, b in clip.skips
-    )
+    keep = " + ".join(f"between(t,{a - clip.start:.3f},{b - clip.start:.3f})" for a, b in clip.skips)
     args = [
-        "-ss", f"{clip.start:.3f}",
-        "-t", f"{clip.span:.3f}",
-        "-protocol_whitelist", LOCAL_PROTOCOLS,
-        "-i", str(source),
-        "-vf", f"select='not({keep})',setpts=N/FRAME_RATE/TB",
-        "-map", "0:v:0",
+        "-ss",
+        f"{clip.start:.3f}",
+        "-t",
+        f"{clip.span:.3f}",
+        "-protocol_whitelist",
+        LOCAL_PROTOCOLS,
+        "-i",
+        str(source),
+        "-vf",
+        f"select='not({keep})',setpts=N/FRAME_RATE/TB",
+        "-map",
+        "0:v:0",
     ]
     if clip.audio:
         args += ["-af", f"aselect='not({keep})',asetpts=N/SR/TB", "-map", "0:a:0", *AUDIO_ARGS]
     else:
         args += ["-an"]
     run_ffmpeg(
-        [*args, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "16", "-pix_fmt", "yuv420p", "-f", "mp4", str(output)],
+        [
+            *args,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "16",
+            "-pix_fmt",
+            "yuv420p",
+            "-f",
+            "mp4",
+            str(output),
+        ],
         cancel=cancel,
     )
 
@@ -521,17 +613,35 @@ def _cut_skips(source: Path, output: Path, clip: ClipPlan, cancel: threading.Eve
 def _cut_clip(source: Path, output: Path, clip: ClipPlan, fps: int, cancel: threading.Event) -> None:
     """把选段重新编码成独立文件（循环选段时用）。"""
     args = [
-        "-ss", f"{clip.start:.3f}",
-        "-t", f"{clip.length:.3f}",
-        "-protocol_whitelist", LOCAL_PROTOCOLS,
-        "-i", str(source),
-        "-map", "0:v:0",
+        "-ss",
+        f"{clip.start:.3f}",
+        "-t",
+        f"{clip.length:.3f}",
+        "-protocol_whitelist",
+        LOCAL_PROTOCOLS,
+        "-i",
+        str(source),
+        "-map",
+        "0:v:0",
     ]
     if clip.audio:
         args += ["-map", "0:a:0", *AUDIO_ARGS]
     else:
         args += ["-an"]
     run_ffmpeg(
-        [*args, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "16", "-pix_fmt", "yuv420p", "-f", "mp4", str(output)],
+        [
+            *args,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "16",
+            "-pix_fmt",
+            "yuv420p",
+            "-f",
+            "mp4",
+            str(output),
+        ],
         cancel=cancel,
     )

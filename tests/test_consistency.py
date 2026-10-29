@@ -31,11 +31,14 @@ def test_seedance_sends_reference_images_and_reports_rejection(tmp_path):
             payloads.append(payload)
             if any(item.get("role") == "reference_image" for item in payload["content"]):
                 return httpx.Response(
-                    400, json={"error": {"code": "InvalidParameter", "message": "reference_image not supported"}}
+                    400,
+                    json={"error": {"code": "InvalidParameter", "message": "reference_image not supported"}},
                 )
             return httpx.Response(200, json={"id": "t1"})
         if request.url.path.endswith("/tasks/t1"):
-            return httpx.Response(200, json={"status": "succeeded", "content": {"video_url": "https://cdn.example/v.mp4"}})
+            return httpx.Response(
+                200, json={"status": "succeeded", "content": {"video_url": "https://cdn.example/v.mp4"}}
+            )
         return httpx.Response(200, content=b"mp4")
 
     # 能带参考图的服务：一次带两张。
@@ -46,17 +49,23 @@ def test_seedance_sends_reference_images_and_reports_rejection(tmp_path):
             payloads.append(json.loads(request.content))
             return httpx.Response(200, json={"id": "t1"})
         if request.url.path.endswith("/tasks/t1"):
-            return httpx.Response(200, json={"status": "succeeded", "content": {"video_url": "https://cdn.example/v.mp4"}})
+            return httpx.Response(
+                200, json={"status": "succeeded", "content": {"video_url": "https://cdn.example/v.mp4"}}
+            )
         return httpx.Response(200, content=b"mp4")
 
-    _seedance(accepts).generate("P1 在雪地", aspect="9:16", duration=5, output=tmp_path / "v", reference_images=refs)
+    _seedance(accepts).generate(
+        "P1 在雪地", aspect="9:16", duration=5, output=tmp_path / "v", reference_images=refs
+    )
     roles = [item.get("role") for item in payloads[0]["content"]]
     assert roles == [None, "reference_image", "reference_image"] and payloads[0]["ratio"] == "9:16"
     assert not ok_payloads
 
     # 不支持参考图的服务：provider 只报「不接受」，由调用方去掉提示词里的参考图要求后重来。
     with pytest.raises(ReferenceImagesUnsupported):
-        _seedance(handler).generate("P1 在雪地", aspect="9:16", duration=5, output=tmp_path / "w", reference_images=refs)
+        _seedance(handler).generate(
+            "P1 在雪地", aspect="9:16", duration=5, output=tmp_path / "w", reference_images=refs
+        )
     assert len(payloads) == 2  # 只提交了一次（没有在 provider 里偷偷重试）
 
 
@@ -66,28 +75,57 @@ class RefVideo:
     def __init__(self, _settings):
         pass
 
-    def generate(self, prompt, *, aspect, duration, output, first_frame=None, reference_video=None, reference_images=None, on_task=None):
-        RefVideo.calls.append({"prompt": prompt, "first_frame": first_frame, "refs": list(reference_images or [])})
+    def generate(
+        self,
+        prompt,
+        *,
+        aspect,
+        duration,
+        output,
+        first_frame=None,
+        reference_video=None,
+        reference_images=None,
+        on_task=None,
+    ):
+        RefVideo.calls.append(
+            {"prompt": prompt, "first_frame": first_frame, "refs": list(reference_images or [])}
+        )
         return make_clip(output.with_suffix(".mp4"))
 
 
 def _upload(client, pid, path):
     with path.open("rb") as handle:
-        return client.post(f"/api/v2/projects/{pid}/assets", files={"file": (path.name, handle, "image/png")}).json()["id"]
+        return client.post(
+            f"/api/v2/projects/{pid}/assets", files={"file": (path.name, handle, "image/png")}
+        ).json()["id"]
 
 
 def _project(client, tmp_path, images=True):
-    created = client.post("/api/v2/projects", json={"mode": "split", "script": "一句话。", "voice": {"provider": "silent"}}).json()
+    created = client.post(
+        "/api/v2/projects", json={"mode": "split", "script": "一句话。", "voice": {"provider": "silent"}}
+    ).json()
     pid, sid = created["id"], created["shots"][0]["id"]
     # 尺寸不同，内容才不同（同样内容的上传会合并成一个素材）。
     sizes = {"coat": "640x360", "girl": "400x400"}
-    ids = [_upload(client, pid, make_image(tmp_path / f"{n}.png", size=size)) for n, size in sizes.items()] if images else []
+    ids = (
+        [_upload(client, pid, make_image(tmp_path / f"{n}.png", size=size)) for n, size in sizes.items()]
+        if images
+        else []
+    )
     look = {
         "subjects": [
-            {"code": "P1", "name": "羽绒服", "kind": "product", "appearance": "米白色立领", "images": ids[:1]},
+            {
+                "code": "P1",
+                "name": "羽绒服",
+                "kind": "product",
+                "appearance": "米白色立领",
+                "images": ids[:1],
+            },
             {"code": "M1", "name": "小女孩", "kind": "person", "appearance": "短发", "images": ids[1:]},
         ],
-        "scene": "", "style": "", "avoid": "",
+        "scene": "",
+        "style": "",
+        "avoid": "",
     }
     assert client.patch(f"/api/v2/projects/{pid}", json={"look": look}).status_code == 200
     return pid, sid, ids
@@ -97,7 +135,10 @@ def test_ai_video_uses_reference_images_not_first_frame(client, settings, tmp_pa
     registry.register(ProviderSpec(kind="video_gen", id="refvid", name="RV", paid=True), RefVideo)
     settings.defaults["video_gen"] = "refvid"
     pid, sid, _ids = _project(client, tmp_path)
-    client.patch(f"/api/v2/projects/{pid}/shots/{sid}", json={"visual": {"mode": "ai", "prompt": "M1 穿着 P1 在雪地里奔跑"}})
+    client.patch(
+        f"/api/v2/projects/{pid}/shots/{sid}",
+        json={"visual": {"mode": "ai", "prompt": "M1 穿着 P1 在雪地里奔跑"}},
+    )
     response = client.post(f"/api/v2/projects/{pid}/shots/{sid}/candidates", json={"confirm_charge": True})
     assert response.status_code == 200, response.text
     call = RefVideo.calls[-1]
@@ -117,7 +158,12 @@ def test_subjects_in_a_shot_default_to_ai():
 
 def test_checkup_flags_inconsistent_subjects():
     project = Project(
-        look=Look(subjects=[LookSubject(code="P1", name="羽绒服", kind="product"), LookSubject(code="S1", kind="place")]),
+        look=Look(
+            subjects=[
+                LookSubject(code="P1", name="羽绒服", kind="product"),
+                LookSubject(code="S1", kind="place"),
+            ]
+        ),
         shots=[
             Shot(text="a", visual=ShotVisual(mode="ai", prompt="P1 特写")),
             Shot(text="b", visual=ShotVisual(mode="stock", prompt="P1 挂在衣架上")),
@@ -134,26 +180,45 @@ def test_subject_image_is_generated_with_confirmation(client, settings, tmp_path
     (image,) = data["look"]["subjects"][0]["images"]
     assert data["assets"][image]["kind"] == "image"
     assert "米白色立领" in FakeImageGen.calls[-1] and "浅灰色背景" in FakeImageGen.calls[-1]
-    assert client.post(f"/api/v2/projects/{pid}/look/NOPE/image", json={"confirm_charge": True}).status_code == 404
+    assert (
+        client.post(f"/api/v2/projects/{pid}/look/NOPE/image", json={"confirm_charge": True}).status_code
+        == 404
+    )
 
 
 def test_portrait_prompt_for_person():
-    project = Project(look=Look(subjects=[LookSubject(code="M1", name="小女孩", kind="person", appearance="8 岁，短发")]))
+    project = Project(
+        look=Look(subjects=[LookSubject(code="M1", name="小女孩", kind="person", appearance="8 岁，短发")])
+    )
     text = prompting.subject_portrait_prompt(project, "M1")
     assert text.startswith("小女孩的定妆照") and "8 岁，短发" in text
 
 
 def _variants(client, tmp_path):
-    created = client.post("/api/v2/projects", json={"mode": "split", "script": "一句话。", "voice": {"provider": "silent"}}).json()
+    created = client.post(
+        "/api/v2/projects", json={"mode": "split", "script": "一句话。", "voice": {"provider": "silent"}}
+    ).json()
     pid, sid = created["id"], created["shots"][0]["id"]
     sizes = {"white": "320x320", "cream": "330x330", "pink": "340x340", "black": "350x350"}
-    ids = {name: _upload(client, pid, make_image(tmp_path / f"{name}.png", size=size)) for name, size in sizes.items()}
+    ids = {
+        name: _upload(client, pid, make_image(tmp_path / f"{name}.png", size=size))
+        for name, size in sizes.items()
+    }
     labels = {ids["white"]: "白色", ids["pink"]: "浅粉色", ids["black"]: "黑色"}
     look = {
         "subjects": [
-            {"code": "P1", "name": "儿童羽绒服", "kind": "product", "appearance": "浅粉、米白、蓝、黑四色", "images": list(ids.values()), "image_labels": labels}
+            {
+                "code": "P1",
+                "name": "儿童羽绒服",
+                "kind": "product",
+                "appearance": "浅粉、米白、蓝、黑四色",
+                "images": list(ids.values()),
+                "image_labels": labels,
+            }
         ],
-        "scene": "", "style": "", "avoid": "",
+        "scene": "",
+        "style": "",
+        "avoid": "",
     }
     assert client.patch(f"/api/v2/projects/{pid}", json={"look": look}).status_code == 200
     return pid, sid, ids
@@ -163,12 +228,17 @@ def test_multi_color_product_uses_only_the_main_image_by_default(client, setting
     registry.register(ProviderSpec(kind="video_gen", id="refvid", name="RV", paid=True), RefVideo)
     settings.defaults["video_gen"] = "refvid"
     pid, sid, _ids = _variants(client, tmp_path)
-    client.patch(f"/api/v2/projects/{pid}/shots/{sid}", json={"visual": {"mode": "ai", "prompt": "P1 挂在衣架上"}})
+    client.patch(
+        f"/api/v2/projects/{pid}/shots/{sid}", json={"visual": {"mode": "ai", "prompt": "P1 挂在衣架上"}}
+    )
     client.post(f"/api/v2/projects/{pid}/shots/{sid}/candidates", json={"confirm_charge": True})
     call = RefVideo.calls[-1]
     assert len(call["refs"]) == 1  # 四种颜色只带主图，不让模型混着来
     assert "参考图 1 = P1 儿童羽绒服（白色款）" in call["prompt"]
-    assert "这个镜头里是「白色」款" in call["prompt"] and "不要按文字描述或自行发挥换成别的颜色" in call["prompt"]
+    assert (
+        "这个镜头里是「白色」款" in call["prompt"]
+        and "不要按文字描述或自行发挥换成别的颜色" in call["prompt"]
+    )
 
 
 def test_shot_can_pick_another_color(client, settings, tmp_path):
@@ -176,23 +246,39 @@ def test_shot_can_pick_another_color(client, settings, tmp_path):
     settings.defaults["video_gen"] = "refvid"
     pid, sid, ids = _variants(client, tmp_path)
     response = client.patch(
-        f"/api/v2/projects/{pid}/shots/{sid}", json={"visual": {"mode": "ai", "prompt": "P1 挂在衣架上", "refs": [ids["pink"]]}}
+        f"/api/v2/projects/{pid}/shots/{sid}",
+        json={"visual": {"mode": "ai", "prompt": "P1 挂在衣架上", "refs": [ids["pink"]]}},
     )
     assert response.json()["shots"][0]["visual"]["refs"] == [ids["pink"]]
     client.post(f"/api/v2/projects/{pid}/shots/{sid}/candidates", json={"confirm_charge": True})
     prompt = RefVideo.calls[-1]["prompt"]
-    assert "（浅粉色款）" in prompt and "这个镜头里是「浅粉色」款" in prompt and "白色" not in prompt.split("参考图")[0][-200:]
+    assert (
+        "（浅粉色款）" in prompt
+        and "这个镜头里是「浅粉色」款" in prompt
+        and "白色" not in prompt.split("参考图")[0][-200:]
+    )
     audio = tmp_path / "a.m4a"
     from shotwright.media.ffmpeg import run_ffmpeg
 
     run_ffmpeg(["-f", "lavfi", "-i", "sine=duration=1", "-c:a", "aac", str(audio)])
     with audio.open("rb") as handle:
-        sound = client.post(f"/api/v2/projects/{pid}/assets?as_audio=true", files={"file": ("a.m4a", handle)}).json()["id"]
-    assert client.patch(f"/api/v2/projects/{pid}/shots/{sid}", json={"visual": {"refs": [sound]}}).status_code == 422
+        sound = client.post(
+            f"/api/v2/projects/{pid}/assets?as_audio=true", files={"file": ("a.m4a", handle)}
+        ).json()["id"]
+    assert (
+        client.patch(f"/api/v2/projects/{pid}/shots/{sid}", json={"visual": {"refs": [sound]}}).status_code
+        == 422
+    )
 
 
 def test_labels_of_removed_images_are_dropped():
-    subject = LookSubject.model_validate({"code": "P1", "images": ["aaa111"], "image_labels": {"aaa111": " 粉 ", "bbb222": "黑", "aaa111x": ""}})
+    subject = LookSubject.model_validate(
+        {
+            "code": "P1",
+            "images": ["aaa111"],
+            "image_labels": {"aaa111": " 粉 ", "bbb222": "黑", "aaa111x": ""},
+        }
+    )
     assert subject.image_labels == {"aaa111": "粉"}
 
 
@@ -206,9 +292,14 @@ def test_shot_naming_several_colors_gets_those_variants_and_shape_rule(client, s
     pid, sid, ids = _variants(client, tmp_path)
     look = client.get(f"/api/v2/projects/{pid}").json()["look"]
     kid = _upload(client, pid, make_image(tmp_path / "kid.png", size="360x360"))
-    look["subjects"].append({"code": "A", "name": "女孩", "kind": "person", "appearance": "6岁", "images": [kid]})
+    look["subjects"].append(
+        {"code": "A", "name": "女孩", "kind": "person", "appearance": "6岁", "images": [kid]}
+    )
     client.patch(f"/api/v2/projects/{pid}", json={"look": look})
-    client.patch(f"/api/v2/projects/{pid}/shots/{sid}", json={"visual": {"mode": "ai", "prompt": "A 和两个小朋友分别穿浅粉和黑色的 P1"}})
+    client.patch(
+        f"/api/v2/projects/{pid}/shots/{sid}",
+        json={"visual": {"mode": "ai", "prompt": "A 和两个小朋友分别穿浅粉和黑色的 P1"}},
+    )
     client.post(f"/api/v2/projects/{pid}/shots/{sid}/candidates", json={"confirm_charge": True})
     call = RefVideo.calls[-1]
     assert len(call["refs"]) == 3  # 浅粉、黑色两款 + 人物
@@ -222,7 +313,10 @@ def test_shot_naming_several_colors_gets_those_variants_and_shape_rule(client, s
 
 def test_seedance_reference_limit_depends_on_model():
     assert SeedanceVideo({"api_key": "k"}).max_reference_images == 9
-    assert SeedanceVideo({"api_key": "k", "model": "doubao-seedance-1-0-lite-i2v-250428"}).max_reference_images == 4
+    assert (
+        SeedanceVideo({"api_key": "k", "model": "doubao-seedance-1-0-lite-i2v-250428"}).max_reference_images
+        == 4
+    )
 
 
 class _Describer:
@@ -269,13 +363,23 @@ def test_jpeg_reference_images_are_actually_sent(client, settings, tmp_path):
 
     registry.register(ProviderSpec(kind="video_gen", id="refvid", name="RV", paid=True), RefVideo)
     settings.defaults["video_gen"] = "refvid"
-    created = client.post("/api/v2/projects", json={"mode": "split", "script": "一句话。", "voice": {"provider": "silent"}}).json()
+    created = client.post(
+        "/api/v2/projects", json={"mode": "split", "script": "一句话。", "voice": {"provider": "silent"}}
+    ).json()
     pid, sid = created["id"], created["shots"][0]["id"]
     image = _upload(client, pid, jpeg)
-    look = {"subjects": [{"code": "P1", "name": "羽绒服", "kind": "product", "appearance": "立领无帽", "images": [image]}],
-            "scene": "", "style": "", "avoid": ""}
+    look = {
+        "subjects": [
+            {"code": "P1", "name": "羽绒服", "kind": "product", "appearance": "立领无帽", "images": [image]}
+        ],
+        "scene": "",
+        "style": "",
+        "avoid": "",
+    }
     client.patch(f"/api/v2/projects/{pid}", json={"look": look})
-    client.patch(f"/api/v2/projects/{pid}/shots/{sid}", json={"visual": {"mode": "ai", "prompt": "P1 挂在衣架上"}})
+    client.patch(
+        f"/api/v2/projects/{pid}/shots/{sid}", json={"visual": {"mode": "ai", "prompt": "P1 挂在衣架上"}}
+    )
     response = client.post(f"/api/v2/projects/{pid}/shots/{sid}/candidates", json={"confirm_charge": True})
     assert response.status_code == 200
     assert len(RefVideo.calls[-1]["refs"]) == 1
@@ -290,7 +394,9 @@ def test_generation_stops_when_no_reference_can_be_read(client, settings, tmp_pa
     registry.register(ProviderSpec(kind="video_gen", id="refvid", name="RV", paid=True), RefVideo)
     settings.defaults["video_gen"] = "refvid"
     pid, sid, _ids = _variants(client, tmp_path)
-    client.patch(f"/api/v2/projects/{pid}/shots/{sid}", json={"visual": {"mode": "ai", "prompt": "P1 挂在衣架上"}})
+    client.patch(
+        f"/api/v2/projects/{pid}/shots/{sid}", json={"visual": {"mode": "ai", "prompt": "P1 挂在衣架上"}}
+    )
 
     def broken(*_args, **_kwargs):
         raise MediaError("没有取到画面")
@@ -312,7 +418,9 @@ def test_unreadable_reference_keeps_numbering_in_sync(client, settings, tmp_path
 
     registry.register(ProviderSpec(kind="video_gen", id="refvid", name="RV", paid=True), RefVideo)
     settings.defaults["video_gen"] = "refvid"
-    created = client.post("/api/v2/projects", json={"mode": "split", "script": "一句话。", "voice": {"provider": "silent"}}).json()
+    created = client.post(
+        "/api/v2/projects", json={"mode": "split", "script": "一句话。", "voice": {"provider": "silent"}}
+    ).json()
     pid, sid = created["id"], created["shots"][0]["id"]
     # 三张颜色不同的图（内容不同的素材才不会被按 SHA-256 合并成一个）。
     colours = [(200, 100, 100), (100, 200, 100), (100, 100, 200)]
@@ -321,11 +429,20 @@ def test_unreadable_reference_keeps_numbering_in_sync(client, settings, tmp_path
         for name, colour in zip("abc", colours, strict=True)
     ]
     assert len(set(ids)) == 3
-    look = {"subjects": [{"code": "P1", "name": "羽绒服", "kind": "product", "appearance": "立领", "images": ids}],
-            "scene": "", "style": "", "avoid": ""}
+    look = {
+        "subjects": [
+            {"code": "P1", "name": "羽绒服", "kind": "product", "appearance": "立领", "images": ids}
+        ],
+        "scene": "",
+        "style": "",
+        "avoid": "",
+    }
     client.patch(f"/api/v2/projects/{pid}", json={"look": look})
     # 三张图全部带上（镜头显式选了），避免默认只取主图。
-    client.patch(f"/api/v2/projects/{pid}/shots/{sid}", json={"visual": {"mode": "ai", "prompt": "P1 特写", "refs": ids}})
+    client.patch(
+        f"/api/v2/projects/{pid}/shots/{sid}",
+        json={"visual": {"mode": "ai", "prompt": "P1 特写", "refs": ids}},
+    )
 
     real = visuals.extract_frame
     broken = {ids[1]}

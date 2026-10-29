@@ -24,21 +24,21 @@ from shotwright.services.durations import estimated_shot_seconds
 # ---- 参考单价（随时更新） -----------------------------------------------
 # 视频生成：元 / 秒
 _VIDEO_GEN_PRICE: dict[str, float] = {
-    "seedance": 0.14,   # 方舟 Seedance 2.5，参考：¥0.14/秒
+    "seedance": 0.14,  # 方舟 Seedance 2.5，参考：¥0.14/秒
 }
 # 视频分辨率相对 1080p 的价格系数（参考方舟各档价格的大致比例）
 _RESOLUTION_FACTOR: dict[str, float] = {"480p": 0.25, "720p": 0.5, "1080p": 1.0}
 # 图片生成：元 / 张
 _IMAGE_GEN_PRICE: dict[str, float] = {
-    "seedream": 0.06,   # 方舟 Seedream，参考：¥0.06/张
-    "openai": 0.04,     # OpenAI gpt-image-1，参考：$0.04/张 ≈ ¥0.28，此处用低档
+    "seedream": 0.06,  # 方舟 Seedream，参考：¥0.06/张
+    "openai": 0.04,  # OpenAI gpt-image-1，参考：$0.04/张 ≈ ¥0.28，此处用低档
 }
 # 付费配音：元 / 千字符
 _TTS_PRICE_PER_1K: dict[str, float] = {
-    "azure": 0.06,        # Azure 标准声音
+    "azure": 0.06,  # Azure 标准声音
     "siliconflow": 0.03,  # 硅基流动
-    "minimax": 0.05,      # MiniMax
-    "elevenlabs": 0.12,   # ElevenLabs multilingual
+    "minimax": 0.05,  # MiniMax
+    "elevenlabs": 0.12,  # ElevenLabs multilingual
 }
 
 
@@ -118,12 +118,16 @@ def estimate_render_cost(project: Project, settings: Settings, quality: str = "f
     return estimate
 
 
-def visual_generation_cost(project: Project, shot: Shot, settings: Settings, quality: str = "final") -> tuple[float, str]:
+def visual_generation_cost(
+    project: Project, shot: Shot, settings: Settings, quality: str = "final"
+) -> tuple[float, str]:
     """给这个镜头生成一次画面（AI 视频或 AI 图片）的参考费用（元）和说明；不管它现在有没有画面。"""
     visual = shot.visual
     if visual.mode not in ("ai", "image"):
         return 0.0, ""
-    provider_id = visual.provider or settings.default_provider("video_gen" if visual.mode == "ai" else "image_gen")
+    provider_id = visual.provider or settings.default_provider(
+        "video_gen" if visual.mode == "ai" else "image_gen"
+    )
     if visual.mode == "ai":
         resolution = _draft_resolution(settings, provider_id) if quality == "draft" else ""
         price = video_price(settings, provider_id, resolution)
@@ -217,7 +221,9 @@ def generation_cost(
     """
     if kind == "video_gen":
         price = video_price(settings, provider_id, resolution)
-        return round(price * _shot_duration(project, shot, settings, provider_id, seconds), 4) if price else 0.0
+        return (
+            round(price * _shot_duration(project, shot, settings, provider_id, seconds), 4) if price else 0.0
+        )
     if kind == "image_gen":
         return _IMAGE_GEN_PRICE.get(provider_id, 0.0)
     return 0.0

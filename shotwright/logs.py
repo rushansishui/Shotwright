@@ -61,7 +61,9 @@ def log_dir(settings: Settings) -> Path:
     return Path(settings.storage_dir).resolve().parent / "logs"
 
 
-_POLLING = re.compile(r'"GET /api/v2/(projects/[^/ ]+/(transcripts/[^/ ]+|in-progress)|renders/[^/ ]+) HTTP/[\d.]+" 200')
+_POLLING = re.compile(
+    r'"GET /api/v2/(projects/[^/ ]+/(transcripts/[^/ ]+|in-progress)|renders/[^/ ]+) HTTP/[\d.]+" 200'
+)
 
 
 class _QuietPolling(logging.Filter):

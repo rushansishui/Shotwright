@@ -155,7 +155,12 @@ class MiniMaxVideo(TaskVideoProvider):
         self.v2 = self.model.upper().startswith("MINIMAX-H3")
         self.query_path = settings.get("query_path") or DEFAULT_V2_QUERY
         # MiniMax 默认会改写提示词；镜匠的提示词里有颜色、款式等硬性要求，默认不让它改写。
-        self.prompt_optimizer = str(settings.get("prompt_optimizer") or "").strip().lower() in {"1", "true", "yes", "on"}
+        self.prompt_optimizer = str(settings.get("prompt_optimizer") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
     @property
     def max_duration(self) -> int:
@@ -180,13 +185,25 @@ class MiniMaxVideo(TaskVideoProvider):
             content: list[dict] = [{"type": "text", "text": request.prompt}]
             if request.first_frame is not None:
                 content.append(
-                    {"type": "image_url", "image_url": {"url": data_url(request.first_frame, limit=MAX_IMAGE)}, "role": "first_frame"}
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": data_url(request.first_frame, limit=MAX_IMAGE)},
+                        "role": "first_frame",
+                    }
                 )
             for path in request.references:
                 content.append(
-                    {"type": "image_url", "image_url": {"url": data_url(path, limit=MAX_IMAGE)}, "role": "reference_image"}
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": data_url(path, limit=MAX_IMAGE)},
+                        "role": "reference_image",
+                    }
                 )
-            ratio = "adaptive" if request.first_frame is not None or request.aspect not in _RATIOS else request.aspect
+            ratio = (
+                "adaptive"
+                if request.first_frame is not None or request.aspect not in _RATIOS
+                else request.aspect
+            )
             return {
                 "model": self.model,
                 "content": content,
@@ -235,7 +252,9 @@ class MiniMaxVideo(TaskVideoProvider):
             secret=self.api_key,
             settings=self._poll_settings(
                 success=frozenset({"success", "succeeded", "succeed", "completed"}),
-                active=frozenset({"preparing", "queueing", "queued", "processing", "pending", "running", "submitted"}),
+                active=frozenset(
+                    {"preparing", "queueing", "queued", "processing", "pending", "running", "submitted"}
+                ),
                 failure=frozenset({"fail", "failed", "expired", "canceled", "cancelled"}),
                 status_of=_status,
                 error_of=lambda reply: (reply.get("base_resp") or {}).get("status_msg") or reply.get("error"),
@@ -246,9 +265,13 @@ class MiniMaxVideo(TaskVideoProvider):
             file_id = body.get("file_id") or (body.get("task") or {}).get("file_id")
             if not file_id:
                 raise ProviderError(f"{LABEL} 任务完成但没有返回视频文件，任务 id：{remote_id}")
-            response = client.get(f"{self.base_url}/v1/files/retrieve", params={"file_id": file_id}, headers=self._headers)
+            response = client.get(
+                f"{self.base_url}/v1/files/retrieve", params={"file_id": file_id}, headers=self._headers
+            )
             video_url = find_url(response.json() if response.status_code < 300 else {})
-        return self._paid_task.download(client, video_url, output.with_suffix(".mp4"), label=LABEL, task_id=remote_id)
+        return self._paid_task.download(
+            client, video_url, output.with_suffix(".mp4"), label=LABEL, task_id=remote_id
+        )
 
 
 registry.register(
@@ -258,7 +281,9 @@ registry.register(
         name="MiniMax 海螺",
         name_en="MiniMax Hailuo",
         fields=(
-            ConfigField("api_key", "API Key", required=True, secret=True, help="留空时使用 MiniMax 配音的 Key"),
+            ConfigField(
+                "api_key", "API Key", required=True, secret=True, help="留空时使用 MiniMax 配音的 Key"
+            ),
             ConfigField(
                 "model",
                 "模型",
@@ -267,9 +292,17 @@ registry.register(
                 "MiniMax-H3（支持参考图，另有 -Highspeed / -Lite / -Max）",
             ),
             ConfigField(
-                "base_url", "接口地址", default=DEFAULT_BASE_URL, help="国内 https://api.minimaxi.com，国际 https://api.minimax.io"
+                "base_url",
+                "接口地址",
+                default=DEFAULT_BASE_URL,
+                help="国内 https://api.minimaxi.com，国际 https://api.minimax.io",
             ),
-            ConfigField("resolution", "分辨率", default="768p", help="Hailuo：512p / 768p / 1080p（1080p 只有 6 秒）；H3：768p / 2k"),
+            ConfigField(
+                "resolution",
+                "分辨率",
+                default="768p",
+                help="Hailuo：512p / 768p / 1080p（1080p 只有 6 秒）；H3：768p / 2k",
+            ),
             ConfigField("draft_resolution", "草稿分辨率", default="512p"),
             ConfigField("max_duration", "最长秒数", help="留空按模型上限"),
             ConfigField("prompt_optimizer", "让 MiniMax 改写提示词", default="false"),

@@ -320,7 +320,9 @@ def measure_loudness(path: Path, *, timeout: float = 600) -> float | None:
     return value
 
 
-def loudnorm_stats(path: Path, *, target: float, true_peak: float, timeout: float = 600) -> dict[str, str] | None:
+def loudnorm_stats(
+    path: Path, *, target: float, true_peak: float, timeout: float = 600
+) -> dict[str, str] | None:
     """loudnorm 第一遍测量，返回第二遍需要的 measured_* 参数。没有声音（静音）时返回 None。"""
     command = [
         _tools.ffmpeg,
@@ -356,7 +358,9 @@ def loudnorm_stats(path: Path, *, target: float, true_peak: float, timeout: floa
         return None
     if measured <= -70 or measured != measured:  # 静音或 NaN
         return None
-    return {key: str(data[key]) for key in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")}
+    return {
+        key: str(data[key]) for key in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")
+    }
 
 
 IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tif", ".tiff", ".heic"})
@@ -379,7 +383,19 @@ def extract_frame(source: Path, output: Path, *, at: float | None = None, width:
 
     def grab(seek: list[str]) -> None:
         run_ffmpeg(
-            ["-protocol_whitelist", LOCAL_PROTOCOLS, *seek, "-i", str(source), "-frames:v", "1", *scale, "-q:v", "3", str(output)]
+            [
+                "-protocol_whitelist",
+                LOCAL_PROTOCOLS,
+                *seek,
+                "-i",
+                str(source),
+                "-frames:v",
+                "1",
+                *scale,
+                "-q:v",
+                "3",
+                str(output),
+            ]
         )
 
     output.unlink(missing_ok=True)

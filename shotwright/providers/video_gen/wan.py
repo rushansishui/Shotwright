@@ -83,7 +83,9 @@ def api_base(url: str) -> str:
     """把 base_url 整理成 ``https://域名/api/v1``：少写 /api/v1、或把完整的提交地址整个贴进来都能用。"""
     url = url.strip().rstrip("/")
     if "{" in url or "}" in url:
-        raise ValueError("base_url 里的 {WorkspaceId} 要换成你的业务空间 ID（百炼控制台「业务空间详情」页面）")
+        raise ValueError(
+            "base_url 里的 {WorkspaceId} 要换成你的业务空间 ID（百炼控制台「业务空间详情」页面）"
+        )
     if "/api/v1" in url:
         return url[: url.index("/api/v1") + len("/api/v1")]
     for marker in ("/services/", "/tasks", "/compatible-mode"):
@@ -104,7 +106,12 @@ class WanVideo(TaskVideoProvider):
         self.api_key = settings["api_key"]
         self.base_url = api_base(str(settings.get("base_url") or DEFAULT_BASE_URL))
         # 百炼默认会改写提示词；镜匠的提示词里有颜色、款式等硬性要求，默认不让它改写。
-        self.prompt_extend = str(settings.get("prompt_extend") or "").strip().lower() in {"1", "true", "yes", "on"}
+        self.prompt_extend = str(settings.get("prompt_extend") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
     @property
     def _headers(self) -> dict[str, str]:
@@ -128,7 +135,9 @@ class WanVideo(TaskVideoProvider):
         if self.model.startswith("wan3"):
             # 有首帧时按首帧比例；文生和参考图生按画布比例。
             parameters["ratio"] = (
-                "adaptive" if request.first_frame is not None or request.aspect not in _RATIOS else request.aspect
+                "adaptive"
+                if request.first_frame is not None or request.aspect not in _RATIOS
+                else request.aspect
             )
             parameters["audio"] = self.generate_audio
         body: dict = {"model": self.model, "input": {"prompt": request.prompt}, "parameters": parameters}
@@ -160,7 +169,9 @@ class WanVideo(TaskVideoProvider):
                 active=frozenset({"pending", "running"}),
                 failure=frozenset({"failed", "canceled", "cancelled", "unknown"}),
                 status_of=lambda body: str((body.get("output") or {}).get("task_status") or ""),
-                error_of=lambda body: (body.get("output") or {}).get("message") or (body.get("output") or {}).get("code"),
+                error_of=lambda body: (
+                    (body.get("output") or {}).get("message") or (body.get("output") or {}).get("code")
+                ),
             ),
         )
         url = str((body.get("output") or {}).get("video_url") or "")
@@ -174,7 +185,9 @@ registry.register(
         name="通义万相（阿里云百炼）",
         name_en="Wan (Alibaba Cloud Model Studio)",
         fields=(
-            ConfigField("api_key", "百炼 API Key", required=True, secret=True, help="留空时使用通义千问大模型的 Key"),
+            ConfigField(
+                "api_key", "百炼 API Key", required=True, secret=True, help="留空时使用通义千问大模型的 Key"
+            ),
             ConfigField(
                 "model",
                 "模型",
@@ -187,10 +200,14 @@ registry.register(
                 default=DEFAULT_BASE_URL,
                 help="新版百炼控制台给出的地址，例如 https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1",
             ),
-            ConfigField("resolution", "分辨率", default="1080p", help="480p / 720p / 1080p（wan2.7 只有 720p、1080p）"),
+            ConfigField(
+                "resolution", "分辨率", default="1080p", help="480p / 720p / 1080p（wan2.7 只有 720p、1080p）"
+            ),
             ConfigField("draft_resolution", "草稿分辨率", default="480p"),
             ConfigField("max_duration", "最长秒数", help="留空按模型上限（wan3.0 30 秒）"),
-            ConfigField("generate_audio", "生成声音", default="false", help="镜匠自己配音，默认不要模型的声音"),
+            ConfigField(
+                "generate_audio", "生成声音", default="false", help="镜匠自己配音，默认不要模型的声音"
+            ),
             ConfigField("prompt_extend", "让百炼改写提示词", default="false"),
             ConfigField("price", "单价（元/秒）", help="留空用参考价：wan3.0 1080p 1.2、720p 0.6、480p 0.3"),
             ConfigField("poll_interval", "轮询间隔（秒）", default="10"),

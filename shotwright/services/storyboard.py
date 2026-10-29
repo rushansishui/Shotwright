@@ -327,7 +327,9 @@ def check_storyboard(
             issues.append(f"镜头 {index} 的画面描述只有 {size} {unit}，要求{_PROMPT_LEN.get(lang, '')}")
         if not shot.visual.link:
             issues.append(f"镜头 {index} 缺少衔接说明")
-        unknown = sorted(set(re.findall(r"(?<![A-Za-z0-9])[A-Z]\d{1,2}(?![A-Za-z0-9])", shot.visual.prompt)) - codes)
+        unknown = sorted(
+            set(re.findall(r"(?<![A-Za-z0-9])[A-Z]\d{1,2}(?![A-Za-z0-9])", shot.visual.prompt)) - codes
+        )
         if unknown:
             issues.append(f"镜头 {index} 用了全片设定里没有的代号 {'、'.join(unknown)}")
     return issues

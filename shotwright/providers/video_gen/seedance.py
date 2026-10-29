@@ -178,7 +178,11 @@ class SeedanceVideo:
         提示词是调用方拼的，只有它知道该删哪几行。"""
         if not prompt.strip():
             raise ProviderError("缺少画面提示词")
-        refs = list(reference_images or [])[: self.max_reference_images] if first_frame is None and reference_video is None else []
+        refs = (
+            list(reference_images or [])[: self.max_reference_images]
+            if first_frame is None and reference_video is None
+            else []
+        )
         payload = self.build_payload(
             prompt,
             aspect=aspect,
@@ -221,7 +225,9 @@ class SeedanceVideo:
         with self._client() as client:
             return self._finish(client, task_id, output, tasks_url=tasks_url)
 
-    def _finish(self, client: httpx.Client, task_id: str, output: Path, *, tasks_url: str | None = None) -> Path:
+    def _finish(
+        self, client: httpx.Client, task_id: str, output: Path, *, tasks_url: str | None = None
+    ) -> Path:
         base = tasks_url or f"{self.base_url}/contents/generations/tasks"
         body = paid_task.poll(
             client,
@@ -232,9 +238,7 @@ class SeedanceVideo:
             settings=self.poll,
         )
         video_url = str(((body.get("content") or {}).get("video_url")) or "")
-        return paid_task.download(
-            client, video_url, output.with_suffix(".mp4"), label=LABEL, task_id=task_id
-        )
+        return paid_task.download(client, video_url, output.with_suffix(".mp4"), label=LABEL, task_id=task_id)
 
 
 registry.register(

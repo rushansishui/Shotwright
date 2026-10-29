@@ -78,10 +78,27 @@ def test_fillers_and_joining():
 def _clip_with_audio(path):
     subprocess.run(
         [
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-f", "lavfi", "-i", "testsrc2=size=720x1280:rate=30:duration=8",
-            "-f", "lavfi", "-i", "sine=frequency=440:duration=8",
-            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=720x1280:rate=30:duration=8",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=8",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-shortest",
             str(path),
         ],
         check=True,
@@ -101,9 +118,13 @@ def _wait_done(client, pid, asset):
 def test_cut_flow_builds_original_speech_shots_and_renders(client, settings, store, tmp_path):
     settings.defaults["asr"] = "fakeasr"
     FakeASR.calls.clear()
-    pid = client.post("/api/v2/projects", json={"mode": "empty", "voice": {"provider": "silent"}}).json()["id"]
+    pid = client.post("/api/v2/projects", json={"mode": "empty", "voice": {"provider": "silent"}}).json()[
+        "id"
+    ]
     with _clip_with_audio(tmp_path / "talk.mp4").open("rb") as handle:
-        asset = client.post(f"/api/v2/projects/{pid}/assets", files={"file": ("talk.mp4", handle)}).json()["id"]
+        asset = client.post(f"/api/v2/projects/{pid}/assets", files={"file": ("talk.mp4", handle)}).json()[
+            "id"
+        ]
 
     assert client.get(f"/api/v2/projects/{pid}/transcripts/{asset}").json()["state"] == "none"
     r = client.post(f"/api/v2/projects/{pid}/transcripts/{asset}", json={})
@@ -116,7 +137,13 @@ def test_cut_flow_builds_original_speech_shots_and_renders(client, settings, sto
 
     r = client.post(
         f"/api/v2/projects/{pid}/cut",
-        json={"asset_id": asset, "removed": [1], "max_pause": 1.0, "split_scenes": False, "texts": {"6": "很保暖。"}},
+        json={
+            "asset_id": asset,
+            "removed": [1],
+            "max_pause": 1.0,
+            "split_scenes": False,
+            "texts": {"6": "很保暖。"},
+        },
     )
     assert r.status_code == 200, r.text
     project = r.json()
@@ -165,8 +192,20 @@ def test_merge_shots_with_gap_records_skip():
     from shotwright.services import editing
 
     asset = Asset(id="src", kind="video", source="upload", sha256="x", filename="a.mp4", duration=20.0)
-    a = Shot(text="一", duration=2.0, visual=ShotVisual(mode="upload", selected="src", candidates=["src"], edit_asset="src", trim_start=0.0, trim_end=2.0))
-    b = Shot(text="二", duration=3.0, visual=ShotVisual(mode="upload", selected="src", candidates=["src"], edit_asset="src", trim_start=5.0, trim_end=8.0))
+    a = Shot(
+        text="一",
+        duration=2.0,
+        visual=ShotVisual(
+            mode="upload", selected="src", candidates=["src"], edit_asset="src", trim_start=0.0, trim_end=2.0
+        ),
+    )
+    b = Shot(
+        text="二",
+        duration=3.0,
+        visual=ShotVisual(
+            mode="upload", selected="src", candidates=["src"], edit_asset="src", trim_start=5.0, trim_end=8.0
+        ),
+    )
     project = Project(shots=[a, b], assets={"src": asset})
     editing.merge_with_next(project, a.id)
     visual = project.shots[0].visual
@@ -177,9 +216,13 @@ def test_merge_shots_with_gap_records_skip():
 
 
 def test_cut_requires_finished_transcript(client, tmp_path):
-    pid = client.post("/api/v2/projects", json={"mode": "empty", "voice": {"provider": "silent"}}).json()["id"]
+    pid = client.post("/api/v2/projects", json={"mode": "empty", "voice": {"provider": "silent"}}).json()[
+        "id"
+    ]
     with _clip_with_audio(tmp_path / "talk.mp4").open("rb") as handle:
-        asset = client.post(f"/api/v2/projects/{pid}/assets", files={"file": ("talk.mp4", handle)}).json()["id"]
+        asset = client.post(f"/api/v2/projects/{pid}/assets", files={"file": ("talk.mp4", handle)}).json()[
+            "id"
+        ]
     r = client.post(f"/api/v2/projects/{pid}/cut", json={"asset_id": asset, "removed": []})
     assert r.status_code >= 400
     assert "识别" in r.json()["detail"]
@@ -189,7 +232,9 @@ def test_language_version_switches_original_speech_to_voiceover(store, settings,
     from shotwright.core.models import Project, Shot, ShotVisual
     from shotwright.services import localize
 
-    project = Project(shots=[Shot(text="大家好", duration=2.0, speech="original", visual=ShotVisual(source_volume=1.0))])
+    project = Project(
+        shots=[Shot(text="大家好", duration=2.0, speech="original", visual=ShotVisual(source_volume=1.0))]
+    )
 
     class LLM:
         def complete(self, messages, *, json_mode=False):
@@ -212,7 +257,9 @@ def test_auto_language_adopts_detected_language(client, settings, store, tmp_pat
     ).json()
     pid = project["id"]
     with _clip_with_audio(tmp_path / "talk.mp4").open("rb") as handle:
-        asset = client.post(f"/api/v2/projects/{pid}/assets", files={"file": ("talk.mp4", handle)}).json()["id"]
+        asset = client.post(f"/api/v2/projects/{pid}/assets", files={"file": ("talk.mp4", handle)}).json()[
+            "id"
+        ]
     client.post(f"/api/v2/projects/{pid}/transcripts/{asset}", json={"language": "auto"})
     assert _wait_done(client, pid, asset)["state"] == "done"
     # 假识别报告的是中文：项目语言跟着改成简体中文（字幕字体、翻译版本按它来）。
@@ -261,7 +308,17 @@ def test_faster_whisper_gets_decoded_samples_not_a_path(monkeypatch, tmp_path):
 
     audio = tmp_path / "speech.mp3"
     subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=300:duration=2", str(audio)],
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=300:duration=2",
+            str(audio),
+        ],
         check=True,
     )
     seen = {}
@@ -295,7 +352,9 @@ def test_old_cut_task_without_origin_is_listed_under_cut(client, settings, store
     settings.defaults["asr"] = "fakeasr"
     pid = client.post("/api/v2/projects", json={"mode": "empty"}).json()["id"]
     with _clip_with_audio(tmp_path / "talk.mp4").open("rb") as handle:
-        asset = client.post(f"/api/v2/projects/{pid}/assets", files={"file": ("talk.mp4", handle)}).json()["id"]
+        asset = client.post(f"/api/v2/projects/{pid}/assets", files={"file": ("talk.mp4", handle)}).json()[
+            "id"
+        ]
     client.post(f"/api/v2/projects/{pid}/transcripts/{asset}", json={})
     _wait_done(client, pid, asset)
     listed = {p["id"]: p for p in client.get("/api/v2/projects").json()}
@@ -307,13 +366,18 @@ def test_cut_draft_is_saved_on_server(client, settings, tmp_path):
     settings.defaults["asr"] = "fakeasr"
     pid = client.post("/api/v2/projects", json={"mode": "empty"}).json()["id"]
     with _clip_with_audio(tmp_path / "talk.mp4").open("rb") as handle:
-        asset = client.post(f"/api/v2/projects/{pid}/assets", files={"file": ("talk.mp4", handle)}).json()["id"]
+        asset = client.post(f"/api/v2/projects/{pid}/assets", files={"file": ("talk.mp4", handle)}).json()[
+            "id"
+        ]
     url = f"/api/v2/projects/{pid}/transcripts/{asset}"
     # 识别完成前不能保存
     assert client.put(f"{url}/draft", json={"removed": [1]}).status_code == 409
     client.post(url, json={})
     _wait_done(client, pid, asset)
-    r = client.put(f"{url}/draft", json={"removed": [1, 99, 1], "texts": {"6": "很保暖。", "x": "?"}, "pauses": True, "max_pause": 1.2})
+    r = client.put(
+        f"{url}/draft",
+        json={"removed": [1, 99, 1], "texts": {"6": "很保暖。", "x": "?"}, "pauses": True, "max_pause": 1.2},
+    )
     assert r.status_code == 200, r.text
     draft = client.get(url).json()["draft"]
     assert draft["removed"] == [1] and draft["texts"] == {"6": "很保暖。"} and draft["max_pause"] == 1.2

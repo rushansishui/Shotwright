@@ -38,8 +38,12 @@ def _synthesize_marked(
     for index, segment in enumerate(marks.segments(text)):
         if segment.pause_before > 0:
             inputs += [
-                "-f", "lavfi", "-t", f"{segment.pause_before:.3f}",
-                "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                "-f",
+                "lavfi",
+                "-t",
+                f"{segment.pause_before:.3f}",
+                "-i",
+                "anullsrc=channel_layout=stereo:sample_rate=48000",
             ]
             labels.append(f"[{len(labels)}:a]")
             cursor += segment.pause_before
@@ -55,7 +59,9 @@ def _synthesize_marked(
         words += [(word.text, word.start + cursor, word.end + cursor) for word in result.words]
         cursor += result.duration
     output = work / "voice.m4a"
-    graph = "".join(f"{label}aresample=48000,aformat=channel_layouts=stereo[s{i}];" for i, label in enumerate(labels))
+    graph = "".join(
+        f"{label}aresample=48000,aformat=channel_layouts=stereo[s{i}];" for i, label in enumerate(labels)
+    )
     graph += "".join(f"[s{i}]" for i in range(len(labels))) + f"concat=n={len(labels)}:v=0:a=1[out]"
     run_ffmpeg([*inputs, "-filter_complex", graph, "-map", "[out]", *AUDIO_ARGS, str(output)], cancel=cancel)
     return output, round(cursor, 3), words
@@ -138,9 +144,7 @@ def synthesize_shot(
             "words": [list(word) for word in words],
         },
     )
-    stages.append(
-        StageRecord(f"{shot.id}:voice", "voice", fp, False, round(time.monotonic() - started, 3))
-    )
+    stages.append(StageRecord(f"{shot.id}:voice", "voice", fp, False, round(time.monotonic() - started, 3)))
     return fp, cache / filename, round(duration, 3), words
 
 
@@ -162,8 +166,16 @@ def _original_speech(
         with tempfile.TemporaryDirectory(prefix="shotwright-voice-") as temp:
             out = Path(temp) / "voice.m4a"
             run_ffmpeg(
-                ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
-                 "-t", f"{seconds:.3f}", *AUDIO_ARGS, str(out)],
+                [
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "anullsrc=channel_layout=stereo:sample_rate=48000",
+                    "-t",
+                    f"{seconds:.3f}",
+                    *AUDIO_ARGS,
+                    str(out),
+                ],
                 cancel=cancel,
             )
             shutil.move(str(out), path)
@@ -188,7 +200,9 @@ def preview_voice(store: ProjectStore, settings: Settings, project: Project, tex
         return existing
     tts: TTSProvider = registry.create("tts", voice.provider, settings)  # type: ignore[assignment]
     with tempfile.TemporaryDirectory(prefix="shotwright-preview-") as temp:
-        result = tts.synthesize(said, voice=voice.voice, rate=voice.rate, volume=voice.volume, output=Path(temp) / "p")
+        result = tts.synthesize(
+            said, voice=voice.voice, rate=voice.rate, volume=voice.volume, output=Path(temp) / "p"
+        )
         target = cache / f"{fp}{result.path.suffix}"
         shutil.move(str(result.path), target)
     return target

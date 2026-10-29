@@ -41,9 +41,12 @@ class FakeResumable(FakeVideoGen):
 
 
 registry.register(
-    ProviderSpec(kind="video_gen", id="fakeedit", name="FakeEdit", paid=True, video_to_video=True), FakeEditVideo
+    ProviderSpec(kind="video_gen", id="fakeedit", name="FakeEdit", paid=True, video_to_video=True),
+    FakeEditVideo,
 )
-registry.register(ProviderSpec(kind="video_gen", id="fakeresume", name="FakeResume", paid=True), FakeResumable)
+registry.register(
+    ProviderSpec(kind="video_gen", id="fakeresume", name="FakeResume", paid=True), FakeResumable
+)
 
 
 def _project(store, *, shots=None, **kwargs) -> Project:
@@ -124,7 +127,9 @@ def test_transition_falls_back_to_cut_for_short_shots(store, settings):
 
 
 def _ai_shot_with_video(store, settings, provider):
-    project = _project(store, shots=[Shot(text="一句话。", visual=ShotVisual(mode="ai", prompt="sea", provider=provider))])
+    project = _project(
+        store, shots=[Shot(text="一句话。", visual=ShotVisual(mode="ai", prompt="sea", provider=provider))]
+    )
     shot = project.shots[0]
     visuals.generate_ai_candidate(store, settings, project, shot, confirm_charge=True)
     store.save(project)
@@ -160,7 +165,10 @@ def test_edit_selected_requires_capable_provider(store, settings):
 
 def test_edit_endpoint_switches_stock_shot_to_ai(settings, store, tmp_path):
     clip = make_clip(tmp_path / "clip.mp4")
-    project = _project(store, shots=[Shot(text="一句话。", visual=ShotVisual(mode="upload", prompt="sea", provider="fakeedit"))])
+    project = _project(
+        store,
+        shots=[Shot(text="一句话。", visual=ShotVisual(mode="upload", prompt="sea", provider="fakeedit"))],
+    )
     asset = visuals.add_upload(store, project, clip, filename="clip.mp4")
     project.shots[0].visual.selected = asset.id
     project.shots[0].visual.candidates = [asset.id]
@@ -208,7 +216,9 @@ def test_finished_generation_clears_pending(settings, store):
     project = _project(store, shots=[Shot(text="一句话。", visual=ShotVisual(mode="ai", prompt="sea"))])
     shot = project.shots[0]
     with _client(settings, store) as client:
-        r = client.post(f"/api/v2/projects/{project.id}/shots/{shot.id}/candidates", json={"confirm_charge": True})
+        r = client.post(
+            f"/api/v2/projects/{project.id}/shots/{shot.id}/candidates", json={"confirm_charge": True}
+        )
         assert r.status_code == 200, r.text
         # 生成已经完成：磁盘上不该再留着任务标记。
         saved = store.load(project.id)
@@ -232,7 +242,9 @@ def test_failed_generation_clears_pending(settings, store, monkeypatch):
 
     monkeypatch.setattr(FakeVideoGen, "generate", boom)
     with _client(settings, store) as client:
-        r = client.post(f"/api/v2/projects/{project.id}/shots/{shot.id}/candidates", json={"confirm_charge": True})
+        r = client.post(
+            f"/api/v2/projects/{project.id}/shots/{shot.id}/candidates", json={"confirm_charge": True}
+        )
         assert r.status_code == 502, r.text
         assert store.load(project.id).shot(shot.id).visual.pending is None
         assert client.get(f"/api/v2/projects/{project.id}/in-progress").json() == {}
@@ -248,11 +260,28 @@ def test_footage_import_splits_into_shots(settings, store, tmp_path):
     joined = tmp_path / "joined.mp4"
     subprocess.run(
         [
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-f", "lavfi", "-i", "testsrc2=size=720x1280:rate=30:duration=2",
-            "-f", "lavfi", "-i", "smptebars=size=720x1280:rate=30:duration=2",
-            "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
-            "-map", "[v]", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=720x1280:rate=30:duration=2",
+            "-f",
+            "lavfi",
+            "-i",
+            "smptebars=size=720x1280:rate=30:duration=2",
+            "-filter_complex",
+            "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+            "-map",
+            "[v]",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
             str(joined),
         ],
         check=True,
@@ -280,7 +309,9 @@ def test_footage_import_splits_into_shots(settings, store, tmp_path):
 
 
 def test_pending_task_is_resumed_without_resubmitting(store, settings):
-    project = _project(store, shots=[Shot(text="一句。", visual=ShotVisual(mode="ai", prompt="sea", provider="fakeresume"))])
+    project = _project(
+        store, shots=[Shot(text="一句。", visual=ShotVisual(mode="ai", prompt="sea", provider="fakeresume"))]
+    )
     project.shots[0].visual.pending = PendingTask(provider="fakeresume", task_id="task-42", kind="video_gen")
     store.save(project)
     FakeResumable.resumed.clear()
@@ -298,13 +329,21 @@ def test_render_writes_ai_label_and_bgm_credit(store, settings, tmp_path):
     project = _project(store)
     bgm = tmp_path / "bgm.mp3"
     subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=3", str(bgm)],
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=3",
+            str(bgm),
+        ],
         check=True,
     )
     asset = visuals.add_upload(store, project, bgm, filename="bgm.mp3")
-    asset.meta.update(
-        {"title": "Song", "author": "Someone", "license": "CC BY 4.0", "license_kind": "cc-by"}
-    )
+    asset.meta.update({"title": "Song", "author": "Someone", "license": "CC BY 4.0", "license_kind": "cc-by"})
     project.bgm.asset_id = asset.id
     store.save(project)
     result = Renderer(store, settings).render(project.id)
@@ -321,13 +360,14 @@ def test_render_writes_ai_label_and_bgm_credit(store, settings, tmp_path):
 
 
 def test_paid_generation_adds_to_project_cost(store, settings):
-    registry.register(
-        ProviderSpec(kind="video_gen", id="seedance-fake", name="S", paid=True), FakeVideoGen
-    )
+    registry.register(ProviderSpec(kind="video_gen", id="seedance-fake", name="S", paid=True), FakeVideoGen)
     cost._VIDEO_GEN_PRICE["seedance-fake"] = 0.5
     try:
         project = _project(
-            store, shots=[Shot(text="一句话。", visual=ShotVisual(mode="ai", prompt="sea", provider="seedance-fake"))]
+            store,
+            shots=[
+                Shot(text="一句话。", visual=ShotVisual(mode="ai", prompt="sea", provider="seedance-fake"))
+            ],
         )
         visuals.generate_ai_candidate(store, settings, project, project.shots[0], confirm_charge=True)
         # 按最短 4 秒计费：0.5 × 4 = 2 元，直接写进项目文件。
@@ -346,15 +386,29 @@ def test_long_single_take_footage_is_split_instead_of_failing(settings, store, t
     long_take = tmp_path / "long.mp4"
     subprocess.run(
         [
-            "ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:size=180x320:rate=5:duration=130",
-            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(long_take),
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=gray:size=180x320:rate=5:duration=130",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
+            str(long_take),
         ],
         check=True,
     )
     project = _project(store)
     with _client(settings, store) as client, long_take.open("rb") as handle:
         r = client.post(
-            f"/api/v2/projects/{project.id}/footage?replace_shots=true", files={"file": ("long.mp4", handle, "video/mp4")}
+            f"/api/v2/projects/{project.id}/footage?replace_shots=true",
+            files={"file": ("long.mp4", handle, "video/mp4")},
         )
     assert r.status_code == 201, r.text
     shots = store.load(project.id).shots
@@ -371,12 +425,29 @@ def test_product_switches_on_white_background_are_detected(tmp_path):
     for _color in colors:
         inputs += ["-f", "lavfi", "-i", "color=white:size=360x640:rate=30:duration=2"]
     chains = "".join(
-        f"[{index}:v]drawbox=x=60:y=140:w=240:h=360:color={color}:t=fill[v{index}];" for index, color in enumerate(colors)
+        f"[{index}:v]drawbox=x=60:y=140:w=240:h=360:color={color}:t=fill[v{index}];"
+        for index, color in enumerate(colors)
     )
     joined = tmp_path / "products.mp4"
     subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", *inputs, "-filter_complex", chains + "[v0][v1][v2]concat=n=3:v=1:a=0[v]",
-         "-map", "[v]", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(joined)],
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            *inputs,
+            "-filter_complex",
+            chains + "[v0][v1][v2]concat=n=3:v=1:a=0[v]",
+            "-map",
+            "[v]",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
+            str(joined),
+        ],
         check=True,
     )
     assert detect_scenes(joined) == [0.0, 2.0, 4.0]

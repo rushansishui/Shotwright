@@ -50,6 +50,8 @@ def _reachable(url: str, proxy: str | None = None) -> bool:
             return client.head(url).status_code < 500
     except httpx.HTTPError:
         return False
+
+
 _MODELS_LOCK = threading.Lock()
 
 ZH_PROMPT = "以下是普通话的句子，使用简体中文和标点符号。"
@@ -77,7 +79,9 @@ def load_audio(path: Path):
     from shotwright.media.ffmpeg import run_ffmpeg
 
     pcm = path.with_suffix(".pcm")
-    run_ffmpeg(["-i", str(path), "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", str(pcm)], timeout=900)
+    run_ffmpeg(
+        ["-i", str(path), "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", str(pcm)], timeout=900
+    )
     try:
         return np.fromfile(pcm, dtype=np.int16).astype(np.float32) / 32768.0
     finally:
@@ -140,7 +144,11 @@ class FasterWhisperASR:
             def watch(done: threading.Event = done) -> None:
                 while not done.wait(1.0):
                     if progress and expected:
-                        size = sum(f.stat().st_size for f in folder.rglob("*") if f.is_file()) if folder.is_dir() else 0
+                        size = (
+                            sum(f.stat().st_size for f in folder.rglob("*") if f.is_file())
+                            if folder.is_dir()
+                            else 0
+                        )
                         progress(min(0.99, size / expected), "download")
 
             watcher = threading.Thread(target=watch, daemon=True)
@@ -175,7 +183,11 @@ class FasterWhisperASR:
                 try:
                     model = WhisperModel(path, device=self.device, compute_type=self.compute_type)
                 except Exception as exc:  # 显卡不可用、模型文件损坏等
-                    hint = "；如果是显卡相关的错误，请在服务设置里把运行设备改成 cpu" if "cud" in str(exc).lower() else ""
+                    hint = (
+                        "；如果是显卡相关的错误，请在服务设置里把运行设备改成 cpu"
+                        if "cud" in str(exc).lower()
+                        else ""
+                    )
                     raise ProviderError(f"语音识别模型 {self.model_name} 加载失败：{exc}{hint}") from exc
                 _MODELS[key] = model
         return model
@@ -216,7 +228,11 @@ class FasterWhisperASR:
         except ProviderError:
             raise
         except Exception as exc:
-            hint = "；如果是显卡相关的错误，请在服务设置里把运行设备改成 cpu" if "cud" in str(exc).lower() else ""
+            hint = (
+                "；如果是显卡相关的错误，请在服务设置里把运行设备改成 cpu"
+                if "cud" in str(exc).lower()
+                else ""
+            )
             raise ProviderError(f"语音识别失败：{exc}{hint}") from exc
         return Transcript(words=words, sentences=sentences, language=str(getattr(info, "language", "") or ""))
 
@@ -237,7 +253,9 @@ registry.register(
                 help="tiny / base / small / medium / large-v3；越大越准越慢。没有显卡建议 small，有显卡用 large-v3。也可以填已下载好的模型文件夹路径",
             ),
             ConfigField("device", "运行设备", default="auto", help="auto / cpu / cuda"),
-            ConfigField("compute_type", "计算精度", default="default", help="cpu 可用 int8 加速，cuda 可用 float16"),
+            ConfigField(
+                "compute_type", "计算精度", default="default", help="cpu 可用 int8 加速，cuda 可用 float16"
+            ),
             ConfigField(
                 "download_mirror",
                 "模型下载地址",

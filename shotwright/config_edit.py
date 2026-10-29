@@ -109,7 +109,9 @@ def update(path: Path, table: list[str], values: dict[str, str | None]) -> None:
         raise ValueError(f"改完的配置无法解析，已放弃保存：{exc}") from exc
     section = _lookup(parsed, table)
     for key, value in values.items():
-        if (section.get(key) if value is not None else None) != value and not (value is None and key not in section):
+        if (section.get(key) if value is not None else None) != value and not (
+            value is None and key not in section
+        ):
             raise ValueError(f"配置项 {key} 没有写成预期的值，已放弃保存")
     data = text.replace("\n", newline).encode("utf-8")
     path.parent.mkdir(parents=True, exist_ok=True)

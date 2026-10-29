@@ -82,7 +82,9 @@ class VideoModel:
         return self.price.get(self.resolutions[-1], max(self.price.values()))
 
 
-def generic_model(model_id: str, settings: Mapping[str, str], *, base: VideoModel | None = None) -> VideoModel:
+def generic_model(
+    model_id: str, settings: Mapping[str, str], *, base: VideoModel | None = None
+) -> VideoModel:
     """目录里没有的模型（新出的、聚合平台上的）：按 config.toml 里的填写来定能力。"""
     seed = base or VideoModel(model_id, frozenset({"text", "first_frame"}))
 
@@ -93,7 +95,9 @@ def generic_model(model_id: str, settings: Mapping[str, str], *, base: VideoMode
             return default
 
     durations = tuple(
-        int(item) for item in str(settings.get("durations") or "").replace("，", ",").split(",") if item.strip().isdigit()
+        int(item)
+        for item in str(settings.get("durations") or "").replace("，", ",").split(",")
+        if item.strip().isdigit()
     )
     modes = set(seed.modes)
     references = number("max_references", seed.max_references)
@@ -118,7 +122,9 @@ def pick_model(catalog: Mapping[str, VideoModel], model_id: str, settings: Mappi
     if model_id in catalog:
         found = catalog[model_id]
     else:
-        prefix = next((key for key in sorted(catalog, key=len, reverse=True) if model_id.startswith(key)), None)
+        prefix = next(
+            (key for key in sorted(catalog, key=len, reverse=True) if model_id.startswith(key)), None
+        )
         found = catalog[prefix] if prefix else None
     if found is None:
         return generic_model(model_id, settings)
@@ -147,7 +153,9 @@ def config_price(settings: Mapping[str, str]) -> float | None:
     return value if value >= 0 else None
 
 
-def pricing_for(catalog: Mapping[str, VideoModel], default_model: str) -> Callable[[dict[str, str], str], float]:
+def pricing_for(
+    catalog: Mapping[str, VideoModel], default_model: str
+) -> Callable[[dict[str, str], str], float]:
     """生成「按配置和分辨率给出单价」的函数，挂在 ProviderSpec 上供费用估算用（不需要实例化服务）。"""
 
     def price(settings: dict[str, str], resolution: str) -> float:
@@ -160,7 +168,9 @@ def pricing_for(catalog: Mapping[str, VideoModel], default_model: str) -> Callab
     return price
 
 
-def billing_for(catalog: Mapping[str, VideoModel], default_model: str) -> Callable[[dict[str, str], float], float]:
+def billing_for(
+    catalog: Mapping[str, VideoModel], default_model: str
+) -> Callable[[dict[str, str], float], float]:
     """生成「想要多少秒 → 实际按多少秒计费」的函数（取到模型支持的档位）。"""
 
     def billed(settings: dict[str, str], seconds: float) -> float:
@@ -170,7 +180,9 @@ def billing_for(catalog: Mapping[str, VideoModel], default_model: str) -> Callab
     return billed
 
 
-def resolutions_for(catalog: Mapping[str, VideoModel], default_model: str) -> Callable[[dict[str, str]], tuple[str, ...]]:
+def resolutions_for(
+    catalog: Mapping[str, VideoModel], default_model: str
+) -> Callable[[dict[str, str]], tuple[str, ...]]:
     """生成「按配置给出当前模型支持的分辨率」的函数，费用估算和生成用同一套草稿档规则。"""
 
     def resolutions(settings: dict[str, str]) -> tuple[str, ...]:
@@ -270,7 +282,6 @@ def is_account_problem(message: str) -> bool:
     return bool(_ACCOUNT_PROBLEMS.search(message))
 
 
-
 @dataclass
 class Request:
     """一次生成请求（已经按模型能力整理好）。"""
@@ -309,10 +320,17 @@ class TaskVideoProvider:
         if not self.model:
             raise ValueError("没有填写模型（model）")
         self.profile = pick_model(self.CATALOG, self.model, settings)
-        self.resolution = normalize_resolution(str(settings.get("resolution") or ""), self.profile, label=self.LABEL)
+        self.resolution = normalize_resolution(
+            str(settings.get("resolution") or ""), self.profile, label=self.LABEL
+        )
         self.min_duration = _int(settings.get("min_duration")) or self.profile.min_duration
         self.max_duration = self.profile.longest(_int(settings.get("max_duration")))
-        self.generate_audio = str(settings.get("generate_audio") or "").strip().lower() in {"1", "true", "yes", "on"}
+        self.generate_audio = str(settings.get("generate_audio") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         self.watermark = str(settings.get("watermark") or "").strip().lower() in {"1", "true", "yes", "on"}
         self.proxy = settings.get("proxy") or None
         self.timeout = float(settings.get("timeout") or 60)
@@ -347,7 +365,13 @@ class TaskVideoProvider:
         return text
 
     def plan(
-        self, prompt: str, *, aspect: str, duration: float, first_frame: Path | None, references: list[Path] | None
+        self,
+        prompt: str,
+        *,
+        aspect: str,
+        duration: float,
+        first_frame: Path | None,
+        references: list[Path] | None,
     ) -> Request:
         """按模型能力决定这次用文生、首帧还是参考图。"""
         if not prompt.strip():
@@ -360,7 +384,9 @@ class TaskVideoProvider:
             first_frame = given[0]
         mode = "references" if refs else "first_frame" if first_frame is not None else "text"
         if mode == "first_frame" and "first_frame" not in modes:
-            raise ProviderError(f"{self.LABEL} 的模型 {self.model} 不支持用图片作为首帧，请换一个图生视频模型")
+            raise ProviderError(
+                f"{self.LABEL} 的模型 {self.model} 不支持用图片作为首帧，请换一个图生视频模型"
+            )
         if mode == "text" and "text" not in modes:
             raise ProviderError(f"{self.LABEL} 的模型 {self.model} 不能只凭文字生成，需要先选首帧图片")
         seconds = self.profile.snap(duration, minimum=self.min_duration, maximum=self.max_duration)

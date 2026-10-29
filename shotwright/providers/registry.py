@@ -101,7 +101,9 @@ def create(kind: str, provider_id: str | None, settings: Settings) -> object:
         values["proxy"] = settings.proxy
     missing = entry.spec.missing_fields(values)
     if missing:
-        raise ProviderNotConfigured(f"{entry.spec.name} 缺少配置：{', '.join(missing)}，请到「服务设置」里填写")
+        raise ProviderNotConfigured(
+            f"{entry.spec.name} 缺少配置：{', '.join(missing)}，请到「服务设置」里填写"
+        )
     try:
         return entry.factory(values)
     except (ValueError, TypeError, KeyError) as exc:
