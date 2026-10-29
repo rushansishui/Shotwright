@@ -100,7 +100,9 @@ class ProviderSpec:
 
     def missing_fields(self, settings: dict[str, str]) -> list[str]:
         missing = [f.key for f in self.fields if f.required and not settings.get(f.key)]
-        if self.required_any and not any(all(settings.get(key) for key in group) for group in self.required_any):
+        if self.required_any and not any(
+            all(settings.get(key) for key in group) for group in self.required_any
+        ):
             missing.append(" 或 ".join("+".join(group) for group in self.required_any))
         return missing
 
@@ -146,6 +148,7 @@ class ASRProvider(Protocol):
     def transcribe(
         self, audio: Path, *, language: str | None, progress: Callable[..., None] | None = None
     ) -> Transcript: ...
+
     """``progress(比例, 阶段)``：阶段是 download（下载模型）/ load（加载模型）/ recognize（识别中）。"""
 
 

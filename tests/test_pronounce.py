@@ -49,7 +49,14 @@ def test_subtitle_timing_aligns_to_respelled_words():
     text = "要比赛，坐飞的回来"
     words = [("要比赛", 0.0, 0.5), ("坐飞滴", 1.0, 1.4), ("回来", 1.4, 1.8)]
     cues = subs.split_cues(
-        text, 0.0, 3.0, font_path=FONT, size=64, max_width=420, max_lines=1, words=words,
+        text,
+        0.0,
+        3.0,
+        font_path=FONT,
+        size=64,
+        max_width=420,
+        max_lines=1,
+        words=words,
         respell=lambda value: pronounce.respell(project, value),
     )
     assert [cue.text for cue in cues] == ["要比赛", "坐飞的回来"]  # 字幕仍是原文

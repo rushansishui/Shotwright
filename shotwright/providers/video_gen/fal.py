@@ -57,7 +57,9 @@ class FalVideo(TaskVideoProvider):
 
     def __init__(self, settings: dict[str, str]):
         settings = {**settings, "resolution": "720p"}  # 分辨率由 extra 决定，这里只为通过校验
-        self.CATALOG = {str(settings.get("model") or ""): _profile(str(settings.get("model") or ""), settings)}
+        self.CATALOG = {
+            str(settings.get("model") or ""): _profile(str(settings.get("model") or ""), settings)
+        }
         super().__init__(settings)
         self.api_key = settings["api_key"]
         self.image_model = str(settings.get("image_model") or "").strip()
@@ -87,7 +89,7 @@ class FalVideo(TaskVideoProvider):
         except ValueError as exc:
             raise ValueError(f"extra 不是合法的 JSON：{exc}") from exc
         if not isinstance(self.extra, dict):
-            raise ValueError("extra 必须是 JSON 对象，例如 {\"resolution\": \"1080p\"}")
+            raise ValueError('extra 必须是 JSON 对象，例如 {"resolution": "1080p"}')
         self.queue_url = (settings.get("queue_url") or QUEUE_URL).rstrip("/")
 
     @property
@@ -103,7 +105,11 @@ class FalVideo(TaskVideoProvider):
 
     def check_target(self):
         request_id = "00000000-0000-0000-0000-000000000000"
-        return f"{self.queue_url}/{_app(self.model)}/requests/{request_id}/status", self._headers, self.api_key
+        return (
+            f"{self.queue_url}/{_app(self.model)}/requests/{request_id}/status",
+            self._headers,
+            self.api_key,
+        )
 
     def build_payload(self, request: Request) -> tuple[str, dict]:
         """返回 (模型路径, 请求体)。"""
@@ -162,7 +168,9 @@ class FalVideo(TaskVideoProvider):
         if response.status_code >= 300:
             raise ProviderError(f"{LABEL} 取结果失败：HTTP {response.status_code}，任务 id：{request_id}")
         url = find_url(response.json(), ("url",))
-        return self._paid_task.download(client, url, output.with_suffix(".mp4"), label=LABEL, task_id=request_id)
+        return self._paid_task.download(
+            client, url, output.with_suffix(".mp4"), label=LABEL, task_id=request_id
+        )
 
 
 def _price(settings: dict[str, str], _resolution: str) -> float:
@@ -189,15 +197,28 @@ registry.register(
                 help="fal 模型页上的路径，例如 fal-ai/veo3/fast 或 fal-ai/kling-video/v2.1/standard/text-to-video",
             ),
             ConfigField("image_model", "图生视频模型路径", help="有首帧时改用这个模型（可选）"),
-            ConfigField("image_field", "首帧参数名", default="image_url", help="可灵等模型是 start_image_url"),
-            ConfigField("aspect_field", "画面比例参数名", default="aspect_ratio", help="模型没有这个参数时填 none"),
-            ConfigField("duration_format", "时长写法", default="string", help="int（5）/ string（\"5\"）/ seconds（\"5s\"）/ none（不传）"),
+            ConfigField(
+                "image_field", "首帧参数名", default="image_url", help="可灵等模型是 start_image_url"
+            ),
+            ConfigField(
+                "aspect_field", "画面比例参数名", default="aspect_ratio", help="模型没有这个参数时填 none"
+            ),
+            ConfigField(
+                "duration_format",
+                "时长写法",
+                default="string",
+                help='int（5）/ string（"5"）/ seconds（"5s"）/ none（不传）',
+            ),
             ConfigField("durations", "可选时长", help="逗号分隔，例如 5,10；留空表示 5～10 秒的整秒"),
             ConfigField("min_duration", "最短秒数"),
             ConfigField("max_duration", "最长秒数"),
             ConfigField("max_references", "参考图张数", help="模型支持参考图时填上限，同时填参考图参数名"),
             ConfigField("references_field", "参考图参数名", help="例如 reference_image_urls"),
-            ConfigField("extra", "其他参数（JSON）", help='原样合并进请求，例如 {"resolution": "1080p", "generate_audio": false}'),
+            ConfigField(
+                "extra",
+                "其他参数（JSON）",
+                help='原样合并进请求，例如 {"resolution": "1080p", "generate_audio": false}',
+            ),
             ConfigField("price", "单价（元/秒）", help="填上才能做费用估算和预算控制"),
             ConfigField("poll_interval", "轮询间隔（秒）", default="10"),
             ConfigField("run_timeout", "最长等待（秒）", default="1800"),

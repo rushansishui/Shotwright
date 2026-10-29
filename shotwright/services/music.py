@@ -181,9 +181,7 @@ def download_candidate(
 
     with tempfile.TemporaryDirectory(prefix="shotwright-bgm-") as temp:
         path = provider.download(candidate, Path(temp) / "bgm")
-        asset = _register_audio(
-            store, project, path, source=candidate.provider, meta=_meta(candidate, "")
-        )
+        asset = _register_audio(store, project, path, source=candidate.provider, meta=_meta(candidate, ""))
     log.info("项目 %s：下载背景音乐 %s → asset %s", project.id, candidate.remote_id, asset.id)
     return asset
 

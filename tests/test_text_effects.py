@@ -75,8 +75,15 @@ def test_exit_and_loop_animations():
 def test_headline_loops_until_the_end_of_the_video():
     titles = TitleSettings(headline=HeadlineStyle(enabled=True, text="大标题", loop="pulse", exit="fade"))
     _, events = subs.title_layers(
-        titles, width=1080, height=1920, families=dict.fromkeys(("headline", "intro", "shot"), "Noto Sans SC"),
-        headline_margin=160, shot_margin=330, margin_l=60, margin_r=60, total=30.0,
+        titles,
+        width=1080,
+        height=1920,
+        families=dict.fromkeys(("headline", "intro", "shot"), "Noto Sans SC"),
+        headline_margin=160,
+        shot_margin=330,
+        margin_l=60,
+        margin_r=60,
+        total=30.0,
     )
     (event,) = events
     assert event.startswith("Dialogue: 33,0:00:00.00,0:00:30.00,")
@@ -84,7 +91,9 @@ def test_headline_loops_until_the_end_of_the_video():
 
 
 def test_keyword_highlight():
-    style = SubtitleStyle(margin=200, size=60, keywords=["篮球", "AI"], keyword_color="#FFD60A", keyword_scale=1.2)
+    style = SubtitleStyle(
+        margin=200, size=60, keywords=["篮球", "AI"], keyword_color="#FFD60A", keyword_scale=1.2
+    )
     (event,) = _events(style, "关于篮球，MAIN 和 AI 都行")
     assert "关于{\\1c&H0AD6FF&\\fs72}篮球{\\1c&HFFFFFF&\\fs60}，MAIN 和 {\\1c&H0AD6FF&\\fs72}AI{" in event
     karaoke = style.model_copy(update={"animation": "karaoke"})
@@ -117,7 +126,11 @@ def test_suggest_keywords_api(client, settings):
     settings.defaults["llm"] = "keyworder"
     created = client.post(
         "/api/v2/projects",
-        json={"mode": "split", "script": "关于篮球，一半是梦想，一半是生活。", "voice": {"provider": "silent"}},
+        json={
+            "mode": "split",
+            "script": "关于篮球，一半是梦想，一半是生活。",
+            "voice": {"provider": "silent"},
+        },
     ).json()
     result = client.post(f"/api/v2/projects/{created['id']}/subtitle/keywords").json()
     assert result["subtitle"]["keywords"] == ["篮球", "梦想"]

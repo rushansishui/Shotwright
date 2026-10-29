@@ -56,7 +56,9 @@ def reference_images(store: ProjectStore, project: Project, shot: Shot) -> list[
     for ref in prompting.shot_references(project, shot):
         if ref.subject is not None:
             name = ref.subject.name or ref.subject.code
-            result.append((f"{name}（{ref.label}）" if ref.label else name, store.asset_path(project, ref.asset_id)))
+            result.append(
+                (f"{name}（{ref.label}）" if ref.label else name, store.asset_path(project, ref.asset_id))
+            )
     for ref in project.references:
         if not ref.enabled or ref.role not in ("product", "person"):
             continue
@@ -96,15 +98,15 @@ def _parse(reply: str) -> tuple[float, float, str]:
     return score("relevance"), score("consistency"), str(data.get("issue") or "").strip()[:200]
 
 
-def score_asset(
-    llm, store: ProjectStore, project: Project, shot: Shot, asset_id: str
-) -> tuple[float, str]:
+def score_asset(llm, store: ProjectStore, project: Project, shot: Shot, asset_id: str) -> tuple[float, str]:
     """检查一个候选素材，返回（综合得分, 问题）。有参考图时一致性占六成，否则只看切题程度。"""
     refs = reference_images(store, project, shot)
     with tempfile.TemporaryDirectory(prefix="shotwright-inspect-") as temp:
         work = Path(temp)
         frames = sample_frames(store, project, asset_id, work)
-        ref_frames = [extract_frame(path, work / f"ref-{index}.jpg", at=0.0) for index, (_l, path) in enumerate(refs)]
+        ref_frames = [
+            extract_frame(path, work / f"ref-{index}.jpg", at=0.0) for index, (_l, path) in enumerate(refs)
+        ]
         description = (shot.visual.prompt or shot.visual.image_prompt or shot.text)[:600]
         prompt = PROMPT.format(
             refs=len(ref_frames),
@@ -121,7 +123,9 @@ def score_asset(
     return round(total, 3), issue
 
 
-_NO_ISSUE = re.compile(r"\s*(无|没有|无明显问题|没有问题|未发现问题|none|no issues?)?\s*[。.]?\s*", re.IGNORECASE)
+_NO_ISSUE = re.compile(
+    r"\s*(无|没有|无明显问题|没有问题|未发现问题|none|no issues?)?\s*[。.]?\s*", re.IGNORECASE
+)
 
 
 def inspect_takes(
@@ -145,7 +149,9 @@ def inspect_takes(
             log.warning("项目 %s 镜头 %s：看图检查失败：%s", project.id, shot.id, exc)
             continue
         scored.append((take.score, asset_id))
-        log.info("项目 %s 镜头 %s：候选 %s 得分 %.2f %s", project.id, shot.id, asset_id, take.score, take.issue)
+        log.info(
+            "项目 %s 镜头 %s：候选 %s 得分 %.2f %s", project.id, shot.id, asset_id, take.score, take.issue
+        )
     best = max(scored, default=None)
     if best is not None and len(scored) > 1 and shot.visual.selected in asset_ids:
         shot.visual.selected = best[1]
@@ -169,7 +175,9 @@ def rank_stock(
     llm = vision_llm(settings)
     if llm is None or len(asset_ids) < 2:
         return asset_ids
-    description = "；".join(filter(None, [shot.text[:200], shot.visual.prompt[:300], ", ".join(shot.visual.terms)]))
+    description = "；".join(
+        filter(None, [shot.text[:200], shot.visual.prompt[:300], ", ".join(shot.visual.terms)])
+    )
     try:
         with tempfile.TemporaryDirectory(prefix="shotwright-rank-") as temp:
             work = Path(temp)
@@ -212,9 +220,7 @@ FINAL_PROMPT = """下面 {n} 张图是一条成片里按顺序截取的画面，
 FRAMES_PER_CALL = 6
 
 
-def inspect_final(
-    settings: Settings, video: Path, starts: list[float], durations: list[float]
-) -> list[dict]:
+def inspect_final(settings: Settings, video: Path, starts: list[float], durations: list[float]) -> list[dict]:
     """成片抽帧检查：每个镜头取中间一帧，交给看图模型找手指、面部、乱码文字等瑕疵。
 
     返回 [{"shot": 镜头序号, "issues": [...]}]，只包含有问题的镜头。没有配置看图模型时返回空列表。
@@ -272,7 +278,9 @@ def describe_subject(settings: Settings, store: ProjectStore, project: Project, 
     subject = next((s for s in project.look.subjects if s.code == code), None)
     if subject is None:
         raise KeyError(code)
-    images = [image for image in subject.images if image in project.assets and project.assets[image].kind == "image"][:6]
+    images = [
+        image for image in subject.images if image in project.assets and project.assets[image].kind == "image"
+    ][:6]
     if not images:
         raise ProviderError("这个主体还没有参考图，先上传图片")
     llm = vision_llm(settings)
@@ -285,14 +293,19 @@ def describe_subject(settings: Settings, store: ProjectStore, project: Project, 
         variants = f"，是不同颜色的同一款（{'、'.join(named)}）" if named else "，可能是不同颜色的同一款"
     color_rule = "颜色不用写，每张图的颜色另有标注。" if len(images) > 1 else "写上颜色。"
     prompt = DESCRIBE_PROMPT.format(
-        kind=KIND_NAMES.get(subject.kind, "物品"), name=subject.name or code, count=len(images),
-        variants=variants, color_rule=color_rule,
+        kind=KIND_NAMES.get(subject.kind, "物品"),
+        name=subject.name or code,
+        count=len(images),
+        variants=variants,
+        color_rule=color_rule,
     )
     with tempfile.TemporaryDirectory(prefix="shotwright-describe-") as temp:
         paths = []
         for index, image in enumerate(images):
             try:
-                paths.append(extract_frame(store.asset_path(project, image), Path(temp) / f"{index}.jpg", width=1024))
+                paths.append(
+                    extract_frame(store.asset_path(project, image), Path(temp) / f"{index}.jpg", width=1024)
+                )
             except MediaError as exc:
                 log.warning("项目 %s：参考图 %s 无法读取，跳过：%s", project.id, image, exc)
         if not paths:

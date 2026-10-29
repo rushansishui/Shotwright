@@ -15,7 +15,6 @@ MIN_PART = 0.2
 """拆分后每段至少这么长（秒）。"""
 
 
-
 def _clip_range(project: Project, shot: Shot) -> tuple[Asset, float, float]:
     """镜头当前选中的视频素材，以及生效的入点、出点。"""
     visual = shot.visual
@@ -45,7 +44,13 @@ def split_shot(project: Project, shot_id: str, at: float, store: ProjectStore | 
         raise ValueError("拆分点太靠近片段两端")
     base = shot.visual.model_dump()
     first = ShotVisual.model_validate(
-        {**base, "edit_asset": asset.id, "trim_start": start, "trim_end": cut, "skips": edit.skips_within(start, cut)}
+        {
+            **base,
+            "edit_asset": asset.id,
+            "trim_start": start,
+            "trim_end": cut,
+            "skips": edit.skips_within(start, cut),
+        }
     )
     second_visual = ShotVisual.model_validate(
         {
@@ -66,7 +71,9 @@ def split_shot(project: Project, shot_id: str, at: float, store: ProjectStore | 
     else:
         tail = None
     shot.visual = first
-    second = Shot(id=new_id(), text="", duration=tail, visual=second_visual, voice=shot.voice, speech=shot.speech)
+    second = Shot(
+        id=new_id(), text="", duration=tail, visual=second_visual, voice=shot.voice, speech=shot.speech
+    )
     if shot.speech == "original" and store is not None:
         _split_original_text(store, project, shot, second)
     index = project.shots.index(shot)
@@ -98,7 +105,10 @@ def merge_with_next(project: Project, shot_id: str) -> Shot:
         _, b_start, b_end = _clip_range(project, following)
         if b_start > a_end - 0.05:
             # 首尾相接直接连起来；中间隔着一段（按文字剪辑剪掉的）时，那一段记为剪掉的片段。
-            skips = [*a.effective_edit().skips_within(a_start, a_end), *b.effective_edit().skips_within(b_start, b_end)]
+            skips = [
+                *a.effective_edit().skips_within(a_start, a_end),
+                *b.effective_edit().skips_within(b_start, b_end),
+            ]
             if b_start - a_end >= 0.05:
                 skips.append((a_end, b_start))
             shot.visual = ShotVisual.model_validate(

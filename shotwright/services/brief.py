@@ -84,7 +84,9 @@ SCRIPT_PROMPT = """你是短视频编导。根据视频诉求写一份口播脚�
 只输出 JSON：{{"title": "视频标题（不超过 20 个字）", "lines": ["第一段文案", "第二段文案"]}}"""
 
 
-def _context(video_type: str | None, aspect: str | None, duration: float | None, materials: list[Material]) -> list[str]:
+def _context(
+    video_type: str | None, aspect: str | None, duration: float | None, materials: list[Material]
+) -> list[str]:
     lines = []
     if video_type in VIDEO_TYPE_NAMES:
         lines.append(f"视频类型：{VIDEO_TYPE_NAMES[video_type]}")
@@ -114,7 +116,9 @@ def normalize_brief(
         raise ProviderError("请先说说想做什么视频")
     kind = VIDEO_TYPE_NAMES.get(video_type or "", "短视频")
     system = NORMALIZE_PROMPT.format(kind=kind, language=language, template=template.strip()[:4000])
-    user = "\n".join([*_context(video_type, aspect, duration, materials or []), f"用户的想法：\n{idea.strip()[:4000]}"])
+    user = "\n".join(
+        [*_context(video_type, aspect, duration, materials or []), f"用户的想法：\n{idea.strip()[:4000]}"]
+    )
     reply = llm.complete([{"role": "system", "content": system}, {"role": "user", "content": user}]).strip()
     if reply.startswith("```"):
         reply = reply.strip("`").split("\n", 1)[-1].strip()
@@ -161,9 +165,13 @@ def write_script(
     if not brief.strip():
         raise ProviderError("请先填写视频诉求")
     system = SCRIPT_PROMPT.format(language=language, length_rule=_length_rule(duration))
-    user = "\n".join([*_context(video_type, aspect, duration, materials or []), f"视频诉求：\n{brief.strip()}"])
+    user = "\n".join(
+        [*_context(video_type, aspect, duration, materials or []), f"视频诉求：\n{brief.strip()}"]
+    )
     data = _extract_json(
-        llm.complete([{"role": "system", "content": system}, {"role": "user", "content": user}], json_mode=True)
+        llm.complete(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}], json_mode=True
+        )
     )
     lines = [str(item).strip()[:500] for item in data.get("lines") or [] if str(item).strip()][:60]
     if not lines:
@@ -176,7 +184,9 @@ def script_seconds(lines: list[str]) -> float:
     return round(sum(estimate_seconds(line) for line in lines if line.strip()), 1)
 
 
-def apply_materials(project: Project, materials: list[Material], footage: dict[int, str] | None = None) -> None:
+def apply_materials(
+    project: Project, materials: list[Material], footage: dict[int, str] | None = None
+) -> None:
     """把上传的素材放到该放的地方。``footage`` 是大模型建议的「镜头序号 → 素材编号」。
 
     - 产品图 / 人物照片：加到全片设定里第一个同类主体的图片；没有这类主体时进主体库。
@@ -241,6 +251,10 @@ def apply_materials(project: Project, materials: list[Material], footage: dict[i
         and project.assets[item.asset_id].kind in ("image", "video")
         and item.asset_id not in placed
     ]
-    free = [index for index, shot in enumerate(project.shots) if shot.visual.mode != "upload" or not shot.visual.selected]
+    free = [
+        index
+        for index, shot in enumerate(project.shots)
+        if shot.visual.mode != "upload" or not shot.visual.selected
+    ]
     for shot_index, asset_id in zip(free, remaining, strict=False):
         put(shot_index, asset_id)  # type: ignore[arg-type]

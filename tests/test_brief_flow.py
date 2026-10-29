@@ -21,14 +21,59 @@ class FlowLLM:
         if "诉求模板" in system:
             return "用途：在抖音投放的新品推广广告。\n价格与引导：【待补充：价格】"
         if "口播脚本" in system:
-            return json.dumps({"title": "轻薄羽绒服", "lines": ["冬天出门怕冷？", "这件羽绒服只有三百克。", "点击购物车。"]}, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "title": "轻薄羽绒服",
+                    "lines": ["冬天出门怕冷？", "这件羽绒服只有三百克。", "点击购物车。"],
+                },
+                ensure_ascii=False,
+            )
         shots = [
-            {"role": "hook", "text": "被改写的文案", "terms": ["snow"], "prompt": "P1 " + "画面" * 60, "still": "静止", "camera": "static", "link": "开场"},
-            {"role": "demo", "text": "另一段", "terms": ["coat"], "prompt": "P1 " + "画面" * 60, "still": "静止", "camera": "pan", "link": "接上", "footage": "M2"},
-            {"role": "cta", "text": "结尾", "terms": ["cart"], "prompt": "P1 " + "画面" * 60, "still": "静止", "camera": "static", "link": "收尾"},
-            {"role": "cta", "text": "多出来的", "terms": ["x"], "prompt": "P1 " + "画面" * 60, "still": "静止", "camera": "static", "link": "多余"},
+            {
+                "role": "hook",
+                "text": "被改写的文案",
+                "terms": ["snow"],
+                "prompt": "P1 " + "画面" * 60,
+                "still": "静止",
+                "camera": "static",
+                "link": "开场",
+            },
+            {
+                "role": "demo",
+                "text": "另一段",
+                "terms": ["coat"],
+                "prompt": "P1 " + "画面" * 60,
+                "still": "静止",
+                "camera": "pan",
+                "link": "接上",
+                "footage": "M2",
+            },
+            {
+                "role": "cta",
+                "text": "结尾",
+                "terms": ["cart"],
+                "prompt": "P1 " + "画面" * 60,
+                "still": "静止",
+                "camera": "static",
+                "link": "收尾",
+            },
+            {
+                "role": "cta",
+                "text": "多出来的",
+                "terms": ["x"],
+                "prompt": "P1 " + "画面" * 60,
+                "still": "静止",
+                "camera": "static",
+                "link": "多余",
+            },
         ]
-        look = {"subjects": [{"code": "P1", "name": "羽绒服", "kind": "product", "appearance": "米白色立领"}], "scene": "雪地", "style": "明亮", "avoid": "文字", "grade": "natural"}
+        look = {
+            "subjects": [{"code": "P1", "name": "羽绒服", "kind": "product", "appearance": "米白色立领"}],
+            "scene": "雪地",
+            "style": "明亮",
+            "avoid": "文字",
+            "grade": "natural",
+        }
         return json.dumps({"title": "AI 标题", "look": look, "shots": shots}, ensure_ascii=False)
 
 
@@ -54,14 +99,17 @@ def test_normalize_and_script(client, settings):
     assert "【平台】" in system and "商品广告" in system
     assert "M1，图片，产品图，文件名 coat.jpg，说明：正面" in user and "很轻" in user
 
-    script = client.post("/api/v2/brief/script", json={"brief": brief, "video_type": "product_ad", "duration": 30}).json()
+    script = client.post(
+        "/api/v2/brief/script", json={"brief": brief, "video_type": "product_ad", "duration": 30}
+    ).json()
     assert script["title"] == "轻薄羽绒服" and len(script["lines"]) == 3 and script["seconds"] > 0
 
 
 def test_storyboard_follows_script_and_places_materials(client, settings, tmp_path):
     _use_flow_llm(settings)
     project = client.post(
-        "/api/v2/projects", json={"mode": "empty", "video_type": "product_ad", "voice": {"provider": "silent"}}
+        "/api/v2/projects",
+        json={"mode": "empty", "video_type": "product_ad", "voice": {"provider": "silent"}},
     ).json()
     pid = project["id"]
 
@@ -83,7 +131,13 @@ def test_storyboard_follows_script_and_places_materials(client, settings, tmp_pa
     lines = ["冬天出门怕冷？", "这件羽绒服只有三百克。", "点击购物车。"]
     result = client.post(
         f"/api/v2/projects/{pid}/storyboard",
-        json={"subject": "儿童羽绒服广告", "idea": "卖羽绒服", "script": lines, "duration": 30, "materials": materials},
+        json={
+            "subject": "儿童羽绒服广告",
+            "idea": "卖羽绒服",
+            "script": lines,
+            "duration": 30,
+            "materials": materials,
+        },
     )
     assert result.status_code == 200, result.text
     data = result.json()
@@ -105,35 +159,59 @@ def test_storyboard_follows_script_and_places_materials(client, settings, tmp_pa
 def test_materials_for_pasted_script(client, settings, tmp_path):
     project = client.post(
         "/api/v2/projects",
-        json={"mode": "split", "script": "第一句话说得长一些，让它单独成为一个镜头好不好。第二句也要足够长才行，单独成为一个镜头。", "voice": {"provider": "silent"}},
+        json={
+            "mode": "split",
+            "script": "第一句话说得长一些，让它单独成为一个镜头好不好。第二句也要足够长才行，单独成为一个镜头。",
+            "voice": {"provider": "silent"},
+        },
     ).json()
     pid = project["id"]
     ids = []
     for name in ("a.png", "b.png"):
         with make_image(tmp_path / name).open("rb") as handle:
-            ids.append(client.post(f"/api/v2/projects/{pid}/assets", files={"file": (name, handle)}).json()["id"])
-    materials = [{"kind": "image", "role": "footage", "asset_id": ids[0]}, {"kind": "image", "role": "logo", "note": "Logo", "asset_id": ids[1]}]
+            ids.append(
+                client.post(f"/api/v2/projects/{pid}/assets", files={"file": (name, handle)}).json()["id"]
+            )
+    materials = [
+        {"kind": "image", "role": "footage", "asset_id": ids[0]},
+        {"kind": "image", "role": "logo", "note": "Logo", "asset_id": ids[1]},
+    ]
     data = client.post(f"/api/v2/projects/{pid}/materials", json={"materials": materials}).json()
     assert data["shots"][0]["visual"]["selected"] == ids[0]
     assert data["references"] == [{"asset_id": ids[1], "role": "logo", "label": "Logo", "enabled": True}]
-    bad = client.post(f"/api/v2/projects/{pid}/materials", json={"materials": [{"kind": "image", "role": "footage", "asset_id": "nosuch123"}]})
+    bad = client.post(
+        f"/api/v2/projects/{pid}/materials",
+        json={"materials": [{"kind": "image", "role": "footage", "asset_id": "nosuch123"}]},
+    )
     assert bad.status_code == 404
 
 
 def test_pasted_script_is_kept_as_record(client):
     script = "第一句话说得长一些，让它单独成为一个镜头好不好。第二句也要足够长才行，单独成为一个镜头。"
-    project = client.post("/api/v2/projects", json={"mode": "split", "script": script, "idea": "随便试试", "voice": {"provider": "silent"}}).json()
+    project = client.post(
+        "/api/v2/projects",
+        json={"mode": "split", "script": script, "idea": "随便试试", "voice": {"provider": "silent"}},
+    ).json()
     assert project["script"] == [shot["text"] for shot in project["shots"]] and len(project["script"]) == 2
     assert project["idea"] == "随便试试"
 
 
 def test_creation_record_is_editable(client):
-    project = client.post("/api/v2/projects", json={"mode": "split", "script": "一句足够长的话，让它成为一个镜头好不好呢。", "voice": {"provider": "silent"}}).json()
+    project = client.post(
+        "/api/v2/projects",
+        json={
+            "mode": "split",
+            "script": "一句足够长的话，让它成为一个镜头好不好呢。",
+            "voice": {"provider": "silent"},
+        },
+    ).json()
     pid, text = project["id"], project["shots"][0]["text"]
     data = client.patch(
         f"/api/v2/projects/{pid}",
         json={"idea": "  新想法  ", "subject": "新的诉求", "script": ["第一段", "  ", " 第二段 "]},
     ).json()
-    assert data["idea"] == "新想法" and data["subject"] == "新的诉求" and data["script"] == ["第一段", "第二段"]
+    assert (
+        data["idea"] == "新想法" and data["subject"] == "新的诉求" and data["script"] == ["第一段", "第二段"]
+    )
     assert data["shots"][0]["text"] == text  # 只改记录，不动镜头
     assert client.patch(f"/api/v2/projects/{pid}", json={"script": ["x"] * 61}).status_code == 422

@@ -63,4 +63,5 @@ class RenderResult:
 
     def to_dict(self) -> dict:
         from dataclasses import asdict
+
         return asdict(self)

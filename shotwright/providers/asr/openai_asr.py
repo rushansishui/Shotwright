@@ -74,7 +74,9 @@ class OpenAIASR:
         except httpx.HTTPError as exc:
             raise ProviderError(f"语音识别请求失败：{self._safe(str(exc))[:200]}") from exc
         if response.status_code >= 300:
-            raise ProviderError(f"语音识别失败（HTTP {response.status_code}）：{self._safe(response.text)[:300]}")
+            raise ProviderError(
+                f"语音识别失败（HTTP {response.status_code}）：{self._safe(response.text)[:300]}"
+            )
         body = response.json()
         words = [
             WordTiming(str(w.get("word", "")).strip(), round(float(w["start"]), 3), round(float(w["end"]), 3))
@@ -82,7 +84,9 @@ class OpenAIASR:
             if str(w.get("word", "")).strip()
         ]
         if not words:
-            raise ProviderError("识别服务没有返回逐词时间戳，请换用支持 timestamp_granularities 的模型（例如 whisper-1）")
+            raise ProviderError(
+                "识别服务没有返回逐词时间戳，请换用支持 timestamp_granularities 的模型（例如 whisper-1）"
+            )
         sentences = [
             (round(float(s["start"]), 3), round(float(s["end"]), 3)) for s in body.get("segments") or []
         ]
@@ -101,7 +105,9 @@ registry.register(
         docs_url="https://platform.openai.com/docs/guides/speech-to-text",
         shared_key_from=(("llm", "openai"),),
         fields=(
-            ConfigField("api_key", "API Key", required=True, secret=True, help="留空时使用大模型 openai 小节的 Key"),
+            ConfigField(
+                "api_key", "API Key", required=True, secret=True, help="留空时使用大模型 openai 小节的 Key"
+            ),
             ConfigField(
                 "base_url",
                 "接口地址",

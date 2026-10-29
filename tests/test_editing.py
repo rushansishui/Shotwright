@@ -15,18 +15,38 @@ from shotwright.services import editing, visuals
 def _clip_with_audio(path, seconds=4.0):
     run_ffmpeg(
         [
-            "-f", "lavfi", "-i", f"testsrc2=size=640x360:rate=30:duration={seconds}",
-            "-f", "lavfi", "-i", f"sine=frequency=600:duration={seconds}",
-            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-shortest", str(path),
+            "-f",
+            "lavfi",
+            "-i",
+            f"testsrc2=size=640x360:rate=30:duration={seconds}",
+            "-f",
+            "lavfi",
+            "-i",
+            f"sine=frequency=600:duration={seconds}",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-shortest",
+            str(path),
         ]
     )
     return path
 
 
 def _project_with_clip(store, tmp_path, *, seconds=4.0, audio=False, **visual):
-    clip = _clip_with_audio(tmp_path / "clip.mp4", seconds) if audio else make_clip(tmp_path / "clip.mp4", seconds=seconds)
-    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=[Shot(text="", duration=2.0)]))
+    clip = (
+        _clip_with_audio(tmp_path / "clip.mp4", seconds)
+        if audio
+        else make_clip(tmp_path / "clip.mp4", seconds=seconds)
+    )
+    project = store.create(
+        Project(voice=VoiceSettings(provider="silent"), shots=[Shot(text="", duration=2.0)])
+    )
     asset = visuals.add_upload(store, project, clip, filename="clip.mp4")
     shot = project.shots[0]
     shot.visual = ShotVisual(

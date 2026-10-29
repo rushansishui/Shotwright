@@ -173,7 +173,11 @@ def shot_references(
     else:
         text = (shot.visual.image_prompt or shot.visual.prompt) if target == "image" else shot.visual.prompt
         codes = used_codes(project, text)
-        subjects = [s for s in look.subjects if s.code in codes] if codes else [s for s in look.subjects if s.kind != "place"]
+        subjects = (
+            [s for s in look.subjects if s.code in codes]
+            if codes
+            else [s for s in look.subjects if s.kind != "place"]
+        )
         # 产品、物品排在人物前面：参考图放不下时，先保证商品的样子对。
         subjects.sort(key=lambda s: s.kind == "person")
         for subject in subjects:
@@ -203,12 +207,17 @@ def reference_lines(project: Project, lang: PromptLang, refs: list[ShotRef]) -> 
             subject = ref.subject
             hint = ROLE_HINTS[lang]["person" if subject.kind == "person" else "product"]
             variant = VARIANT[lang].format(label=ref.label) if ref.label else ""
-            lines.append(f"- {label} = {subject.code}{' ' + subject.name if subject.name else ''}{variant}: {hint}")
+            lines.append(
+                f"- {label} = {subject.code}{' ' + subject.name if subject.name else ''}{variant}: {hint}"
+            )
             own = numbers.get(subject.code, [])
             if subject.kind != "person" and own and own[-1] == number:
                 # 同一主体的要求在它最后一张参考图后面写一次。
                 if len(own) == 1:
-                    lines.append("  " + COLOR_RULE[lang].format(code=subject.code, number=number, label=ref.label or "-"))
+                    lines.append(
+                        "  "
+                        + COLOR_RULE[lang].format(code=subject.code, number=number, label=ref.label or "-")
+                    )
                 else:
                     joined = "、".join(map(str, own)) if lang == "zh" else ", ".join(map(str, own))
                     lines.append("  " + MULTI_COLOR_RULE[lang].format(code=subject.code, numbers=joined))
@@ -309,7 +318,9 @@ def compose(
         if ref.subject is not None and ref.label:
             labels.setdefault(ref.subject.code, []).append(ref.label)
     chosen = {
-        code: (THIS_SHOT if len(items) == 1 else THESE_SHOT)[lang].format(label=("、" if lang == "zh" else ", ").join(items))
+        code: (THIS_SHOT if len(items) == 1 else THESE_SHOT)[lang].format(
+            label=("、" if lang == "zh" else ", ").join(items)
+        )
         for code, items in labels.items()
     }
     subjects = [s for s in look.subjects if s.code in codes and s.appearance.strip()]
@@ -331,7 +342,9 @@ def compose(
     if frame_ref is not None:
         lines.append(frame_reference_line(project, lang, frame_ref))
     avoid = look.avoid.strip()
-    lines.append(words["avoid"].format(avoid) + words["sep"] + words["no_text"] if avoid else words["no_text"])
+    lines.append(
+        words["avoid"].format(avoid) + words["sep"] + words["no_text"] if avoid else words["no_text"]
+    )
     return "\n".join(lines)
 
 

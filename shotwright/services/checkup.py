@@ -42,20 +42,30 @@ def check_project(project: Project, settings: Settings, *, quality: str = "final
         if visual.mode in ("ai", "image"):
             ai_shots += 1
             if not (visual.prompt.strip() or visual.image_prompt.strip()):
-                issues.append(CheckIssue("no_prompt", f"镜头 {index} 是 AI 画面，但没有画面描述", index, {"n": index}))
+                issues.append(
+                    CheckIssue("no_prompt", f"镜头 {index} 是 AI 画面，但没有画面描述", index, {"n": index})
+                )
         if visual.mode == "color":
             continue
         asset = project.assets.get(visual.selected or "")
         if asset is None or asset.kind not in ("video", "image"):
             issues.append(
                 CheckIssue(
-                    "no_visual", f"镜头 {index} 还没有画面，渲染时会自动检索素材，拿不到就用纯色", index, {"n": index}
+                    "no_visual",
+                    f"镜头 {index} 还没有画面，渲染时会自动检索素材，拿不到就用纯色",
+                    index,
+                    {"n": index},
                 )
             )
             continue
         chosen = shot_assets(project, shot)
         low = next(
-            (a for a in chosen if a.width and a.height and min(a.width, a.height) < short_side * LOW_RESOLUTION), None
+            (
+                a
+                for a in chosen
+                if a.width and a.height and min(a.width, a.height) < short_side * LOW_RESOLUTION
+            ),
+            None,
         )
         if low is not None:
             issues.append(
@@ -78,7 +88,12 @@ def check_project(project: Project, settings: Settings, *, quality: str = "final
                         "short_footage",
                         f"镜头 {index} 的素材约 {length:.1f} 秒，配音约 {needed:.1f} 秒，会{how}补足约 {gap:.1f} 秒",
                         index,
-                        {"n": index, "footage": round(length, 1), "voice": round(needed, 1), "gap": round(gap, 1)},
+                        {
+                            "n": index,
+                            "footage": round(length, 1),
+                            "voice": round(needed, 1),
+                            "gap": round(gap, 1),
+                        },
                     )
                 )
     issues += _overlay_issues(project)
@@ -93,7 +108,9 @@ def check_project(project: Project, settings: Settings, *, quality: str = "final
             )
         )
     if ai_shots >= 2 and project.look.is_empty():
-        issues.append(CheckIssue("no_look", "有多个 AI 镜头但没有全片设定，人物和产品在各镜头可能不一致", None, {}))
+        issues.append(
+            CheckIssue("no_look", "有多个 AI 镜头但没有全片设定，人物和产品在各镜头可能不一致", None, {})
+        )
     issues += _consistency_issues(project)
     if project.budget is not None:
         from shotwright.services import cost
@@ -131,7 +148,9 @@ def _consistency_issues(project: Project) -> list[CheckIssue]:
     used_by_ai: set[str] = set()
     for index, shot in enumerate(project.shots, start=1):
         visual = shot.visual
-        codes = prompting.used_codes(project, visual.image_prompt or visual.prompt if visual.mode == "image" else visual.prompt)
+        codes = prompting.used_codes(
+            project, visual.image_prompt or visual.prompt if visual.mode == "image" else visual.prompt
+        )
         codes = [code for code in codes if any(s.code == code for s in subjects)]
         if visual.mode in ("ai", "image"):
             used_by_ai.update(codes or [s.code for s in subjects])

@@ -86,13 +86,17 @@ SAFE_GAP = 24
 
 def side_margins(project: Project) -> tuple[int, int]:
     """字幕左右留白：至少 60 像素，交付平台的安全区更宽时用安全区。"""
-    _top, _bottom, left, right = platforms.safe_margins(project.delivery, project.canvas.width, project.canvas.height)
+    _top, _bottom, left, right = platforms.safe_margins(
+        project.delivery, project.canvas.width, project.canvas.height
+    )
     return max(60, left + SAFE_GAP // 2), max(60, right + SAFE_GAP // 2)
 
 
 def safe_margin(project: Project, position: str, margin: int) -> int:
     """把顶部 / 底部的边距挪进交付平台的安全区；居中的不动。"""
-    top, bottom, _left, _right = platforms.safe_margins(project.delivery, project.canvas.width, project.canvas.height)
+    top, bottom, _left, _right = platforms.safe_margins(
+        project.delivery, project.canvas.width, project.canvas.height
+    )
     if position == "top":
         return max(margin, top + SAFE_GAP)
     if position == "bottom":
@@ -344,7 +348,12 @@ class Renderer:
             try:
                 try:
                     visuals.refresh_candidates(
-                        self.store, self.settings, project, shot, confirm_charge=self.allow_paid, quality=self.quality
+                        self.store,
+                        self.settings,
+                        project,
+                        shot,
+                        confirm_charge=self.allow_paid,
+                        quality=self.quality,
                     )
                 except ProviderError as exc:
                     if visual.mode == "stock" or not visual.terms:
@@ -380,9 +389,7 @@ class Renderer:
 
     # ---- 整片 ---------------------------------------------------------------
 
-    def _assemble(
-        self, project: Project, shots: list[tuple[str, Path]], overlap: float
-    ) -> tuple[str, Path]:
+    def _assemble(self, project: Project, shots: list[tuple[str, Path]], overlap: float) -> tuple[str, Path]:
         kind = project.transition.kind if overlap > 0 else "none"
         fp = fingerprint(
             "assembly",
@@ -412,13 +419,20 @@ class Renderer:
         try:
             run_ffmpeg(
                 [
-                    "-f", "concat",
-                    "-safe", "0",
-                    "-protocol_whitelist", LOCAL_PROTOCOLS,
-                    "-i", str(listing),
-                    "-c", "copy",
-                    "-movflags", "+faststart",
-                    "-f", "mp4",
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "0",
+                    "-protocol_whitelist",
+                    LOCAL_PROTOCOLS,
+                    "-i",
+                    str(listing),
+                    "-c",
+                    "copy",
+                    "-movflags",
+                    "+faststart",
+                    "-f",
+                    "mp4",
                     str(temp),
                 ],
                 cancel=self._cancel,
@@ -462,23 +476,25 @@ class Renderer:
             previous = label
             delay = max(0, round(start * 1000))
             audio_chain.append(
-                f"[{index}:a]aresample=48000,aformat=channel_layouts=stereo,"
-                f"adelay={delay}:all=1[a{index}]"
+                f"[{index}:a]aresample=48000,aformat=channel_layouts=stereo,adelay={delay}:all=1[a{index}]"
             )
         mix_inputs = "".join(f"[a{index}]" for index in range(len(shots)))
-        audio_chain.append(
-            f"{mix_inputs}amix=inputs={len(shots)}:duration=longest:normalize=0[aout]"
-        )
+        audio_chain.append(f"{mix_inputs}amix=inputs={len(shots)}:duration=longest:normalize=0[aout]")
         run_ffmpeg(
             [
                 *args,
-                "-filter_complex", ";".join([*chain, *audio_chain]),
-                "-map", f"[{previous}]",
-                "-map", "[aout]",
+                "-filter_complex",
+                ";".join([*chain, *audio_chain]),
+                "-map",
+                f"[{previous}]",
+                "-map",
+                "[aout]",
                 *_video_args(project.canvas.fps, self.quality),
                 *AUDIO_ARGS,
-                "-movflags", "+faststart",
-                "-f", "mp4",
+                "-movflags",
+                "+faststart",
+                "-f",
+                "mp4",
                 str(temp),
             ],
             cancel=self._cancel,
@@ -499,7 +515,10 @@ class Renderer:
         texts = {
             "subtitle": (project.subtitle, script),
             "headline": (titles.headline, titles.headline.text),
-            "intro": (titles.intro, titles.intro.text + titles.intro.subtitle + titles.headline.text + project.title),
+            "intro": (
+                titles.intro,
+                titles.intro.text + titles.intro.subtitle + titles.headline.text + project.title,
+            ),
             "shot": (titles.shot, "".join(shot.title for shot in project.shots)),
         }
         fonts_dir = self.settings.fonts_dir.resolve()
@@ -547,7 +566,9 @@ class Renderer:
         if style.background_opacity <= 0:
             max_width -= round(2 * style.outline2)
         if style.keywords:
-            max_width -= round(style.size * (style.keyword_scale - 1) * 4)  # 关键词放大后行会变宽，按 4 个字预留
+            max_width -= round(
+                style.size * (style.keyword_scale - 1) * 4
+            )  # 关键词放大后行会变宽，按 4 个字预留
         cues: list[subs.Cue] = []
         for shot, timing in zip(project.shots, timings, strict=True):
             if not shot.text.strip():
@@ -564,7 +585,9 @@ class Renderer:
                     words=timing.words,
                     spacing=style.spacing,
                     # 原声镜头没有经过读音纠正，时间戳直接对应原文。
-                    respell=None if shot.speech == "original" else (lambda text: pronounce.respell(project, text)),
+                    respell=None
+                    if shot.speech == "original"
+                    else (lambda text: pronounce.respell(project, text)),
                 )
             )
         return cues
@@ -581,21 +604,32 @@ class Renderer:
         if stats is None:
             shutil.copyfile(source, output)
             return
-        measured = ":".join(f"measured_{key[6:]}={value}" for key, value in stats.items() if key.startswith("input_"))
+        measured = ":".join(
+            f"measured_{key[6:]}={value}" for key, value in stats.items() if key.startswith("input_")
+        )
         audio = (
             f"loudnorm=I={project.loudness:g}:TP={TRUE_PEAK:g}:LRA=11:{measured}:"
             f"offset={stats['target_offset']}:linear=true,aresample=48000"
         )
         run_ffmpeg(
             [
-                "-protocol_whitelist", LOCAL_PROTOCOLS,
-                "-i", str(source),
-                "-map", "0:v", "-map", "0:a",
-                "-c:v", "copy",
-                "-af", audio,
+                "-protocol_whitelist",
+                LOCAL_PROTOCOLS,
+                "-i",
+                str(source),
+                "-map",
+                "0:v",
+                "-map",
+                "0:a",
+                "-c:v",
+                "copy",
+                "-af",
+                audio,
                 *AUDIO_ARGS,
-                "-movflags", "+faststart",
-                "-f", "mp4",
+                "-movflags",
+                "+faststart",
+                "-f",
+                "mp4",
                 str(output.resolve()),
             ],
             cancel=self._cancel,
@@ -622,11 +656,15 @@ class Renderer:
         if not path.exists():
             run_ffmpeg(
                 [
-                    "-f", "lavfi",
-                    "-i", "anoisesrc=d=0.6:c=pink:r=48000:a=0.5",
-                    "-af", "highpass=f=400,lowpass=f=6500,afade=t=in:st=0:d=0.3:curve=exp,"
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "anoisesrc=d=0.6:c=pink:r=48000:a=0.5",
+                    "-af",
+                    "highpass=f=400,lowpass=f=6500,afade=t=in:st=0:d=0.3:curve=exp,"
                     "afade=t=out:st=0.3:d=0.3,volume=0.9",
-                    "-ac", "2",
+                    "-ac",
+                    "2",
                     str(path),
                 ],
                 cancel=self._cancel,
@@ -714,7 +752,12 @@ class Renderer:
             (grade, GRADE_VERSION) if grade else None,
             project.delivery if project.delivery != platforms.DEFAULT_PLATFORM else None,
             (titles.model_dump(exclude={"candidates"}), shot_titles, project.title) if has_titles else None,
-            (project.sfx.model_dump(), ambience.sha256 if ambience else None, cuts if whoosh else None, WHOOSH_VERSION)
+            (
+                project.sfx.model_dump(),
+                ambience.sha256 if ambience else None,
+                cuts if whoosh else None,
+                WHOOSH_VERSION,
+            )
             if ambience or whoosh
             else None,
         )
@@ -794,19 +837,21 @@ class Renderer:
                 # 图片叠加：按位置缩放到合适大小，在指定时间段内显示。
                 for index, (item, asset) in enumerate(image_overlays, start=1):
                     args += [
-                        "-protocol_whitelist", LOCAL_PROTOCOLS,
-                        "-i", str(self.store.asset_path(project, asset.id)),
+                        "-protocol_whitelist",
+                        LOCAL_PROTOCOLS,
+                        "-i",
+                        str(self.store.asset_path(project, asset.id)),
                     ]
                     height = max(24, item.size * 2)
                     label_in = f"img{index}"
                     filters.append(f"[{index}:v]scale=-2:{height}[{label_in}]")
                     x, y = _overlay_position(item, project)
-                    enable = f":enable='between(t,{item.start:.2f},{_overlay_end(item):.2f})'" if item.duration else (
-                        f":enable='gte(t,{item.start:.2f})'"
+                    enable = (
+                        f":enable='between(t,{item.start:.2f},{_overlay_end(item):.2f})'"
+                        if item.duration
+                        else (f":enable='gte(t,{item.start:.2f})'")
                     )
-                    filters.append(
-                        f"[{video_in}][{label_in}]overlay=x={x}:y={y}{enable}[{video_out}]"
-                    )
+                    filters.append(f"[{video_in}][{label_in}]overlay=x={x}:y={y}{enable}[{video_out}]")
                     video_in = video_out
                     step += 1
                     video_out = f"v{step}"
@@ -816,9 +861,12 @@ class Renderer:
                 if bgm_asset is not None:
                     bgm_index = 1 + len(image_overlays)
                     args += [
-                        "-stream_loop", "-1",
-                        "-protocol_whitelist", LOCAL_PROTOCOLS,
-                        "-i", str(self.store.asset_path(project, bgm_asset.id)),
+                        "-stream_loop",
+                        "-1",
+                        "-protocol_whitelist",
+                        LOCAL_PROTOCOLS,
+                        "-i",
+                        str(self.store.asset_path(project, bgm_asset.id)),
                     ]
                 ambience_index = whoosh_index = None
                 next_index = 1 + len(image_overlays) + (1 if bgm_asset is not None else 0)
@@ -826,9 +874,12 @@ class Renderer:
                     ambience_index = next_index
                     next_index += 1
                     args += [
-                        "-stream_loop", "-1",
-                        "-protocol_whitelist", LOCAL_PROTOCOLS,
-                        "-i", str(self.store.asset_path(project, ambience.id)),
+                        "-stream_loop",
+                        "-1",
+                        "-protocol_whitelist",
+                        LOCAL_PROTOCOLS,
+                        "-i",
+                        str(self.store.asset_path(project, ambience.id)),
                     ]
                 if whoosh:
                     whoosh_index = next_index
@@ -864,9 +915,12 @@ class Renderer:
                 command += AUDIO_ARGS if audio_map != "0:a" else ["-c:a", "copy"]
                 mixed = work / "mixed.mp4"
                 command += [
-                    "-t", f"{duration:.3f}",
-                    "-movflags", "+faststart",
-                    "-f", "mp4",
+                    "-t",
+                    f"{duration:.3f}",
+                    "-movflags",
+                    "+faststart",
+                    "-f",
+                    "mp4",
                     str(mixed.resolve()),
                 ]
                 if filters:

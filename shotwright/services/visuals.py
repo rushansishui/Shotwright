@@ -173,7 +173,11 @@ def fetch_stock_candidates(
                 continue
             try:
                 path = _download_with_retry(provider, candidate, Path(temp) / f"c{index}")
-                meta = {**candidate.meta, "remote_id": candidate.remote_id, "preview_url": candidate.preview_url}
+                meta = {
+                    **candidate.meta,
+                    "remote_id": candidate.remote_id,
+                    "preview_url": candidate.preview_url,
+                }
                 asset = _register_media(
                     store, project, path, source=candidate.provider, folder="stock", meta=meta
                 )
@@ -187,14 +191,10 @@ def fetch_stock_candidates(
             if len(added) >= limit:
                 break
     if failed:
-        log.warning(
-            "项目 %s：%d 个候选素材下载失败，已跳过（%s）", project.id, failed, last_error
-        )
+        log.warning("项目 %s：%d 个候选素材下载失败，已跳过（%s）", project.id, failed, last_error)
     if not added and not shot.visual.candidates:
         if failed:
-            raise ProviderError(
-                f"素材下载失败（{last_error}）。素材库可能正在限流，请稍等几秒再试"
-            )
+            raise ProviderError(f"素材下载失败（{last_error}）。素材库可能正在限流，请稍等几秒再试")
         raise ProviderError("没有找到合适的素材，试试换几个检索词")
     if added and failed:
         # 有成功也有失败时，在镜头上记一条提示，让用户知道候选不全。
@@ -238,7 +238,8 @@ def _download_with_retry(
             message = str(exc)
             # 只有网络类错误值得重试；HTTP 4xx、文件过大等重试也没用。
             retryable = any(
-                token in message for token in ("RemoteProtocolError", "ConnectError", "ReadTimeout", "Timeout")
+                token in message
+                for token in ("RemoteProtocolError", "ConnectError", "ReadTimeout", "Timeout")
             )
             if not retryable or attempt == attempts - 1:
                 raise
@@ -258,7 +259,9 @@ def _provider_id(settings: Settings, kind: str, shot: Shot) -> str | None:
         except ProviderError:
             spec = None
         # 镜头当初选的服务后来删掉了 Key：界面上已经显示成默认服务，这里也跟着用默认服务。
-        if spec is not None and (chosen == settings.default_provider(kind) or registry.is_configured(spec, settings)):
+        if spec is not None and (
+            chosen == settings.default_provider(kind) or registry.is_configured(spec, settings)
+        ):
             return chosen
     return settings.default_provider(kind)
 
@@ -363,6 +366,8 @@ def generate_keyframes(
             store, settings, project, shot, confirm_charge=confirm_charge, keyframe=True, batch=batch
         )
     return added
+
+
 MAX_FALLBACK_TERM_BYTES = 80
 """视频诉求短于这个长度才拿它当兜底检索词（见 :func:`_fallback_terms`）。"""
 _MODE_KINDS = (("stock", "stock"), ("ai", "video_gen"), ("image", "image_gen"))
@@ -660,7 +665,9 @@ def generate_ai_candidate(
         # 主体照片作为参考图：各镜头的人物、产品保持一致，构图不受限制（不支持时上面已改用首帧）。
         # 先读出真正能用的图片，再按它们拼提示词，「参考图 1/2」与实际发出的图片一一对应。
         references, used_refs = (
-            _reference_files(store, project, shot, work, ref_limit, target="video") if use_references else ([], [])
+            _reference_files(store, project, shot, work, ref_limit, target="video")
+            if use_references
+            else ([], [])
         )
         if use_references and not references:
             # 参考图一张都读不出来时不要继续：没有参考图模型只能按文字自己画，钱花了款式也不对。
@@ -696,8 +703,10 @@ def generate_ai_candidate(
             # 末帧续生成：配音比模型最长时长还长时，分段生成，每段从上一段的最后一帧接着生成，
             # 最后拼成一段。替代慢放、定格和循环；每段单独计费。
             # 参考图只跟第一段走，后面几段要去掉按编号写的参考图要求。
-            tail = text if not kwargs else build_prompt(
-                settings, project, shot, "video_gen", provider_id, ref_limit=0, refs=[]
+            tail = (
+                text
+                if not kwargs
+                else build_prompt(settings, project, shot, "video_gen", provider_id, ref_limit=0, refs=[])
             )
             return _generate_extended(
                 provider, text, project, work, wanted, longest or wanted, frame, remember_task, kwargs, tail
@@ -712,11 +721,21 @@ def generate_ai_candidate(
             if not references:
                 raise
             log.warning(
-                "项目 %s 镜头 %s：生成服务不接受参考图，改用第一张参考图作为首帧：%s", project.id, shot.id, exc
+                "项目 %s 镜头 %s：生成服务不接受参考图，改用第一张参考图作为首帧：%s",
+                project.id,
+                shot.id,
+                exc,
             )
             first_frame = references[0]
             prompt = build_prompt(
-                settings, project, shot, "video_gen", provider_id, ref_limit=0, refs=[], frame_ref=used_refs[0]
+                settings,
+                project,
+                shot,
+                "video_gen",
+                provider_id,
+                ref_limit=0,
+                refs=[],
+                frame_ref=used_refs[0],
             )
             meta["prompt"] = prompt[:3000]
             meta["first_frame"] = used_refs[0].asset_id
@@ -730,7 +749,14 @@ def generate_ai_candidate(
     shot.visual.pending = None
     for seconds in spent:
         record_spend(
-            store, settings, project, shot, "video_gen", provider_id or "", resolution=resolution, seconds=seconds
+            store,
+            settings,
+            project,
+            shot,
+            "video_gen",
+            provider_id or "",
+            resolution=resolution,
+            seconds=seconds,
         )
     _attach(shot, [asset.id], select=True, take=kind, batch=batch)
     return [asset.id]
@@ -840,7 +866,9 @@ def generate_image_candidate(
             _reference_files(store, project, shot, work, ref_limit, target="image") if ref_limit else ([], [])
         )
         # 提示词按实际读出来的图片编号，和发出去的图片一一对应。
-        prompt = build_prompt(settings, project, shot, "image_gen", provider_id, ref_limit=ref_limit, refs=used_refs)
+        prompt = build_prompt(
+            settings, project, shot, "image_gen", provider_id, ref_limit=ref_limit, refs=used_refs
+        )
         meta["prompt"] = prompt[:1500]
         if ref_limit and not references and subject_images(project, shot, target="image"):
             raise ProviderError("这个镜头的参考图都无法读取，已停止生成；请在全片设定里重新上传参考图后再试")
@@ -891,7 +919,7 @@ def generate_subject_image(
         # 已经有照片时（例如一张产品图）也带上，让定妆图和它一致。张数按服务能接受的上限来。
         references: list[Path] = []
         if subject.images and _accepts_references(provider):
-            for index, image in enumerate(subject.images[:_reference_limit(provider)]):
+            for index, image in enumerate(subject.images[: _reference_limit(provider)]):
                 source = store.asset_path(project, image)
                 if not source.is_file():
                     continue
@@ -906,7 +934,11 @@ def generate_subject_image(
         else:
             path = provider.generate(prompt, aspect="1:1", output=work / "gen")
         asset = _register_media(
-            store, project, path, source=provider_id or "image_gen", folder="reference",
+            store,
+            project,
+            path,
+            source=provider_id or "image_gen",
+            folder="reference",
             meta={"prompt": prompt[:1500], "subject": code},
         )
     record_spend(store, settings, project, stand_in, "image_gen", provider_id or "")
@@ -943,10 +975,18 @@ def refresh_candidates(
     try:
         if edit_selected:
             added = generate_ai_candidate(
-                store, settings, project, shot, confirm_charge=confirm_charge, edit_selected=True, quality=quality
+                store,
+                settings,
+                project,
+                shot,
+                confirm_charge=confirm_charge,
+                edit_selected=True,
+                quality=quality,
             )
         elif keyframes and shot.visual.mode == "ai":
-            added = generate_keyframes(store, settings, project, shot, keyframes, confirm_charge=confirm_charge)
+            added = generate_keyframes(
+                store, settings, project, shot, keyframes, confirm_charge=confirm_charge
+            )
         else:
             added = _refresh(
                 store, settings, project, shot, confirm_charge=confirm_charge, count=count, quality=quality
@@ -1011,9 +1051,7 @@ def resume_pending(store: ProjectStore, settings: Settings, project: Project, sh
     meta = {"prompt": shot.visual.prompt[:500], "resumed_from": pending.task_id}
     with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
         path = provider.resume(pending.task_id, output=Path(temp) / "gen")
-        asset = _register_media(
-            store, project, path, source=provider_id, folder="ai-video", meta=meta
-        )
+        asset = _register_media(store, project, path, source=provider_id, folder="ai-video", meta=meta)
     shot.visual.pending = None
     record_spend(store, settings, project, shot, "video_gen", provider_id)
     _attach(shot, [asset.id], select=True, take="video")
@@ -1065,7 +1103,11 @@ def _attach(
     takes = [item for item in shot.visual.takes if item.asset_id in shot.visual.candidates]
     if take is not None:
         known = {item.asset_id for item in takes}
-        prompt = shot.visual.image_prompt or shot.visual.prompt if take in ("image", "keyframe") else shot.visual.prompt
+        prompt = (
+            shot.visual.image_prompt or shot.visual.prompt
+            if take in ("image", "keyframe")
+            else shot.visual.prompt
+        )
         takes += [
             Take(asset_id=asset_id, kind=take, batch=batch or new_id(), prompt=prompt)
             for asset_id in asset_ids
@@ -1136,7 +1178,10 @@ def asset_folder(asset: Asset) -> AssetFolder:
     """按来源推断素材应放的子目录，用于整理旧项目。"""
     if asset.source == "upload":
         return "upload"
-    ids = {kind: {spec.id for spec in registry.specs(kind)} for kind in ("stock", "video_gen", "image_gen", "music")}
+    ids = {
+        kind: {spec.id for spec in registry.specs(kind)}
+        for kind in ("stock", "video_gen", "image_gen", "music")
+    }
     if asset.source in ids["stock"]:
         return "stock"
     if asset.kind == "video" and (asset.source in ids["video_gen"] or asset.source == "video_gen"):

@@ -6,7 +6,9 @@ from shotwright.services import visuals
 
 def _project() -> tuple[Project, Shot]:
     assets = {
-        name: Asset(id=name, kind="video", source="upload", filename=f"{name}.mp4", sha256=name * 4, duration=5.0)
+        name: Asset(
+            id=name, kind="video", source="upload", filename=f"{name}.mp4", sha256=name * 4, duration=5.0
+        )
         for name in ("aaa", "bbb", "ccc")
     }
     shot = Shot(
@@ -63,7 +65,9 @@ def test_remove_candidate_api(client, tmp_path):
         paths.append(path)
     for path in paths:
         with path.open("rb") as handle:
-            response = client.post(f"/api/v2/projects/{pid}/assets", files={"file": (path.name, handle, "image/png")})
+            response = client.post(
+                f"/api/v2/projects/{pid}/assets", files={"file": (path.name, handle, "image/png")}
+            )
         assert response.status_code == 201, response.text
         visual = {"mode": "upload", "selected": response.json()["id"]}
         client.patch(f"/api/v2/projects/{pid}/shots/{sid}", json={"visual": visual})

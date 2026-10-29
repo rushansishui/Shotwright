@@ -205,7 +205,9 @@ class TextStyle(_Model):
     highlight_color: str = "#FFE45C"
     """卡拉 OK 高亮色：已读到的字变成这个颜色。"""
 
-    @field_validator("color", "outline_color", "outline2_color", "shadow_color", "background", "highlight_color")
+    @field_validator(
+        "color", "outline_color", "outline2_color", "shadow_color", "background", "highlight_color"
+    )
     @classmethod
     def _check_color(cls, value: str) -> str:
         return _check_hex(value)

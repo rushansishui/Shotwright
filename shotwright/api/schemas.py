@@ -81,6 +81,7 @@ class UpdateProject(_Body):
     @classmethod
     def _clean_script(cls, value: list[str] | None) -> list[str] | None:
         return None if value is None else [line.strip()[:500] for line in value if line.strip()]
+
     language: str | None = Field(None, max_length=40)
     """切换视频语言：同时换成该语言的默认配音声音和字幕字体（文案不变）。"""
     subject: str | None = None

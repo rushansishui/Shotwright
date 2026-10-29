@@ -35,7 +35,11 @@ def subject_status(project: Project, subject: LookSubject) -> SubjectStatus:
     images = [image for image in subject.images if image in project.assets]
     if not images and not subject.no_reference:
         missing.append("images")
-    if len(images) > 1 and subject.kind != "person" and any(not subject.image_labels.get(image) for image in images):
+    if (
+        len(images) > 1
+        and subject.kind != "person"
+        and any(not subject.image_labels.get(image) for image in images)
+    ):
         missing.append("labels")
     return SubjectStatus(subject.code, not missing, missing)
 

@@ -202,7 +202,9 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                             target.visual.selected = recovered[0]
                             known = {item.asset_id for item in target.visual.takes}
                             target.visual.takes = [
-                                item for item in target.visual.takes if item.asset_id in target.visual.candidates
+                                item
+                                for item in target.visual.takes
+                                if item.asset_id in target.visual.candidates
                             ] + [
                                 item
                                 for item in shot.visual.takes
@@ -233,9 +235,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             )
         # Origin 只在跨域写请求里出现；校验它可以挡住来自恶意网页的 CSRF。
         if not _origin_allowed(request, settings):
-            log.warning(
-                "拒绝来自 Origin=%s 的 %s 请求", request.headers.get("origin", ""), request.method
-            )
+            log.warning("拒绝来自 Origin=%s 的 %s 请求", request.headers.get("origin", ""), request.method)
             return JSONResponse(
                 status_code=403, content={"detail": errors.translate("不允许的访问来源", request)}
             )
@@ -615,7 +615,11 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         if not target.is_file():
             scale = "scale='min(480,iw)':-2"
             temp = target.with_suffix(".tmp.jpg")
-            attempts = [["-ss", "1", "-i", str(path)], ["-i", str(path)]] if path.suffix != ".png" else [["-i", str(path)]]
+            attempts = (
+                [["-ss", "1", "-i", str(path)], ["-i", str(path)]]
+                if path.suffix != ".png"
+                else [["-i", str(path)]]
+            )
             for inputs in attempts:
                 try:
                     ffmpeg.run_ffmpeg([*inputs, "-frames:v", "1", "-vf", scale, "-q:v", "4", str(temp)])
@@ -681,7 +685,9 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
     def _materials(items) -> list[brief_service.Material]:
         return [
-            brief_service.Material(kind=item.kind, role=item.role, name=item.name, note=item.note, asset_id=item.asset_id)
+            brief_service.Material(
+                kind=item.kind, role=item.role, name=item.name, note=item.note, asset_id=item.asset_id
+            )
             for item in items
         ]
 
@@ -813,7 +819,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             if "budget" in body.model_fields_set:
                 project.budget = body.budget
             if project.sfx.ambience and (
-                project.sfx.ambience not in project.assets or project.assets[project.sfx.ambience].kind != "audio"
+                project.sfx.ambience not in project.assets
+                or project.assets[project.sfx.ambience].kind != "audio"
             ):
                 raise ValueError("环境声必须是项目里的音频素材")
             if project.bgm.asset_id and project.bgm.asset_id not in project.assets:
@@ -900,7 +907,9 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             raise HTTPException(422, str(exc)) from None
         except ProviderError as exc:
             raise HTTPException(502, str(exc)) from None
-        media_type = "audio/mpeg" if path.suffix == ".mp3" else "audio/mp4" if path.suffix == ".m4a" else "audio/wav"
+        media_type = (
+            "audio/mpeg" if path.suffix == ".mp3" else "audio/mp4" if path.suffix == ".m4a" else "audio/wav"
+        )
         return FileResponse(path, media_type=media_type)
 
     @api.post("/projects/{project_id}/subtitle/keywords")
@@ -1026,8 +1035,10 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
     @api.patch("/projects/{project_id}/shots/{shot_id}")
     def update_shot(project_id: str, shot_id: str, body: UpdateShot):
         # 只改审片标记时不动镜头状态：审片不影响画面。
-        review_only = body.model_fields_set == {"visual"} and body.visual is not None and (
-            body.visual.model_fields_set <= {"review", "review_note"}
+        review_only = (
+            body.model_fields_set == {"visual"}
+            and body.visual is not None
+            and (body.visual.model_fields_set <= {"review", "review_note"})
         )
 
         def change(project: Project) -> None:
@@ -1152,7 +1163,10 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         data = transcribe.load(store, project.id, asset_id)
         if data.get("state") == "done":
             words = transcribe.words_of(data)
-            data = {**data, "fillers": transcribe.filler_indexes(words, data.get("language") or project.language)}
+            data = {
+                **data,
+                "fillers": transcribe.filler_indexes(words, data.get("language") or project.language),
+            }
         return data
 
     @api.post("/projects/{project_id}/transcripts/{asset_id}")
@@ -1161,7 +1175,9 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         project = store.load(_id(project_id))
         _media_asset(project, asset_id)
         body = body or TranscribeRequest()
-        return transcribe.start(store, settings, project, asset_id, provider_id=body.provider, language=body.language)
+        return transcribe.start(
+            store, settings, project, asset_id, provider_id=body.provider, language=body.language
+        )
 
     @api.post("/projects/{project_id}/transcripts/{asset_id}/retakes")
     def suggest_retakes(project_id: str, asset_id: str):
@@ -1268,7 +1284,9 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         if shot.visual.locked:
             raise HTTPException(409, "镜头已锁定，请先解锁")
         body = body or CandidatesRequest()
-        if (body.edit_selected or shot.visual.mode in ("ai", "image")) and readiness.generation_locked(project):
+        if (body.edit_selected or shot.visual.mode in ("ai", "image")) and readiness.generation_locked(
+            project
+        ):
             raise HTTPException(409, readiness.LOCKED_MESSAGE)
         confirmed = body.confirm_charge
         edit = body.edit_selected
@@ -1340,7 +1358,9 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
     # ---- 一键生成 ------------------------------------------------------------
 
     @api.get("/projects/{project_id}/generate-all")
-    def generate_all_status(project_id: str, quality: Literal["draft", "final"] = "final", only_redo: bool = False):
+    def generate_all_status(
+        project_id: str, quality: Literal["draft", "final"] = "final", only_redo: bool = False
+    ):
         """要生成哪些镜头、预计多少钱，以及最近一次一键生成的进度。"""
         project = store.load(_id(project_id))
         job = batch_service.get(project_id)
@@ -1399,7 +1419,9 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     redo = shot.visual.review == "redo"
                     if redo and shot.visual.review_note:
                         try:
-                            rewrite_shot(project_id, shot_id, RewriteShot(instruction=shot.visual.review_note[:500]))
+                            rewrite_shot(
+                                project_id, shot_id, RewriteShot(instruction=shot.visual.review_note[:500])
+                            )
                         except Exception as exc:  # noqa: BLE001 - 改写失败就按原来的描述生成
                             log.warning("一键生成：镜头 %s 按修改意见改写失败：%s", shot_id, exc)
                     refresh_candidates(
@@ -1467,9 +1489,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     handle.write(chunk)
             with store.lock(project_id):
                 project = store.load(project_id)
-                asset = visuals.add_upload(
-                    store, project, path, filename=filename, prefer_audio=as_audio
-                )
+                asset = visuals.add_upload(store, project, path, filename=filename, prefer_audio=as_audio)
                 store.save(project)
         return asset
 
@@ -1602,7 +1622,13 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
     def list_platforms():
         """交付平台规格：推荐画面比例和安全区（界面用来画安全区参考线）。"""
         return [
-            {"id": p.id, "name": p.name, "name_en": p.name_en, "aspects": list(p.aspects), "safe": asdict(p.safe)}
+            {
+                "id": p.id,
+                "name": p.name,
+                "name_en": p.name_en,
+                "aspects": list(p.aspects),
+                "safe": asdict(p.safe),
+            }
             for p in platforms.PLATFORMS.values()
         ]
 
@@ -1664,12 +1690,15 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
     app.include_router(api)
 
-    if WEB_DIST.is_dir():
-        @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
-        def unknown_api(path: str):
-            # 不存在的接口返回 JSON 404，不要落到下面的静态文件上（那里只会返回 405 Method Not Allowed）。
-            raise HTTPException(404, "接口不存在")
+    @app.api_route(
+        "/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False
+    )
+    def unknown_api(path: str):
+        # 不存在的接口统一返回带说明的 JSON 404；有前端页面时也不会落到下面的静态文件上
+        # （那里只会返回 405 Method Not Allowed）。没有构建前端（例如 CI）时行为一致。
+        raise HTTPException(404, "接口不存在")
 
+    if WEB_DIST.is_dir():
         app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")
 
     return app

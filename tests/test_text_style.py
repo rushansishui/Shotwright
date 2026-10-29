@@ -15,10 +15,19 @@ def _fields(style_line: str) -> list[str]:
 
 def test_style_flags_and_effects():
     style = SubtitleStyle(
-        bold=False, italic=True, underline=True, spacing=4, shadow=3, shadow_color="#FF0000",
-        shadow_opacity=0.5, opacity=0.8, align="left",
+        bold=False,
+        italic=True,
+        underline=True,
+        spacing=4,
+        shadow=3,
+        shadow_color="#FF0000",
+        shadow_opacity=0.5,
+        opacity=0.8,
+        align="left",
     )
-    fields = _fields(subs.ass_style("Default", "Noto Sans SC", 64, style, subs.alignment("bottom", "left"), 60, 60, 90))
+    fields = _fields(
+        subs.ass_style("Default", "Noto Sans SC", 64, style, subs.alignment("bottom", "left"), 60, 60, 90)
+    )
     assert fields[7:10] == ["0", "-1", "-1"]  # 加粗关、倾斜、下划线
     assert fields[13] == "4"  # 字间距
     assert fields[15:18] == ["1", "3", "3"]  # 普通描边、描边 3、阴影 3
@@ -45,11 +54,15 @@ def test_alignment_codes():
 def test_animations():
     base = SubtitleStyle()
     assert subs.styled_text(base, "你好", duration=2, size=64) == "你好"
-    assert "\\fad(250,0)" in subs.styled_text(base.model_copy(update={"animation": "fade"}), "你好", duration=2, size=64)
+    assert "\\fad(250,0)" in subs.styled_text(
+        base.model_copy(update={"animation": "fade"}), "你好", duration=2, size=64
+    )
     assert "\\t(0,180,\\fscx100\\fscy100)" in subs.styled_text(
         base.model_copy(update={"animation": "pop"}), "你好", duration=2, size=64
     )
-    slide = subs.styled_text(base.model_copy(update={"animation": "slide_up"}), "你好", duration=2, size=64, point=(540, 1750))
+    slide = subs.styled_text(
+        base.model_copy(update={"animation": "slide_up"}), "你好", duration=2, size=64, point=(540, 1750)
+    )
     assert "\\move(540,1782,540,1750,0,240)" in slide
     glow = subs.styled_text(base.model_copy(update={"glow": 4}), "你好", duration=2, size=64)
     assert glow.startswith("{\\blur4}")
@@ -63,7 +76,9 @@ def test_karaoke_and_typewriter_split_by_character():
     typed = subs.styled_text(SubtitleStyle(animation="typewriter"), "冠军", duration=3.0, size=64)
     assert typed.count("\\ko") == 2
     # 标题不支持卡拉 OK，按逐字打出处理。
-    assert "\\ko" in subs.styled_text(SubtitleStyle(animation="karaoke"), "冠军", duration=3, size=64, allow_karaoke=False)
+    assert "\\ko" in subs.styled_text(
+        SubtitleStyle(animation="karaoke"), "冠军", duration=3, size=64, allow_karaoke=False
+    )
 
 
 def test_karaoke_style_swaps_primary_and_secondary():
@@ -100,11 +115,32 @@ def test_font_catalog_groups_weights():
 def test_old_title_settings_still_load():
     titles = TitleSettings.model_validate(
         {
-            "headline": {"enabled": True, "text": "x", "size": 76, "color": "#FFFFFF", "outline_color": "#000000",
-                         "background": "#000000", "background_opacity": 0, "margin": 160},
-            "intro": {"enabled": False, "text": "", "subtitle": "", "duration": 2.5, "size": 110,
-                      "color": "#FFFFFF", "dim": 0.55},
-            "shot": {"size": 56, "color": "#FFE45C", "outline_color": "#000000", "position": "top", "margin": 330},
+            "headline": {
+                "enabled": True,
+                "text": "x",
+                "size": 76,
+                "color": "#FFFFFF",
+                "outline_color": "#000000",
+                "background": "#000000",
+                "background_opacity": 0,
+                "margin": 160,
+            },
+            "intro": {
+                "enabled": False,
+                "text": "",
+                "subtitle": "",
+                "duration": 2.5,
+                "size": 110,
+                "color": "#FFFFFF",
+                "dim": 0.55,
+            },
+            "shot": {
+                "size": 56,
+                "color": "#FFE45C",
+                "outline_color": "#000000",
+                "position": "top",
+                "margin": 330,
+            },
         }
     )
     assert titles.headline.bold and titles.headline.outline == 5 and titles.headline.font is None

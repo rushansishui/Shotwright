@@ -111,4 +111,3 @@ def suggest(llm: LLMProvider, project: Project) -> list[Pronunciation]:
 def builtin_notes() -> list[str]:
     """内置规则的说明（界面上提示用）。"""
     return [note for _, _, note in BUILTIN]
-

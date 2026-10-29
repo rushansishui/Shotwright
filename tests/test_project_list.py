@@ -16,8 +16,12 @@ def test_list_has_cover_and_render_info(client):
 
     buf = io.BytesIO()
     Image.new("RGB", (900, 1600), "#336699").save(buf, "PNG")
-    asset = client.post(f"/api/v2/projects/{pid}/assets", files={"file": ("c.png", buf.getvalue(), "image/png")}).json()
-    client.patch(f"/api/v2/projects/{pid}/shots/{sid}", json={"visual": {"mode": "upload", "selected": asset["id"]}})
+    asset = client.post(
+        f"/api/v2/projects/{pid}/assets", files={"file": ("c.png", buf.getvalue(), "image/png")}
+    ).json()
+    client.patch(
+        f"/api/v2/projects/{pid}/shots/{sid}", json={"visual": {"mode": "upload", "selected": asset["id"]}}
+    )
     summary = next(p for p in client.get("/api/v2/projects").json() if p["id"] == pid)
     assert summary["cover"] == f"/api/v2/projects/{pid}/cover?k=a{asset['id']}"
     response = client.get(summary["cover"])

@@ -101,7 +101,9 @@ def make_token(access_key: str, secret_key: str, *, lifetime: int = 3600, now: f
     issued = int(now if now is not None else time.time())
     header = _b64url(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode())
     payload = _b64url(
-        json.dumps({"iss": access_key, "exp": issued + lifetime, "nbf": issued - 5}, separators=(",", ":")).encode()
+        json.dumps(
+            {"iss": access_key, "exp": issued + lifetime, "nbf": issued - 5}, separators=(",", ":")
+        ).encode()
     )
     signing = f"{header}.{payload}".encode()
     signature = _b64url(hmac.new(secret_key.encode(), signing, hashlib.sha256).digest())
@@ -137,7 +139,9 @@ class KlingVideo(TaskVideoProvider):
         if refs and self.reference_model:
             seconds = self.reference_profile.snap(duration)
             return Request(self._prompt(prompt), "references", seconds, aspect, None, refs)
-        return super().plan(prompt, aspect=aspect, duration=duration, first_frame=first_frame, references=references)
+        return super().plan(
+            prompt, aspect=aspect, duration=duration, first_frame=first_frame, references=references
+        )
 
     @property
     def _headers(self) -> dict[str, str]:
@@ -183,7 +187,9 @@ class KlingVideo(TaskVideoProvider):
             headers=self._headers,
             label=LABEL,
             secret=self._secret,
-            task_id_of=lambda reply: (reply.get("data") or {}).get("task_id") or reply.get("task_id") or reply.get("id"),
+            task_id_of=lambda reply: (
+                (reply.get("data") or {}).get("task_id") or reply.get("task_id") or reply.get("id")
+            ),
             reject_of=lambda reply: reply.get("message") if reply.get("code") not in (None, 0, "0") else None,
             console=self.CONSOLE,
         )
@@ -203,14 +209,20 @@ class KlingVideo(TaskVideoProvider):
                 success=frozenset({"succeed", "succeeded", "success"}),
                 active=frozenset({"submitted", "processing", "queued", "running"}),
                 failure=frozenset({"failed", "fail"}),
-                status_of=lambda reply: str((reply.get("data") or {}).get("task_status") or reply.get("status") or ""),
-                error_of=lambda reply: (reply.get("data") or {}).get("task_status_msg")
-                or reply.get("error")
-                or reply.get("message"),
+                status_of=lambda reply: str(
+                    (reply.get("data") or {}).get("task_status") or reply.get("status") or ""
+                ),
+                error_of=lambda reply: (
+                    (reply.get("data") or {}).get("task_status_msg")
+                    or reply.get("error")
+                    or reply.get("message")
+                ),
             ),
         )
         url = find_url((body.get("data") or {}).get("task_result") or body.get("outputs") or body)
-        return self._paid_task.download(client, url, output.with_suffix(".mp4"), label=LABEL, task_id=remote_id)
+        return self._paid_task.download(
+            client, url, output.with_suffix(".mp4"), label=LABEL, task_id=remote_id
+        )
 
 
 registry.register(
@@ -223,14 +235,21 @@ registry.register(
             ConfigField("api_key", "API Key", secret=True, help="可灵新的单密钥鉴权；填了就不用填下面两项"),
             ConfigField("access_key", "Access Key", secret=True, help="没有 API Key 时与 Secret Key 一起用"),
             ConfigField("secret_key", "Secret Key", secret=True),
-            ConfigField("model", "模型", default=DEFAULT_MODEL, help="kling-v3 / kling-v2-6 / kling-v2-1 / kling-v1-6"),
+            ConfigField(
+                "model", "模型", default=DEFAULT_MODEL, help="kling-v3 / kling-v2-6 / kling-v2-1 / kling-v1-6"
+            ),
             ConfigField(
                 "base_url",
                 "接口地址",
                 default=DEFAULT_BASE_URL,
                 help="国内 https://api-beijing.klingai.com，国际 https://api-singapore.klingai.com",
             ),
-            ConfigField("resolution", "分辨率", default="1080p", help="720p（标准）/ 1080p（高品质）/ 4k（仅 kling-v3）"),
+            ConfigField(
+                "resolution",
+                "分辨率",
+                default="1080p",
+                help="720p（标准）/ 1080p（高品质）/ 4k（仅 kling-v3）",
+            ),
             ConfigField("draft_resolution", "草稿分辨率", default="720p"),
             ConfigField(
                 "reference_model",
@@ -239,7 +258,9 @@ registry.register(
             ),
             ConfigField("max_duration", "最长秒数", help="留空按模型上限（kling-v3 15 秒）"),
             ConfigField("generate_audio", "生成声音", default="false"),
-            ConfigField("price", "单价（元/秒）", help="可灵按积分计费，请填自己账户的实际单价；留空用估算值"),
+            ConfigField(
+                "price", "单价（元/秒）", help="可灵按积分计费，请填自己账户的实际单价；留空用估算值"
+            ),
             ConfigField("poll_interval", "轮询间隔（秒）", default="10"),
             ConfigField("run_timeout", "最长等待（秒）", default="1800"),
         ),

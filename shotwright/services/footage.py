@@ -106,7 +106,12 @@ def import_footage(
 
     # 1. 原片本身登记为素材，方便日后重新切。
     source = _register_media(
-        store, project, path, source="upload", folder="upload", meta={"filename": filename[:200], "footage": "1"}
+        store,
+        project,
+        path,
+        source="upload",
+        folder="upload",
+        meta={"filename": filename[:200], "footage": "1"},
     )
 
     # 2. 检测切镜点。

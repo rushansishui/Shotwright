@@ -46,7 +46,9 @@ def test_config_edit_keeps_comments_and_line_endings(tmp_path):
 def test_save_provider_masks_secret_and_takes_effect(tmp_path, monkeypatch):
     monkeypatch.delenv("SHOTWRIGHT_VIDEO_GEN_WAN_API_KEY", raising=False)
     client, path, settings = _client(tmp_path)
-    r = client.put("/api/v2/settings/providers/video_gen/wan", json={"values": {"api_key": "sk-abcdef123456"}})
+    r = client.put(
+        "/api/v2/settings/providers/video_gen/wan", json={"values": {"api_key": "sk-abcdef123456"}}
+    )
     assert r.status_code == 200, r.text
     wan = r.json()["providers"]["video_gen"]["wan"]
     assert wan["fields"]["api_key"] == {"set": True, "value": "••••3456"}
@@ -58,7 +60,10 @@ def test_save_provider_masks_secret_and_takes_effect(tmp_path, monkeypatch):
 
     r = client.put("/api/v2/settings/providers/video_gen/wan", json={"values": {"model": ""}})
     assert "model" not in tomllib.loads(path.read_text(encoding="utf-8"))["providers"]["video_gen"]["wan"]
-    assert client.put("/api/v2/settings/providers/video_gen/wan", json={"values": {"nope": "1"}}).status_code == 422
+    assert (
+        client.put("/api/v2/settings/providers/video_gen/wan", json={"values": {"nope": "1"}}).status_code
+        == 422
+    )
     assert client.put("/api/v2/settings/providers/video_gen/none", json={"values": {}}).status_code == 404
 
 

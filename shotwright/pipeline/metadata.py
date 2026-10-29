@@ -59,22 +59,30 @@ def tag_video(project: Project, video_path: Path) -> None:
     suffix = video_path.suffix
     tmp_path: Path | None = None
     try:
-        with tempfile.NamedTemporaryFile(
-            dir=video_path.parent, suffix=suffix, delete=False
-        ) as tmp_file:
+        with tempfile.NamedTemporaryFile(dir=video_path.parent, suffix=suffix, delete=False) as tmp_file:
             tmp_path = Path(tmp_file.name)
         run_ffmpeg(
             [
-                "-protocol_whitelist", LOCAL_PROTOCOLS,
-                "-i", str(video_path),
-                "-map", "0",
-                "-c", "copy",
-                "-metadata", f"title={project.title or 'Shotwright'}",
-                "-metadata", f"comment={AI_LABEL}",
-                "-metadata", f"description={description}",
-                "-metadata", f"software=Shotwright/{__version__}",
-                "-movflags", "+faststart",
-                "-f", "mp4",
+                "-protocol_whitelist",
+                LOCAL_PROTOCOLS,
+                "-i",
+                str(video_path),
+                "-map",
+                "0",
+                "-c",
+                "copy",
+                "-metadata",
+                f"title={project.title or 'Shotwright'}",
+                "-metadata",
+                f"comment={AI_LABEL}",
+                "-metadata",
+                f"description={description}",
+                "-metadata",
+                f"software=Shotwright/{__version__}",
+                "-movflags",
+                "+faststart",
+                "-f",
+                "mp4",
                 str(tmp_path),
             ]
         )

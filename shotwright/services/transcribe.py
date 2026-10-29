@@ -103,7 +103,11 @@ def save_draft(store: ProjectStore, project_id: str, asset_id: str, draft: dict)
         count = len(data.get("words") or [])
         data["draft"] = {
             "removed": sorted({i for i in draft.get("removed", []) if 0 <= i < count}),
-            "texts": {str(k): str(v)[:200] for k, v in (draft.get("texts") or {}).items() if str(k).isdigit() and int(k) < count},
+            "texts": {
+                str(k): str(v)[:200]
+                for k, v in (draft.get("texts") or {}).items()
+                if str(k).isdigit() and int(k) < count
+            },
             "max_pause": draft.get("max_pause"),
             "pauses": bool(draft.get("pauses")),
             "scenes": bool(draft.get("scenes", True)),
@@ -130,7 +134,20 @@ def join_words(words: list[str]) -> str:
 def _extract_audio(source: Path, output: Path) -> None:
     """抽出单声道 16kHz 音轨（32kbps mp3）：识别够用，30 分钟约 7MB，云端接口也能收。"""
     run_ffmpeg(
-        ["-i", str(source), "-vn", "-ac", "1", "-ar", "16000", "-c:a", "libmp3lame", "-b:a", "32k", str(output)],
+        [
+            "-i",
+            str(source),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "32k",
+            str(output),
+        ],
         timeout=900,
     )
 
@@ -155,7 +172,11 @@ def start(
     key = (project.id, asset_id)
     with _running_lock:
         if key in _running:
-            return {"state": "running", "progress": _running[key]["progress"], "stage": _running[key]["stage"]}
+            return {
+                "state": "running",
+                "progress": _running[key]["progress"],
+                "stage": _running[key]["stage"],
+            }
         _running[key] = {"progress": 0.0, "stage": "extract", "since": time.time()}
     path = transcript_path(store, project.id, asset_id)
     lang = language or project.language
@@ -185,7 +206,12 @@ def start(
                     "seconds": round(time.monotonic() - started, 1),
                 },
             )
-            log.info("素材 %s 识别完成：%d 个词，用时 %.0f 秒", asset_id, len(result.words), time.monotonic() - started)
+            log.info(
+                "素材 %s 识别完成：%d 个词，用时 %.0f 秒",
+                asset_id,
+                len(result.words),
+                time.monotonic() - started,
+            )
             if language == "auto" and result.language:
                 _adopt_language(store, project.id, result.language)
         except (ProviderError, MediaError) as exc:
@@ -265,7 +291,11 @@ def plan_ranges(
     if max_pause is not None:
         kept = [w for i, w in enumerate(words) if i not in removed]
         if kept:
-            edges = [(0.0, kept[0].start), *((a.end, b.start) for a, b in zip(kept, kept[1:], strict=False)), (kept[-1].end, total)]
+            edges = [
+                (0.0, kept[0].start),
+                *((a.end, b.start) for a, b in zip(kept, kept[1:], strict=False)),
+                (kept[-1].end, total),
+            ]
             for position, (a, b) in enumerate(edges):
                 if b - a <= max_pause:
                     continue
@@ -399,7 +429,11 @@ def build_shots(
         text = join_words(
             [w.text for w, m in zip(kept_words, middle, strict=True) if any(a <= m <= b for a, b in group)]
         )
-        skips = [(round(x[1], 3), round(y[0], 3)) for x, y in zip(group, group[1:], strict=False) if y[0] - x[1] > 0.001]
+        skips = [
+            (round(x[1], 3), round(y[0], 3))
+            for x, y in zip(group, group[1:], strict=False)
+            if y[0] - x[1] > 0.001
+        ]
         shots.append(
             Shot(
                 text=text,
@@ -475,7 +509,9 @@ def suggest_retakes(llm: LLMProvider, data: dict) -> list[int]:
             groups.append(members)
     if not groups:
         return []
-    numbered = [{"n": n + 1, "text": join_words([words[i].text for i in g])} for n, g in enumerate(groups)][:400]
+    numbered = [{"n": n + 1, "text": join_words([words[i].text for i in g])} for n, g in enumerate(groups)][
+        :400
+    ]
     import json
 
     messages = [
