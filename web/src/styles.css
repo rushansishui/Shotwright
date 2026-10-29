@@ -2199,9 +2199,18 @@ input[type="color"] {
 .new-video .flow-body > .field.materials {
   flex: 0.55;
 }
-.new-video .flow-body > .field.grow textarea.input {
+/* 只针对诉求、想法这类一整块的大文本框；口播脚本每段的小文本框不受影响。 */
+.new-video .flow-body > .field.grow > textarea.input {
   flex: 1;
   min-height: 120px;
+}
+/* 口播脚本按内容撑开卡片，不压缩进固定高度，否则段落会溢出卡片、被底部按钮条挡住。 */
+.new-video .flow-body > .field.grow.script-field {
+  flex: none;
+}
+.script-line textarea.input {
+  min-height: 0;
+  resize: vertical;
 }
 .new-video .flow-body > .field.materials .materials-drop {
   flex: 1;

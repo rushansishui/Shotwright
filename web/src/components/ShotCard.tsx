@@ -64,6 +64,8 @@ export function ShotCard(props: {
   busy: boolean;
   /** 已经等了多少秒（生成 AI 画面可能要几分钟）。 */
   busySeconds?: number;
+  /** 并发已满，正在排队等前面的生成做完。 */
+  queued?: boolean;
   aiVideo: ProviderInfo | null;
   /** 已配置好的 AI 视频服务；有两个以上时每个镜头可以单独选。 */
   videoProviders?: ProviderInfo[];
@@ -208,7 +210,7 @@ export function ShotCard(props: {
   };
 
   const generating = visual.mode === "ai" || visual.mode === "image";
-  const busyVerb = t(generating ? "shot.busy.generating" : visual.mode === "stock" ? "shot.busy.searching" : "shot.busy.working");
+  const busyVerb = t(props.queued ? "shot.busy.queued" : generating ? "shot.busy.generating" : visual.mode === "stock" ? "shot.busy.searching" : "shot.busy.working");
   const busyLabel = props.busySeconds ? `${busyVerb} ${props.busySeconds}s` : busyVerb;
 
   /**

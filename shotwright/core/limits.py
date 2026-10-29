@@ -21,6 +21,8 @@ DEFAULT_ASR_CONCURRENCY = 1
 
 _GUARD = threading.Lock()
 _SEMAPHORES: dict[str, tuple[int, threading.BoundedSemaphore]] = {}
+_WAITING: dict[int, str] = {}
+"""正在排队的线程 id → 闸门名字；界面据此把「生成中」显示成「排队中」。"""
 
 
 def _semaphore(name: str, size: int) -> threading.BoundedSemaphore:
@@ -39,7 +41,15 @@ def _semaphore(name: str, size: int) -> threading.BoundedSemaphore:
 def limit(name: str, size: int) -> Iterator[None]:
     """在 ``size`` 个并发以内执行一块代码；排队时阻塞当前线程。"""
     semaphore = _semaphore(name, size)
-    semaphore.acquire()
+    if not semaphore.acquire(blocking=False):
+        ident = threading.get_ident()
+        with _GUARD:
+            _WAITING[ident] = name
+        try:
+            semaphore.acquire()
+        finally:
+            with _GUARD:
+                _WAITING.pop(ident, None)
     try:
         yield
     finally:
@@ -54,6 +64,14 @@ def configure(*, ai: int | None = None, asr: int | None = None) -> None:
         _semaphore("asr", asr)
 
 
+def is_waiting(thread_id: int | None) -> bool:
+    """这个线程是不是正在排队等闸门。"""
+    if thread_id is None:
+        return False
+    with _GUARD:
+        return thread_id in _WAITING
+
+
 def stats() -> dict[str, int]:
     """当前的并发上限，供日志和测试查看。"""
     with _GUARD:
@@ -64,3 +82,4 @@ def reset() -> None:
     """测试用：清空所有信号量。"""
     with _GUARD:
         _SEMAPHORES.clear()
+        _WAITING.clear()

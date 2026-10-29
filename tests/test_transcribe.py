@@ -115,7 +115,12 @@ def _wait_done(client, pid, asset):
     raise AssertionError("识别一直没完成")
 
 
-def test_cut_flow_builds_original_speech_shots_and_renders(client, settings, store, tmp_path):
+def test_cut_flow_builds_original_speech_shots_and_renders(client, settings, store, tmp_path, monkeypatch):
+    from shotwright.media import silence
+
+    # 测试音是持续的正弦波，没有真正的静音，对齐静音只会随 FFmpeg 版本产生几毫秒的抖动；
+    # 这里关掉对齐，按识别时间核对剪辑结果。对齐本身见 test_cut_points_snap_to_nearby_silence。
+    monkeypatch.setattr(silence, "snap_ranges", lambda samples, ranges, total: ranges)
     settings.defaults["asr"] = "fakeasr"
     FakeASR.calls.clear()
     pid = client.post("/api/v2/projects", json={"mode": "empty", "voice": {"provider": "silent"}}).json()[
@@ -281,6 +286,31 @@ def test_chosen_language_that_does_not_match_speech_is_corrected(client, setting
     data = _wait_done(client, pid, asset)
     assert data["state"] == "done" and data["requested_language"] == "en-US" and data["language"] == "zh"
     assert store.load(pid).language == "zh-CN"
+
+
+def test_cut_points_snap_to_nearby_silence():
+    """识别时间有误差：剪点挪到附近最安静的地方，不切字头、不留半个尾音。"""
+    from array import array
+
+    from shotwright.media import silence
+
+    rate = silence.SAMPLE_RATE
+    # 0–1.00 秒说话，1.00–1.30 秒静音，1.30–3.00 秒说话。
+    samples = array("h", [8000 if (i // 4) % 2 else -8000 for i in range(3 * rate)])
+    for i in range(int(1.0 * rate), int(1.3 * rate)):
+        samples[i] = 0
+    # 识别说第一段到 1.08 秒才结束、第二段 1.22 秒才开始：都落在静音里，基本不动。
+    assert 1.0 <= silence.quietest(samples, 1.08) <= 1.3
+    # 识别把剪点放在 0.92 秒（还在说话），挪进后面的静音里。
+    assert 1.0 <= silence.quietest(samples, 0.92) <= 1.1
+    # 剪点放在 1.40 秒（第二段已经开口），挪回前面的静音里。
+    assert 1.2 <= silence.quietest(samples, 1.40) <= 1.3
+    # 前后都在说话、附近没有静音：差不多的情况下留在原处附近。
+    assert abs(silence.quietest(samples, 2.5) - 2.5) <= 0.02
+    # 片头片尾不动，段落先后不乱。
+    ranges = silence.snap_ranges(samples, [(0.0, 0.92), (1.40, 3.0)], 3.0)
+    assert ranges[0][0] == 0.0 and ranges[-1][1] == 3.0
+    assert 1.0 <= ranges[0][1] <= ranges[1][0] <= 1.3
 
 
 def test_whisper_checks_spoken_language_before_transcribing():
