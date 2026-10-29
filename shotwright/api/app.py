@@ -1690,15 +1690,15 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
     app.include_router(api)
 
+    @app.api_route(
+        "/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False
+    )
+    def unknown_api(path: str):
+        # 不存在的接口统一返回带说明的 JSON 404；有前端页面时也不会落到下面的静态文件上
+        # （那里只会返回 405 Method Not Allowed）。没有构建前端（例如 CI）时行为一致。
+        raise HTTPException(404, "接口不存在")
+
     if WEB_DIST.is_dir():
-
-        @app.api_route(
-            "/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False
-        )
-        def unknown_api(path: str):
-            # 不存在的接口返回 JSON 404，不要落到下面的静态文件上（那里只会返回 405 Method Not Allowed）。
-            raise HTTPException(404, "接口不存在")
-
         app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")
 
     return app
