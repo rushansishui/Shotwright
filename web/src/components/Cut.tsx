@@ -42,7 +42,8 @@ function CutUpload() {
   const [files, setFiles] = useState<File[]>([]);
   const [mode, setMode] = useState<CutMode>("speech");
   const [languages, setLanguages] = useState<LanguageInfo[]>([]);
-  const [language, setLanguage] = useState(lang === "zh" ? "zh-CN" : "auto");
+  // 默认自动识别：按界面语言猜会把外语视频硬识别成谐音中文。
+  const [language, setLanguage] = useState("auto");
   const [providers, setProviders] = useState<ProviderInfo[] | null>(null);
   const [provider, setProvider] = useState("");
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
@@ -125,7 +126,10 @@ function CutUpload() {
                 disabled={!!busy}
                 onChange={() => {
                   setMode(value);
-                  if (value === "speech") setFiles((f) => f.slice(0, 1));
+                  if (value === "speech") {
+                    setFiles((f) => f.slice(0, 1));
+                    setLanguage("auto");
+                  }
                   if (value === "scenes" && language === "auto") setLanguage(lang === "zh" ? "zh-CN" : "en-US");
                 }}
               />
@@ -230,7 +234,16 @@ function legacyDraft(key: string): LegacyDraft | null {
 }
 
 function CutEditor({ projectId, assetId }: { projectId: string; assetId: string }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const [languageList, setLanguageList] = useState<LanguageInfo[]>([]);
+  useEffect(() => {
+    api.languages().then(setLanguageList).catch(() => undefined);
+  }, []);
+  const languageName = (code?: string | null) => {
+    const base = (code ?? "").split("-")[0].toLowerCase();
+    const info = languageList.find((l) => l.code.split("-")[0].toLowerCase() === base);
+    return info ? (lang === "zh" ? info.name_zh : info.name) : (code ?? "");
+  };
   const draftKey = `shotwright.cut.${projectId}.${assetId}`;
   const [project, setProject] = useState<Project | null>(null);
   const [data, setData] = useState<TranscriptData | null>(null);
@@ -595,6 +608,16 @@ function CutEditor({ projectId, assetId }: { projectId: string; assetId: string 
                 </button>
               )}
             </div>
+            {data?.requested_language &&
+              data.language &&
+              data.requested_language.split("-")[0].toLowerCase() !== data.language.split("-")[0].toLowerCase() && (
+                <p className="hint warn">
+                  {t("cut.languageSwitched", {
+                    chosen: languageName(data.requested_language),
+                    heard: languageName(data.language),
+                  })}
+                </p>
+              )}
             {!words.length && <p className="hint">{t("cut.noSpeech")}</p>}
             {groups.map((group, n) => {
               const allRemoved = group.every((i) => removed.has(i));

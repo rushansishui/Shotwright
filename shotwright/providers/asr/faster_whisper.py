@@ -66,6 +66,32 @@ def whisper_language(code: str | None) -> str | None:
 
 
 SAMPLE_RATE = 16000
+LANGUAGE_SURE = 0.7
+"""检测到的语言概率达到这个值，且和选的语言不同，就按检测到的语言识别。"""
+
+
+def _check_language(model, samples, chosen: str | None) -> str | None:
+    """返回实际用来识别的语言；``chosen`` 为空表示自动识别。"""
+    detect = getattr(model, "detect_language", None)
+    if detect is None:  # 旧版 faster-whisper 没有这个方法，按选的语言识别
+        return chosen
+    try:
+        detected, probability, _ = detect(samples, vad_filter=True, language_detection_segments=3)
+    except Exception as exc:  # noqa: BLE001 - 检测失败不影响识别
+        log.warning("检测说话语言失败，按选的语言 %s 识别：%s", chosen or "自动", exc)
+        return chosen
+    if not chosen:
+        return str(detected) if detected else None
+    if detected and detected != chosen and float(probability) >= LANGUAGE_SURE:
+        log.warning(
+            "选的语言是 %s，但听起来是 %s（%.0f%%），按 %s 识别",
+            chosen,
+            detected,
+            probability * 100,
+            detected,
+        )
+        return str(detected)
+    return chosen
 
 
 def load_audio(path: Path):
@@ -206,9 +232,14 @@ class FasterWhisperASR:
         if progress:
             progress(0.0, "recognize")
         lang = whisper_language(language)
+        samples = load_audio(audio)
+        # 选的语言和实际说的不一致时（例如选了中文、视频说英语），按选的语言识别会把英语
+        # 硬写成谐音中文。先听几段，很有把握是另一种语言时按实际语言识别；自动识别时
+        # 也先定下语言，中文才能用上简体加标点的提示。
+        lang = _check_language(model, samples, lang)
         try:
             segments, info = model.transcribe(  # type: ignore[attr-defined]
-                load_audio(audio),
+                samples,
                 language=lang,
                 word_timestamps=True,
                 vad_filter=True,

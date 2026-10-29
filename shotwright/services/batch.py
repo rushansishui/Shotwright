@@ -3,21 +3,30 @@
 这里只管挑镜头、算费用和记录进度；真正的生成复用单镜头生成的接口（见 ``api/app.py``），
 所以扣费确认、费用上限、「同一镜头不重复提交」这些规则和手动生成完全一致。
 
-进度只存在内存里：服务重启后队列不再继续，已经提交的单个生成仍按原来的方式恢复。
+进度同时写进项目的 ``batch.json``：服务重启后队列不再继续，但页面能看出上次跑到哪、
+哪些镜头已经生成过（那些已经扣过费，不会重复生成），状态标成 ``interrupted``。
 """
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal
 
 from shotwright.config import Settings
 from shotwright.core.models import Project, Shot
+from shotwright.core.store import ProjectStore, read_json, write_json
 from shotwright.services import cost
 
-BatchState = Literal["running", "done", "cancelled", "stopped"]
+log = logging.getLogger("shotwright.batch")
+
+BatchState = Literal["running", "done", "cancelled", "stopped", "interrupted"]
+
+BATCH_FILE = "batch.json"
+"""一键生成的进度写在项目目录下这个文件里（很小，不进 project.json）。"""
 
 
 def needs_generation(project: Project, shot: Shot) -> str | None:

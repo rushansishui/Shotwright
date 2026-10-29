@@ -271,6 +271,8 @@ export interface TranscriptData {
   elapsed?: number;
   error?: string;
   language?: string;
+  /** 识别时选的语言；和 language 不同时说明已按实际说的语言识别。 */
+  requested_language?: string | null;
   duration?: number | null;
   words?: [string, number, number][];
   sentences?: [number, number][];
