@@ -57,7 +57,7 @@ from shotwright.api.schemas import (
     UpdateShot,
 )
 from shotwright.config import PROVIDER_KINDS, ROOT_DIR, Settings, load_settings
-from shotwright.core import languages, platforms
+from shotwright.core import languages, limits, platforms
 from shotwright.core.models import Project, Shot, ShotVisual, VoiceSettings, validate_id
 from shotwright.core.store import ProjectNotFound, ProjectStore, read_json
 from shotwright.logs import setup_logging
@@ -149,6 +149,10 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
     ffmpeg.configure(settings.ffmpeg, settings.ffprobe)
     store = ProjectStore(settings.storage_dir)
     visuals.organize_all(store)
+    # 一键生成的进度写在项目目录里，重启后能看出上次跑到哪。
+    batch_service.configure(store)
+    # 同时在跑的收费生成和本地识别各有上限，几个项目一起跑时不会一起猛打接口。
+    limits.configure(ai=settings.ai_concurrency, asr=settings.asr_concurrency)
     jobs = job_manager or JobManager(store, settings)
 
     @asynccontextmanager
@@ -1435,15 +1439,19 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
                         _mutate(project_id, clear_review)
                     job.done.append(shot_id)
+                    batch_service.progress(job)
                 except BudgetExceeded as exc:
                     job.failed.append({"shot_id": shot_id, "error": str(exc)})
                     job.stopped_reason = str(exc)
+                    batch_service.progress(job)
                     break
                 except HTTPException as exc:
                     job.failed.append({"shot_id": shot_id, "error": str(exc.detail)})
+                    batch_service.progress(job)
                 except Exception as exc:  # noqa: BLE001 - 一个镜头失败不影响后面的
                     log.warning("一键生成：镜头 %s 失败：%s", shot_id, exc)
                     job.failed.append({"shot_id": shot_id, "error": str(exc) or type(exc).__name__})
+                    batch_service.progress(job)
         finally:
             batch_service.finish(job)
 

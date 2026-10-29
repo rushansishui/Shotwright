@@ -19,6 +19,8 @@ storage/
 # 前端
 web/node_modules/
 web/dist/
+web/test-results/
+web/playwright-report/
 
 # 系统与编辑器
 .DS_Store

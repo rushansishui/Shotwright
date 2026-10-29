@@ -115,3 +115,37 @@ def test_locked_and_cancelled(client):
     assert job.cancel_requested
     batch_service.finish(job)
     assert job.state == "cancelled"
+
+
+def test_progress_is_saved_and_restart_marks_interrupted(store):
+    """一键生成的进度写进项目目录；服务重启后读回来，跑到一半的标成「已中断」，已生成的不丢。"""
+    from shotwright.core.models import Project
+
+    project = store.save(Project(title="批量"))
+    batch_service.configure(store)
+    job = batch_service.start(project.id, ["a1b2c3d4e5f6", "b1b2c3d4e5f6"], "final", 1.2)
+    job.done.append("a1b2c3d4e5f6")
+    batch_service.progress(job)
+
+    # 模拟重启：内存里的记录没了，只剩盘上的。
+    with batch_service._lock:
+        batch_service._jobs.clear()
+    restored = batch_service.get(project.id)
+    assert restored is not None and restored.state == "interrupted"
+    assert restored.done == ["a1b2c3d4e5f6"] and restored.current is None and restored.stopped_reason
+    # 中断的任务不挡住新的一键生成。
+    again = batch_service.start(project.id, ["b1b2c3d4e5f6"], "final", 0.6)
+    assert again.state == "running"
+    batch_service.finish(again)
+    with batch_service._lock:
+        batch_service._jobs.clear()
+    assert batch_service.get(project.id).state == "done"
+
+
+def test_interrupted_job_shows_in_status(client, store):
+    pid, ids = _project(client)
+    batch_service.start(pid, ids[:2], "final", 0)
+    with batch_service._lock:
+        batch_service._jobs.clear()
+    job = client.get(f"/api/v2/projects/{pid}/generate-all").json()["job"]
+    assert job["state"] == "interrupted" and job["total"] == 2

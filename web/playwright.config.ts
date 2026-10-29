@@ -30,7 +30,8 @@ export default defineConfig({
         timeout: 60_000,
         env: {
           SHOTWRIGHT_STORAGE: "storage/e2e-projects",
-          SHOTWRIGHT_CONFIG: "config.e2e.toml",
+          // webServer 在 web/ 目录下启动，配置文件在仓库根目录。
+          SHOTWRIGHT_CONFIG: "../config.e2e.toml",
         },
       },
 });

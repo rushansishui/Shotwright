@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from shotwright.config import Settings
+from shotwright.core import limits
 from shotwright.core.models import Project, Shot, ShotVisual
 from shotwright.core.store import ProjectStore, read_json, write_json
 from shotwright.media.ffmpeg import MediaError, detect_scenes, probe, run_ffmpeg
@@ -189,11 +190,13 @@ def start(
     def run() -> None:
         started = time.monotonic()
         try:
-            with tempfile.TemporaryDirectory(prefix="shotwright-asr-") as temp:
-                audio = Path(temp) / "speech.mp3"
-                _extract_audio(source, audio)
-                progress(0.0, "recognize")
-                result: Transcript = asr.transcribe(audio, language=lang, progress=progress)
+            # 本地识别吃 CPU，同时开多个会把机器拖垮；这里按配置排队。
+            with limits.limit("asr", settings.asr_concurrency):
+                with tempfile.TemporaryDirectory(prefix="shotwright-asr-") as temp:
+                    audio = Path(temp) / "speech.mp3"
+                    _extract_audio(source, audio)
+                    progress(0.0, "recognize")
+                    result: Transcript = asr.transcribe(audio, language=lang, progress=progress)
             write_json(
                 path,
                 {

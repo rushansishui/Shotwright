@@ -584,7 +584,7 @@ export interface GeneratePlan {
 }
 
 export interface GenerateJob {
-  state: "running" | "done" | "cancelled" | "stopped";
+  state: "running" | "done" | "cancelled" | "stopped" | "interrupted";
   total: number;
   shot_ids: string[];
   quality: "draft" | "final";
