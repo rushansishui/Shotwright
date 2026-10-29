@@ -135,6 +135,8 @@ export interface LookSubject {
   images?: string[];
   /** 参考图的颜色/款式（素材 id → 「浅粉色」这类说明），写进提示词，让模型照着这一款的颜色画。 */
   image_labels?: Record<string, string>;
+  /** 用户确认这个主体不需要参考图（例如路人），准备清单里算作就绪。 */
+  no_reference?: boolean;
 }
 
 /** 全片设定：主体代号与外观、场景、视觉风格、禁止项，生成每个镜头时自动拼进提示词。 */
@@ -146,6 +148,10 @@ export interface Look {
   style_ref?: string | null;
   grade?: string;
   brand?: string | null;
+  /** 素材是否已确认（服务端维护）：false 时不能生成 AI 画面；null 是旧项目，按已确认处理。 */
+  confirmed?: boolean | null;
+  /** 确认之后又改了设定的时间（秒）。 */
+  revised_at?: number | null;
 }
 
 /** 一次生成的版本记录：关键帧、多候选、再来一版共用。 */
@@ -214,6 +220,8 @@ export interface ShotVisual {
   /** 视频素材的入点、出点（秒）；出点为 null 表示到结尾。 */
   trim_start: number;
   trim_end: number | null;
+  /** 入出点之间剪掉的片段（素材秒数），按文字剪辑时生成。 */
+  skips?: [number, number][];
   /** 入出点和取景是针对哪个素材设的；和 selected 不同时按默认处理。 */
   edit_asset: string | null;
   fill: FillMode;
@@ -223,6 +231,10 @@ export interface ShotVisual {
   /** 已提交、尚未取回结果的收费任务；服务重启后会继续轮询。 */
   pending?: PendingTask | null;
   takes?: Take[];
+  /** 审片结论：ok 通过，redo 重做；空表示还没审。 */
+  review?: "" | "ok" | "redo";
+  /** 标记重做时的一句修改意见。 */
+  review_note?: string;
 }
 
 export interface Shot {
@@ -235,8 +247,45 @@ export interface Shot {
   /** 镜头类型：开场钩子、产品亮相、使用演示、场景氛围、人物、原理示意、口播、结尾引导。 */
   role?: ShotRole | null;
   voice: VoiceSettings | null;
+  /** original：原片里的人声（剪辑页生成），不再配音，文案只做字幕。 */
+  speech?: "tts" | "original";
   status: string;
   error: string | null;
+}
+
+/** 修改镜头时可以传的字段。 */
+export interface ShotUpdate {
+  text?: string;
+  title?: string;
+  role?: ShotRole;
+  visual?: VisualPatch;
+  speech?: "tts" | "original";
+}
+
+/** 剪辑页：原片的语音识别结果。words 是 [文字, 开始秒, 结束秒]。 */
+export interface TranscriptData {
+  state: "none" | "running" | "done" | "failed";
+  progress?: number;
+  /** 识别进行到哪一步：extract 抽音轨 / model 准备模型 / download 下载模型 / load 加载模型 / recognize 识别中。 */
+  stage?: "extract" | "model" | "download" | "load" | "recognize";
+  elapsed?: number;
+  error?: string;
+  language?: string;
+  duration?: number | null;
+  words?: [string, number, number][];
+  sentences?: [number, number][];
+  fillers?: number[];
+  /** 剪辑进度（服务端保存）。 */
+  draft?: CutDraft;
+}
+
+export interface CutDraft {
+  removed: number[];
+  texts: Record<string, string>;
+  pauses: boolean;
+  max_pause: number | null;
+  scenes: boolean;
+  saved_at?: number;
 }
 
 export interface Asset {
@@ -314,6 +363,8 @@ export interface Pronunciation {
 }
 
 export interface Project {
+  /** create：创作里生成的视频；cut：剪辑里导入已有视频的任务。 */
+  origin?: "create" | "cut";
   id: string;
   title: string;
   subject: string;
@@ -399,6 +450,10 @@ export interface ProjectSummary {
   render?: { id: string; duration: number | null; created_at: number; stale: boolean } | null;
   /** 封面图片地址（最近的成片或第一个有画面的镜头）；没有画面时为空。 */
   cover?: string | null;
+  /** create：创作里生成的视频；cut：剪辑里导入已有视频的任务。 */
+  origin?: "create" | "cut";
+  /** 剪辑任务还没生成镜头时，原片的素材 id（回到剪辑页用）。 */
+  source_asset?: string | null;
 }
 
 export interface ProviderInfo {
@@ -410,7 +465,9 @@ export interface ProviderInfo {
   configured: boolean;
   default: boolean;
   docs_url: string;
-  fields: { key: string; label: string; required: boolean; secret: boolean }[];
+  fields: { key: string; label: string; required: boolean; secret: boolean; default?: string; help?: string }[];
+  required_any?: string[][];
+  testable?: boolean;
   capabilities: string[];
   max_duration: number | null;
   has_audio: boolean;
@@ -420,6 +477,15 @@ export interface ProviderInfo {
 }
 
 export type Providers = Record<string, ProviderInfo[]>;
+
+/** 设置页：config.toml 里填写的值（密钥只有是否已填和后 4 位）。 */
+export interface SettingsData {
+  config_path: string;
+  editable: boolean;
+  proxy: string;
+  defaults: Record<string, string>;
+  providers: Record<string, Record<string, { configured: boolean; fields: Record<string, { set: boolean; value: string }> }>>;
+}
 
 export interface RenderResult {
   render_id: string;
@@ -492,4 +558,46 @@ export interface CostEstimate {
   total_visual: number;
   total_tts: number;
   items: CostEstimateItem[];
+}
+
+export interface GeneratePlanItem {
+  shot_id: string;
+  shot_index: number;
+  reason: "missing" | "redo";
+  mode: VisualMode;
+  provider: string | null;
+  paid: boolean;
+  cost: number;
+  note: string;
+  review_note: string;
+}
+
+export interface GeneratePlan {
+  items: GeneratePlanItem[];
+  total: number;
+  paid: boolean;
+  spent: number;
+  budget: number | null;
+  currency: string;
+}
+
+export interface GenerateJob {
+  state: "running" | "done" | "cancelled" | "stopped";
+  total: number;
+  shot_ids: string[];
+  quality: "draft" | "final";
+  estimate: number;
+  current: string | null;
+  done: string[];
+  failed: { shot_id: string; error: string }[];
+  skipped: string[];
+  cancel_requested: boolean;
+  started_at: number;
+  finished_at: number | null;
+  stopped_reason: string;
+}
+
+export interface GenerateAllStatus {
+  plan: GeneratePlan;
+  job: GenerateJob | null;
 }

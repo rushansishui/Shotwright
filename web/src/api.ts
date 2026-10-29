@@ -4,6 +4,8 @@ import type {
   PlatformInfo,
   BgmSearchResult,
   CostEstimate,
+  GenerateAllStatus,
+  GenerateJob,
   FontFamily,
   Job,
   LanguageInfo,
@@ -11,6 +13,9 @@ import type {
   Project,
   ProjectSummary,
   Providers,
+  SettingsData,
+  TranscriptData,
+  CutDraft,
   RenderResult,
   Shot,
   ShotRole,
@@ -48,6 +53,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       if (typeof data.detail === "string") message = data.detail;
       // 页面已经是新版、后台服务还是旧版时，新接口会落到静态文件上，返回这两种通用错误。
       if (["Method Not Allowed", "Not Found", "接口不存在", "No such API endpoint"].includes(data.detail)) message = translate("common.serverOutdated");
+      // 新页面传了新字段、后台还是旧版时，后台会拒绝"不认识的字段"：提示重启服务，而不是显示英文报错。
+      else if (Array.isArray(data.detail) && data.detail.some((d: { type?: string }) => d.type === "extra_forbidden"))
+        message = translate("common.serverOutdated");
       else if (Array.isArray(data.detail)) message = data.detail.map((d: { msg: string }) => d.msg).join("; ");
     } catch {
       /* 响应不是 JSON */
@@ -65,6 +73,28 @@ const json = (method: string, body?: unknown): RequestInit => ({
 
 export const api = {
   providers: () => request<Providers>("/providers"),
+  settings: () => request<SettingsData>("/settings"),
+  transcript: (id: string, asset: string) => request<TranscriptData>(`/projects/${id}/transcripts/${asset}`),
+  startTranscript: (id: string, asset: string, body: { provider?: string | null; language?: string | null } = {}) =>
+    request<TranscriptData>(`/projects/${id}/transcripts/${asset}`, json("POST", body)),
+  saveCutDraft: (
+    id: string,
+    asset: string,
+    draft: { removed: number[]; texts: Record<string, string>; pauses: boolean; max_pause: number | null; scenes: boolean },
+  ) => request<CutDraft>(`/projects/${id}/transcripts/${asset}/draft`, json("PUT", draft)),
+  suggestRetakes: (id: string, asset: string) =>
+    request<{ remove: number[] }>(`/projects/${id}/transcripts/${asset}/retakes`, json("POST")),
+  cut: (
+    id: string,
+    body: { asset_id: string; removed: number[]; max_pause: number | null; split_scenes: boolean; texts: Record<string, string> },
+  ) => request<Project>(`/projects/${id}/cut`, json("POST", body)),
+  saveProviderSettings: (kind: string, id: string, values: Record<string, string>) =>
+    request<SettingsData>(`/settings/providers/${kind}/${id}`, json("PUT", { values })),
+  saveDefaultProvider: (kind: string, provider: string) =>
+    request<SettingsData>("/settings/defaults", json("PUT", { kind, provider })),
+  saveAppSettings: (proxy: string) => request<SettingsData>("/settings/app", json("PUT", { proxy })),
+  testProvider: (kind: string, id: string) =>
+    request<{ ok: boolean; message: string }>(`/settings/providers/${kind}/${id}/test`, json("POST")),
   voices: (language?: string, provider?: string) => {
     const params = new URLSearchParams();
     if (language) params.set("language", language);
@@ -93,6 +123,8 @@ export const api = {
     /** 目标总时长（秒）；为空时由大模型估算。 */
     duration?: number | null;
     video_type?: VideoType | null;
+    /** cut：剪辑页建的任务，在「剪辑」的任务列表里显示。 */
+    origin?: "create" | "cut";
   }) => request<Project>("/projects", json("POST", body)),
   updateProject: (
     id: string,
@@ -126,6 +158,8 @@ export const api = {
   /** 把新建时上传的素材放到该放的地方（不调用大模型）。 */
   applyMaterials: (id: string, materials: MaterialNote[]) => request<Project>(`/projects/${id}/materials`, json("POST", { materials })),
   /** 给全片设定里的主体生成定妆图（AI 图片，收费，调用前要让用户确认）。 */
+  /** 确认素材已准备好，之后才能生成 AI 画面；没准备好时返回 409 并说明缺什么。 */
+  confirmLook: (id: string) => request<Project>(`/projects/${id}/look/confirm`, json("POST", {})),
   subjectImage: (id: string, code: string) =>
     request<Project>(`/projects/${id}/look/${encodeURIComponent(code)}/image`, json("POST", { confirm_charge: true })),
   /** 看主体的参考图写外观描述（领型、有无帽子等），只返回文字。 */
@@ -168,7 +202,15 @@ export const api = {
   updateShot: (
     id: string,
     shotId: string,
-    body: { text?: string; title?: string; duration?: number; clear_duration?: boolean; role?: ShotRole; visual?: VisualPatch },
+    body: {
+      text?: string;
+      title?: string;
+      duration?: number;
+      clear_duration?: boolean;
+      role?: ShotRole;
+      visual?: VisualPatch;
+      speech?: "tts" | "original";
+    },
   ) => request<Project>(`/projects/${id}/shots/${shotId}`, json("PATCH", body)),
   deleteShot: (id: string, shotId: string) => request<Project>(`/projects/${id}/shots/${shotId}`, json("DELETE")),
   /** 收费的 AI 生成必须传 confirmCharge=true（用户已确认），否则后端返回 402。 */
@@ -182,6 +224,12 @@ export const api = {
     request<Project>(`/projects/${id}/shots/${shotId}/rewrite`, json("POST", { instruction })),
   /** 一键补全：扩写过短的画面描述、补衔接说明，没有全片设定时一并生成。 */
   expand: (id: string, onlyShort = true) => request<Project>(`/projects/${id}/expand`, json("POST", { only_short: onlyShort })),
+  /** 一键生成：要生成哪些镜头、预计费用，以及最近一次的进度。 */
+  generateAllStatus: (id: string, quality: "draft" | "final" = "final", onlyRedo = false) =>
+    request<GenerateAllStatus>(`/projects/${id}/generate-all?quality=${quality}&only_redo=${onlyRedo}`),
+  generateAll: (id: string, body: { confirm_charge: boolean; quality: "draft" | "final"; only_redo?: boolean }) =>
+    request<GenerateJob>(`/projects/${id}/generate-all`, json("POST", body)),
+  cancelGenerateAll: (id: string) => request<GenerateJob>(`/projects/${id}/generate-all/cancel`, json("POST")),
   /** 服务器上正在检索或生成的镜头（页面刷新后用来恢复"生成中"状态）。 */
   inProgress: (id: string) => request<Record<string, { mode: string; seconds: number }>>(`/projects/${id}/in-progress`),
   /** 检索背景音乐候选（只返回元数据+试听地址，不下载）；query 留空时由服务端用大模型提炼。 */

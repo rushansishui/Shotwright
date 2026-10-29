@@ -18,6 +18,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6"]
+asr = ["faster-whisper>=1.0"]  # 剪辑页的本地语音识别
 
 [project.scripts]
 shotwright = "shotwright.cli:main"
@@ -32,6 +33,7 @@ packages = ["shotwright"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = ["gate: 测试「素材确认后才能生成 AI 画面」的拦截本身（其他测试默认跳过拦截）"]
 
 [tool.ruff]
 line-length = 110

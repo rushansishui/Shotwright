@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { assetUrl } from "../api";
+import { keptSeconds, nextPosition } from "../clip";
 import { useI18n } from "../i18n";
 import type { Asset, FillMode, FitMode, Project, Shot, VisualPatch } from "../types";
 import { Segmented } from "./Controls";
@@ -45,12 +46,17 @@ export function ShotEdit(props: {
     if (video.current) video.current.currentTime = seconds;
     setNow(seconds);
   };
-  // 播放时停在出点，便于反复确认选段。
+  const skips = own ? (visual.skips ?? []) : [];
+  // 播放时跳过剪掉的部分，停在出点，便于反复确认选段。
   const onTime = () => {
     const el = video.current;
     if (!el) return;
     setNow(el.currentTime);
-    if (el.currentTime >= end - 0.02 && !el.paused) {
+    if (el.paused) return;
+    const next = nextPosition(el.currentTime, { start: 0, end, skips }, false);
+    if (next !== null) {
+      el.currentTime = next;
+    } else if (el.currentTime >= end - 0.02) {
       el.pause();
       el.currentTime = start;
     }
@@ -66,7 +72,7 @@ export function ShotEdit(props: {
     if (Object.keys(patch).length) props.onUpdate(patch);
   };
 
-  const clipLength = Math.max(0, end - start);
+  const clipLength = keptSeconds({ start, end, skips });
   const shotSeconds = shot.duration;
   const short = isVideo && shotSeconds !== null && clipLength < shotSeconds - 0.05;
   const canSplit = isVideo && now > start + 0.2 && now < end - 0.2;
@@ -105,6 +111,9 @@ export function ShotEdit(props: {
         {t("edit.title")}
         {isVideo && own && (visual.trim_start > 0 || visual.trim_end !== null) && (
           <span className="muted small"> · {t("edit.range", { start: fmt(savedStart), end: fmt(savedEnd) })}</span>
+        )}
+        {isVideo && own && !!visual.skips?.length && (
+          <span className="muted small"> · {t("edit.skips", { n: visual.skips.length })}</span>
         )}
       </summary>
       <div className="shot-edit-body">
@@ -181,7 +190,7 @@ export function ShotEdit(props: {
                     className="btn small"
                     disabled={props.disabled || !canSplit}
                     title={t("edit.splitHint")}
-                    onClick={() => props.onSplit(Number((now - start).toFixed(3)))}
+                    onClick={() => props.onSplit(Number(keptSeconds({ start, end: now, skips }).toFixed(3)))}
                   >
                     {t("edit.split", { at: fmt(now) })}
                   </button>

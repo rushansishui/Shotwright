@@ -23,7 +23,7 @@ COPY pyproject.toml README.md LICENSE NOTICE.md ./
 COPY shotwright/ ./shotwright/
 COPY resources/ ./resources/
 # 用可编辑安装：代码留在 /app，ROOT_DIR 才能找到 resources/fonts 和 web/dist。
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir -e ".[asr]"
 
 COPY --from=web /app/web/dist ./web/dist
 

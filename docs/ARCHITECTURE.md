@@ -45,8 +45,15 @@ shotwright/
 │   ├── tts/minimax.py   MiniMax（返回 JSON，需二次下载或十六进制解码）
 │   ├── tts/elevenlabs.py    ElevenLabs
 │   ├── music/archive.py Internet Archive 背景音乐（免 Key，按授权过滤）
+│   ├── asr/faster_whisper.py 本地语音识别（faster-whisper，不联网、不收费，原片不出本机）
+│   ├── asr/openai_asr.py     云端语音识别：OpenAI 兼容的 /audio/transcriptions（逐词时间戳）
 │   ├── paid_task.py     收费异步任务：提交不重试、轮询、下载
 │   ├── video_gen/seedance.py      火山方舟 Seedance：文生视频、首帧图生视频、视频转视频（改画面）
+│   ├── video_gen/common.py        各家视频服务共用：模型能力表 VideoModel、时长取档、图片编码、参考价、任务骨架
+│   ├── video_gen/wan.py           通义万相（阿里云百炼）：文生、首帧、参考图（wan3.0 最多 10 张）
+│   ├── video_gen/kling.py         可灵：JWT 鉴权；文生、首帧，可选多图参考
+│   ├── video_gen/minimax.py       MiniMax 海螺：Hailuo（v1 接口）与 H3（v2 接口，参考图最多 9 张）
+│   ├── video_gen/fal.py           fal.ai 聚合平台：填模型路径即可，参数写法可配置
 │   └── image_gen/openai_images.py Seedream / OpenAI 兼容文生图
 ├── services/
 │   ├── storyboard.py    诉求 → 全片设定 + 文案 + 镜头（叙事结构、画面描述、运镜、衔接，出稿自检）
@@ -59,6 +66,8 @@ shotwright/
 │   ├── bench.py         质量基准集：固定诉求跑分镜和成片，输出可对比的指标
 │   ├── visuals.py       检索（带检索缓存）/ 生成候选素材，登记上传文件，改画面，恢复收费任务
 │   ├── editing.py       镜头内剪辑：拆分、合并镜头（改入出点，不切文件）
+│   ├── transcribe.py    剪辑页：语音识别原片、按文字剪、生成原声镜头
+│   ├── readiness.py     素材准备清单：主体就绪条件与确认，确认前拦住 AI 收费生成
 │   ├── footage.py       原片导入：按画面变化切镜，每个镜头引用原片的一段
 │   ├── cost.py          费用预估与累计（参考单价）
 │   ├── music.py         背景音乐：提炼检索词、检索、登记候选
@@ -92,9 +101,9 @@ tests/                   pytest
 
 | 对象 | 说明 |
 | --- | --- |
-| `Project` | 一个视频的全部状态：画布（比例、帧率）、视频类型、标题 `titles`（常驻大标题、片头标题卡、小标题样式）、全片设定 `look`、默认配音、字幕样式、背景音乐（闪避、淡入淡出、节拍对齐）、音效层 `sfx`、导出响度、交付平台、叠加文字与图形、转场、AI 角标、首尾帧衔接开关、主体库（参考素材）、镜头列表、素材表、费用上限与累计生成费用、修订号 |
-| `Look` | 全片设定：主体列表（代号、名称、类别、外观、最多 10 张参考图 `images`，第一张是主图；`image_labels` 记每张图的颜色/款式）、场景、视觉风格、禁止项、统一调色预设；预留风格参考图和品牌包 |
-| `Shot` | 文案（可含 `[停顿]`、`*强调*` 标注）、镜头小标题、镜头类型 `role`、固定时长（为空则跟随配音）、画面 `ShotVisual`、可选的单独配音设置 |
+| `Project` | 一个视频的全部状态：来源 `origin`（`create` 创作 / `cut` 剪辑，两边的任务列表分开显示）、画布（比例、帧率）、视频类型、标题 `titles`（常驻大标题、片头标题卡、小标题样式）、全片设定 `look`、默认配音、字幕样式、背景音乐（闪避、淡入淡出、节拍对齐）、音效层 `sfx`、导出响度、交付平台、叠加文字与图形、转场、AI 角标、首尾帧衔接开关、主体库（参考素材）、镜头列表、素材表、费用上限与累计生成费用、修订号 |
+| `Look` | 全片设定：主体列表（代号、名称、类别、外观、最多 10 张参考图 `images`，第一张是主图；`image_labels` 记每张图的颜色/款式；`no_reference` 表示用户确认这个主体不需要参考图）、场景、视觉风格、禁止项、统一调色预设、素材确认状态 `confirmed` 和确认后又改过的时间 `revised_at`（这两个由服务端维护）；预留风格参考图和品牌包 |
+| `Shot` | 文案（可含 `[停顿]`、`*强调*` 标注）、镜头小标题、镜头类型 `role`、声音来源 `speech`（`tts` 按文案配音 / `original` 保留原片人声，剪辑页生成）、固定时长（为空则跟随配音）、画面 `ShotVisual`、可选的单独配音设置 |
 | `ShotVisual` | 画面来源 `mode`（`stock` 检索 / `ai` AI 视频 / `image` AI 图片 / `upload` 上传 / `color` 纯色）、检索词、画面描述 `prompt`、静态画面描述 `image_prompt`、运镜 `camera`、衔接说明 `link`、候选素材、已选素材、多选的其他素材 `sequence`（依次播放）、首帧、生成版本记录 `takes`、锁定标记、未取回的收费任务 `pending`，以及剪辑设置（见下） |
 | `Take` | 一次生成的版本记录：素材、类别（视频 / 图片 / 关键帧 / 改画面 / 续生成）、批次、生成时的画面描述、看图检查得分和问题 |
 | `Asset` | 落盘的媒体文件：类型、来源、SHA-256、尺寸与时长、作者和授权信息 |
@@ -126,6 +135,7 @@ storage/projects/<项目id>/
 | `fill` | 选段比镜头短时的补足方式：`slow_hold`（默认，先慢放到不低于 0.8 倍，再定格最后一帧）、`hold`（直接定格）、`loop`（循环） |
 | `fit`、`focus_x` / `focus_y` | 适配方式：`cover` 铺满裁切（按取景中心裁）、`contain` 完整加黑边、`blur` 完整加模糊背景 |
 | `source_volume` | 原声音量，0 表示不用原声；有配音时用侧链压缩自动压低 |
+| `skips` | 入出点之间要剪掉的片段（素材里的秒数），剪辑页按文字剪时写入；渲染时先用 `select` / `aselect` 去掉这些片段，剩下的拼成一个连续文件再按整段处理 |
 | `edit_asset` | 入出点和取景是针对哪个素材设的；换了素材后这些设置自动失效，不会把旧素材的入出点套到新素材上 |
 
 原片导入后不再切成单独的文件：每个镜头都引用同一段原片，用入出点选出自己那一段，原声默认保留。拆分、合并镜头只是改入出点，可以随时撤回重来。
@@ -168,6 +178,25 @@ storage/projects/<项目id>/
 15. **标题**：常驻大标题（可加底色）、片头标题卡（开头几秒压暗画面、居中显示标题和副标题，不增加时长，片头结束后大标题才出现）、镜头小标题（镜头出现期间显示，在顶部时自动排在大标题下面）都用 ASS 和字幕一起合成，边距按交付平台安全区调整。
 16. **成片抽帧检查**：配置了看图模型时，成片档渲染后每个镜头取一帧检查手指、面部、乱码文字等瑕疵，结果写进 `render.json` 并作为提示显示。
 
+## 分步编辑与素材确认
+
+编辑页按制作顺序分五步：① 素材 → ② 画面 → ③ 配音与字幕 → ④ 音乐与音效 → ⑤ 标题与文字，当前步骤记在浏览器里。
+
+AI 画面要和商品一致，前提是全片设定里的主体都备好了参考图（`services/readiness.py`）：
+
+- 每个非场景主体要有外观描述和参考图（勾选「不需要参考图」的除外）；一个主体有多张图（不同颜色）时每张都要标注是哪一款，人物除外。
+- 新建项目和写分镜得到的全片设定 `Look.confirmed = False`；用户在素材清单里确认后（`POST /projects/{id}/look/confirm`，缺东西时返回 409 和缺的项）才能为镜头生成 AI 画面、渲染时收费补生成，否则候选接口和渲染接口返回 409。没有主体的项目、旧项目（`confirmed` 为空）不拦。
+- 确认后再改设定内容会记下 `Look.revised_at`，素材清单提示哪些镜头是在改之前生成的，需要重新确认。`confirmed` 和 `revised_at` 只能由服务端改，PATCH 时保留原值。
+
+## 剪辑：按文字剪已有视频
+
+`services/transcribe.py`，界面在 `web/src/components/Cut.tsx`（路由 `#/cut`）。剪辑页建的项目 `origin = "cut"`，在剪辑页右侧的任务列表里显示，编辑这类项目时导航高亮「剪辑」、返回也回到剪辑页（旧项目没有这个字段时，有原声镜头或识别过原片的也算剪辑任务）。剪辑页有两种剪法：「按画面剪」不识别语音，直接调用原片导入（`POST /projects/{id}/footage`，第一段替换镜头、其余依次追加）；「按说的话剪」走下面的流程：
+
+1. 上传原片后 `POST /projects/{id}/transcripts/{asset}` 在后台线程识别：ffmpeg 抽出单声道 16kHz 音轨交给 `asr` 类 Provider（`faster_whisper` 本地 / `openai` 云端；本地识别同样用 ffmpeg 把音频解码成 16kHz 采样交给模型，不经过 PyAV，新版 PyAV 与 faster-whisper 不兼容。模型第一次使用时下载：先查本地缓存，再依次试配置的地址、Hugging Face、hf-mirror.com，连不上的 8 秒内跳过，下载中按已下载字节报告进度），结果（逐词时间戳 + 分句）存在 `cache/transcripts/<素材 id>.json`，页面轮询 GET 查看进度。
+2. 用户在文稿里删词（语气词按语言内置词表一键勾选；`/retakes` 让大模型按句找出重说和说一半放弃的部分），可选压缩长停顿。
+3. `POST /projects/{id}/cut`：`plan_ranges` 算出保留的时间段（删掉的词前后留 0.08 秒余量；压缩停顿时两边各留 0.25 秒），再在画面切换处、较长时在句末切成镜头；被口误、停顿隔开的相邻片段并进同一个镜头，剪掉的部分记在 `ShotVisual.skips`，渲染时先用 select/aselect 把这些片段去掉再按整段处理。生成的镜头 `Shot.speech = "original"`：不调用配音服务（只生成镜头时长的静音轨），原声按 `source_volume` 混入，字幕按识别的逐词时间（扣掉前面跳过的时间）对齐，不做读音纠正。
+4. 拆分、合并原声镜头时按镜头时间换算素材时间（`to_source_time` / `to_shot_time`），`skips` 和字幕文字跟着分开或合并；合并同一原片里中间隔着一段的两个镜头时，中间那段记为 `skips`。翻译出的其他语言版本改为 `speech = "tts"`、原声音量置 0，重新配音。
+
 ## 从诉求到画面
 
 视频质量的大部分取决于「从诉求到画面」这一段，处理流程：
@@ -196,9 +225,12 @@ registry.register(
 ```
 
 - 配置来自 `config.toml` 的 `[providers.<类别>.<id>]`，可用环境变量 `SHOTWRIGHT_<类别>_<ID>_<字段>` 覆盖。
-- `/api/v2/providers` 和网页的"服务状态"页直接遍历注册表生成，只报告是否已配置，不返回任何配置值。
+- `/api/v2/providers` 直接遍历注册表生成，只报告是否已配置，不返回任何配置值。
+- 网页的「服务设置」页用 `/settings` 系列接口改配置（`config_edit.py`）：按行改 `config.toml` 里对应小节的那几行，保留注释和换行风格，写之前用 `tomllib` 解析校验，再原子替换文件；同时更新内存里的 `Settings`，立即生效。读取时密钥只返回是否已填和后 4 位。测试连接调 Provider 的 `check()`：大模型发一个 `max_tokens=1` 的请求，视频服务查询一个不存在的任务（只验证 Key 和地址，不提交生成）。
 - 收费的服务设置 `paid=True`，界面会标出"收费"。
+- **视频服务按模型声明能力**（`video_gen/common.py`）：每家服务列出自己各个模型的 `VideoModel`——支持的输入方式（文生、首帧、首尾帧、参考图）、时长范围或固定档位、分辨率、参考图上限、是否带声音、各分辨率参考单价。`TaskVideoProvider` 统一处理：时长向上取到模型支持的档位（多出的渲染时裁掉，超过上限的由镜匠分段续生成）、模型不支持参考图时把第一张参考图作为首帧、参考图被拒（4xx，未扣费）时退回首帧重试一次、提示词超长截断。各家只写请求怎么拼、结果怎么取。`ProviderSpec.pricing` / `billing` 给费用估算用（不需要实例化服务），`price` 配置项可以覆盖参考价。镜头的 `visual.provider` 指定这个镜头用哪家服务，界面在配好两家以上时显示选择。保存的任务 id 带上接口信息（可灵 `image2video:xxx`、MiniMax `v1:xxx`、fal `owner/app|request_id`），重启后知道去哪里查询。
 - `shared_key_from` 让同一平台的服务共用一把 Key：Seedance、Seedream 自己的 `api_key` 为空时使用 `[providers.llm.doubao]` 的方舟 Key。
+- **语音识别**（`asr` 类别，剪辑页用）：协议返回逐词时间戳和分句。`faster_whisper` 在本机跑（首次使用时下载模型，可用 `device` / `compute_type` 调 CPU 或 CUDA），`openai` 走兼容的 `/audio/transcriptions`（需要 `verbose_json` 和逐词时间戳，单文件 25MB 上限）。识别结果存在项目的 `cache/transcripts/` 里，换服务重新识别会覆盖。
 
 ### 收费生成
 
@@ -253,6 +285,13 @@ Base URL 误填成完整的 `/chat/completions` 地址时会自动纠正。
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
 | GET | `/providers`、`/voices?language=`、`/voices?provider=` | 服务状态、可选声音（Edge 按语言，其他配音服务按服务） |
+| GET | `/settings` | 设置页：默认服务、代理、各服务填写的值（密钥只返回后 4 位） |
+| PUT | `/settings/providers/{kind}/{id}`、`/settings/defaults`、`/settings/app` | 改一个服务的配置（空字符串删除该项）、默认服务、代理；写回 `config.toml` 并立即生效 |
+| POST | `/settings/providers/{kind}/{id}/test` | 测试连接（不提交收费任务） |
+| GET / POST | `/projects/{id}/transcripts/{asset}` | 剪辑页：查看 / 开始识别原片里的人声（后台进行，完成时带语气词下标） |
+| POST | `/projects/{id}/transcripts/{asset}/retakes` | AI 去口误：返回重说、说一半放弃的句子里所有词的下标 |
+| POST | `/projects/{id}/cut` | 按删掉的词和停顿设置生成原声镜头（替换现有镜头） |
+| POST | `/projects/{id}/look/confirm` | 确认素材准备好，解锁 AI 画面生成 |
 | GET | `/languages` | 支持的视频语言 |
 | GET / POST | `/projects/{id}/versions` | 同一视频的语言版本；POST `{"language": "en-US"}` 翻译出新版本 |
 | GET / POST | `/projects` | 列出、创建项目（`mode`：`llm` / `split` / `empty`） |
@@ -274,6 +313,9 @@ Base URL 误填成完整的 `/chat/completions` 地址时会自动纠正。
 | GET | `/projects/{id}/in-progress` | 正在检索或生成的镜头，页面刷新后用来恢复"生成中"状态 |
 | POST | `/projects/{id}/shots/{shot}/candidates` | 为镜头检索或生成候选素材；收费生成需带 `{"confirm_charge": true}`，否则返回 402；`{"edit_selected": true}` 是改画面（把当前选中的视频交给支持视频转视频的服务）；`count`（1–3）一次生成几条、`keyframes`（2–3）先出关键帧、`quality`（`draft` / `final`）生成分辨率 |
 | DELETE | `/projects/{id}/shots/{shot}/candidates/{asset}` | 删除一个候选素材（选中的被删时自动选下一段） |
+| GET | `/projects/{id}/generate-all` | 一键生成的计划（要生成哪些镜头、每个的参考费用、合计、是否收费）和最近一次的进度；`?quality=draft` 按草稿档估价，`?only_redo=true` 只看审片标记重做的镜头 |
+| POST | `/projects/{id}/generate-all` | 一键生成：没有可用画面的 AI 视频 / 图片镜头和标记重做的镜头在后台排队，逐个调用单镜头生成（扣费确认、费用上限、防重复提交规则相同）；用到收费服务时需带 `confirm_charge`，预计费用超出项目上限返回 409；`only_redo` 只重做标记的镜头，有修改意见时先按意见改写画面描述，成功后清掉标记 |
+| POST | `/projects/{id}/generate-all/cancel` | 停止一键生成：当前镜头做完后停下 |
 | POST | `/projects/{id}/subtitle/keywords` | AI 从文案里挑字幕高亮关键词 |
 | POST | `/projects/{id}/pronunciations/suggest` | AI 检查文案里容易读错的词，返回候选读音纠正项 |
 | GET | `/fonts`、`/fonts/{name}` | 可选字体列表与字体文件（内置 + 用户导入） |
@@ -294,7 +336,7 @@ Base URL 误填成完整的 `/chat/completions` 地址时会自动纠正。
 
 - FFmpeg 以参数列表调用，不经过 shell；输入限制为本地文件协议。
 - 上传文件限制 500MB，先用 FFprobe 识别类型再入库；素材下载限制 500MB。
-- 错误信息不包含密钥；`/providers` 不返回配置值。
+- 错误信息不包含密钥；`/providers` 不返回配置值，`/settings` 只返回密钥后 4 位；设置页的写接口同样只接受本机请求。
 - 字体只能是字体库里的文件名（`resources/fonts` 或用户导入的 `storage/fonts`）。
 - 只接受发给本机地址（或 `allowed_hosts` 里配置的地址）的请求，写请求还校验 `Origin`，防止 DNS 重绑定和跨站请求。
 - 收费任务的远端 id 一拿到就写进项目（`ShotVisual.pending`），服务重启后继续轮询，不会重复提交。

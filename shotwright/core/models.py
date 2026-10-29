@@ -60,6 +60,9 @@ VIDEO_TYPE_NAMES: dict[str, str] = {
 ShotRole = Literal["hook", "product", "demo", "scene", "people", "explain", "talking", "cta"]
 """镜头类型：开场钩子、产品亮相、使用演示、场景氛围、人物、原理示意、口播、结尾引导。"""
 ShotStatus = Literal["draft", "ready", "rendering", "done", "failed"]
+SpeechMode = Literal["tts", "original"]
+ProjectOrigin = Literal["create", "cut"]
+"""镜头的声音：tts 用文案配音；original 保留原片里的人声，文案只做字幕。"""
 
 ReferenceRole = Literal["product", "person", "logo", "style"]
 """参考素材的角色：产品外观、人物形象、品牌 Logo、整体风格。"""
@@ -339,6 +342,8 @@ class LookSubject(_Model):
     默认只参照第一张（主图）；镜头可以改选别的图（例如另一种颜色），见 :attr:`ShotVisual.refs`。"""
     image_labels: dict[str, str] = Field(default_factory=dict)
     """参考图的说明（素材 id → 颜色 / 款式，例如「浅粉色」），写进提示词，让模型按这一款生成。"""
+    no_reference: bool = False
+    """用户确认这个主体不需要参考图（例如路人、背景人物），准备清单里算作就绪。"""
 
     @model_validator(mode="before")
     @classmethod
@@ -402,6 +407,11 @@ class Look(_Model):
     """统一调色预设：自然、暖色、冷色、鲜艳、胶片、黑白；空字符串表示不调色。"""
     brand: str | None = None
     """品牌包。预留，v0.5 品牌包作为全片设定的预设。"""
+    confirmed: bool | None = None
+    """素材是否已确认：确认前不能生成 AI 画面。``None`` 是有这个功能之前的旧项目，按已确认处理。
+    由服务端维护（``POST /projects/{id}/look/confirm``），客户端改全片设定时不能改它。"""
+    revised_at: float | None = None
+    """确认之后又改了设定的时间：在这之前生成的 AI 画面可能和新设定不一致。"""
 
     @field_validator("scene", "style")
     @classmethod
@@ -430,6 +440,7 @@ class Look(_Model):
 
 
 TakeKind = Literal["video", "image", "keyframe", "edit", "extend"]
+ReviewMark = Literal["", "ok", "redo"]
 """一次生成的结果类别：AI 视频、AI 图片、关键帧、改画面、续生成拼接的长镜头。"""
 
 
@@ -501,6 +512,8 @@ class ShotVisual(_Model):
     trim_start: float = Field(0.0, ge=0.0, le=36000)
     trim_end: float | None = Field(None, gt=0.0, le=36000)
     """视频素材的入点和出点（秒）；出点为空表示到素材结尾。"""
+    skips: list[tuple[float, float]] = Field(default_factory=list, max_length=300)
+    """入出点之间要剪掉的片段（素材里的秒数），例如按文字剪辑时删掉的口误、语气词和长停顿；播放时直接跳过。"""
     edit_asset: str | None = None
     """入出点和取景是针对哪个素材设的。换了素材后这些设置不再生效，按默认处理。"""
     fill: FillMode = "slow_hold"
@@ -513,6 +526,10 @@ class ShotVisual(_Model):
     """已提交、尚未取回结果的收费任务；重启后据此继续轮询。"""
     takes: list[Take] = Field(default_factory=list)
     """生成版本记录（按时间先后），与候选素材对应；候选被挤掉时一并清理。"""
+    review: ReviewMark = ""
+    """审片结论：ok 通过，redo 需要重做；空表示还没审。"""
+    review_note: str = ""
+    """标记重做时写的一句修改意见；重新生成前按它改写画面描述（配了文字模型时）。"""
 
     @field_validator("candidates", "sequence", "refs")
     @classmethod
@@ -523,6 +540,11 @@ class ShotVisual(_Model):
     @classmethod
     def _check_link(cls, value: str) -> str:
         return value[:400]
+
+    @field_validator("review_note")
+    @classmethod
+    def _check_review_note(cls, value: str) -> str:
+        return value.strip()[:300]
 
     @field_validator("selected", "first_frame", "edit_asset")
     @classmethod
@@ -549,7 +571,46 @@ class ShotVisual(_Model):
         """当前选中素材实际生效的剪辑设置：入出点和取景属于别的素材时恢复默认。"""
         if self.edit_asset is not None and self.edit_asset == self.selected:
             return self
-        return self.model_copy(update={"trim_start": 0.0, "trim_end": None, "focus_x": 0.5, "focus_y": 0.5})
+        return self.model_copy(
+            update={"trim_start": 0.0, "trim_end": None, "focus_x": 0.5, "focus_y": 0.5, "skips": []}
+        )
+
+    def skips_within(self, start: float, end: float) -> list[tuple[float, float]]:
+        """落在 [start, end] 里的剪掉片段，按时间排好、重叠的合并。"""
+        result: list[list[float]] = []
+        for a, b in sorted(self.skips):
+            a, b = max(a, start), min(b, end)
+            if b - a <= 0.001:
+                continue
+            if result and a <= result[-1][1]:
+                result[-1][1] = max(result[-1][1], b)
+            else:
+                result.append([a, b])
+        return [(round(a, 3), round(b, 3)) for a, b in result]
+
+    def kept_seconds(self, start: float, end: float) -> float:
+        """入出点之间去掉剪掉片段后的长度。"""
+        return max(0.0, end - start - sum(b - a for a, b in self.skips_within(start, end)))
+
+    def to_source_time(self, start: float, end: float, offset: float) -> float:
+        """镜头里的第 ``offset`` 秒对应素材里的哪一秒（跳过剪掉的片段）。"""
+        position = start + offset
+        for a, b in self.skips_within(start, end):
+            if a < position:
+                position += b - a
+        return min(position, end)
+
+    def to_shot_time(self, start: float, end: float, source: float) -> float | None:
+        """素材里的某一秒在镜头里是第几秒；落在剪掉的片段里时返回 None。"""
+        if source < start or source > end:
+            return None
+        shift = 0.0
+        for a, b in self.skips_within(start, end):
+            if a <= source < b:
+                return None
+            if b <= source:
+                shift += b - a
+        return source - start - shift
 
 
 class Shot(_Model):
@@ -564,6 +625,8 @@ class Shot(_Model):
     """镜头类型；写分镜时按视频类型的叙事结构给出，用来选默认的画面来源。"""
     voice: VoiceSettings | None = None
     """单独覆盖这个镜头的配音设置；为空时用项目设置。"""
+    speech: SpeechMode = "tts"
+    """original：原片自带人声（剪辑页导入），不再配音；字幕按语音识别的逐词时间对齐。"""
     status: ShotStatus = "draft"
     error: str | None = None
 
@@ -764,6 +827,8 @@ class Project(_Model):
     之后改镜头文案不影响这里，留作创作记录。"""
     video_type: VideoType | None = None
     """视频类型；为空表示没选（旧项目或只按文案拆镜头）。"""
+    origin: ProjectOrigin = "create"
+    """create：「创作」里从想法生成的视频；cut：「剪辑」里导入已有视频剪的。两边的任务列表分开显示。"""
     titles: TitleSettings = Field(default_factory=TitleSettings)
     """标题：画面顶部常驻大标题、片头标题卡、镜头小标题样式。"""
     look: Look = Field(default_factory=Look)

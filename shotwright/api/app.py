@@ -23,33 +23,40 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from shotwright import __version__
+from shotwright import __version__, config_edit
 from shotwright.api import errors
 from shotwright.api.jobs import JobManager
 from shotwright.api.schemas import (
     AddShot,
     AmbienceSearch,
     ApplyMaterials,
+    AppSettings,
     BgmDownload,
     BgmSearch,
     CandidatesRequest,
     ChargeConsent,
     CreateProject,
     CreateVersion,
+    CutDraft,
+    CutRequest,
+    DefaultProvider,
     DuplicateProject,
     ExpandRequest,
+    GenerateAll,
     NormalizeBrief,
     PreviewVoice,
+    ProviderValues,
     ReorderShots,
     RewriteShot,
     ScriptRequest,
     SplitShot,
     StoryboardRequest,
     SuggestTitles,
+    TranscribeRequest,
     UpdateProject,
     UpdateShot,
 )
-from shotwright.config import ROOT_DIR, Settings, load_settings
+from shotwright.config import PROVIDER_KINDS, ROOT_DIR, Settings, load_settings
 from shotwright.core import languages, platforms
 from shotwright.core.models import Project, Shot, ShotVisual, VoiceSettings, validate_id
 from shotwright.core.store import ProjectNotFound, ProjectStore, read_json
@@ -60,8 +67,9 @@ from shotwright.pipeline import voice as voice_stage
 from shotwright.pipeline.render_types import RenderError
 from shotwright.pipeline.shots import MAX_SEQUENCE
 from shotwright.providers import registry
-from shotwright.providers.base import ChargeConfirmationRequired, ProviderError
+from shotwright.providers.base import BudgetExceeded, ChargeConfirmationRequired, ProviderError
 from shotwright.providers.tts.edge import VOICES
+from shotwright.services import batch as batch_service
 from shotwright.services import brief as brief_service
 from shotwright.services import (
     checkup,
@@ -71,8 +79,10 @@ from shotwright.services import (
     music,
     prompting,
     pronounce,
+    readiness,
     rewrite,
     storyboard,
+    transcribe,
     visuals,
 )
 from shotwright.services import cost as cost_service
@@ -317,9 +327,18 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     "configured": registry.is_configured(spec, settings),
                     "default": settings.default_provider(spec.kind) == spec.id,
                     "fields": [
-                        {"key": f.key, "label": f.label, "required": f.required, "secret": f.secret}
+                        {
+                            "key": f.key,
+                            "label": f.label,
+                            "required": f.required,
+                            "secret": f.secret,
+                            "default": f.default,
+                            "help": f.help,
+                        }
                         for f in spec.fields
                     ],
+                    "required_any": [list(group) for group in spec.required_any],
+                    "testable": spec.kind in ("llm", "video_gen", "asr"),
                     "capabilities": sorted(spec.capabilities),
                     "max_duration": spec.max_duration,
                     "has_audio": spec.has_audio,
@@ -329,6 +348,101 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 }
             )
         return result
+
+    # ---- 设置：在界面里改 config.toml --------------------------------------------
+
+    def _mask(value: str) -> str:
+        return "••••" + value[-4:] if len(value) > 8 else "••••"
+
+    def _config_path() -> Path:
+        if settings.config_path is None:
+            raise HTTPException(409, "当前没有配置文件路径，不能在界面里修改配置")
+        return settings.config_path
+
+    def _spec_or_404(kind: str, provider_id: str):
+        try:
+            return registry.spec(kind, provider_id)
+        except ProviderError:
+            raise HTTPException(404, "服务不存在") from None
+
+    @api.get("/settings")
+    def read_settings():
+        """设置页：当前的默认服务、代理和各服务填写的值（密钥只返回是否已填和后 4 位）。"""
+        result: dict[str, dict] = {}
+        for spec in registry.specs():
+            saved = settings.provider_settings(spec.kind, spec.id)
+            fields = {}
+            for f in spec.fields:
+                value = str(saved.get(f.key, ""))
+                fields[f.key] = {"set": bool(value), "value": _mask(value) if f.secret and value else value}
+            result.setdefault(spec.kind, {})[spec.id] = {
+                "configured": registry.is_configured(spec, settings),
+                "fields": fields,
+            }
+        return {
+            "config_path": str(settings.config_path) if settings.config_path else "",
+            "editable": settings.config_path is not None,
+            "proxy": settings.proxy or "",
+            "defaults": {kind: settings.default_provider(kind) for kind in PROVIDER_KINDS},
+            "providers": result,
+        }
+
+    @api.put("/settings/providers/{kind}/{provider_id}")
+    def save_provider_settings(kind: str, provider_id: str, body: ProviderValues):
+        """保存一个服务的配置到 config.toml，立即生效（不用重启）。"""
+        spec = _spec_or_404(kind, provider_id)
+        known = {f.key for f in spec.fields}
+        unknown = set(body.values) - known
+        if unknown:
+            raise HTTPException(422, f"不认识的配置项：{', '.join(sorted(unknown))}")
+        changes: dict[str, str | None] = {key: (value.strip() or None) for key, value in body.values.items()}
+        try:
+            config_edit.update(_config_path(), ["providers", kind, provider_id], changes)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        current = settings.providers.setdefault(kind, {}).setdefault(provider_id, {})
+        for key, value in changes.items():
+            if value is None:
+                current.pop(key, None)
+            else:
+                current[key] = value
+        return read_settings()
+
+    @api.put("/settings/defaults")
+    def save_default_provider(body: DefaultProvider):
+        _spec_or_404(body.kind, body.provider)
+        try:
+            config_edit.update(_config_path(), ["defaults"], {body.kind: body.provider})
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        settings.defaults[body.kind] = body.provider
+        return read_settings()
+
+    @api.put("/settings/app")
+    def save_app_settings(body: AppSettings):
+        proxy = body.proxy.strip()
+        if proxy and not proxy.startswith(("http://", "https://", "socks5://", "socks5h://")):
+            raise HTTPException(422, "代理地址要以 http://、https:// 或 socks5:// 开头")
+        try:
+            config_edit.update(_config_path(), ["app"], {"proxy": proxy or None})
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        settings.proxy = proxy or None
+        return read_settings()
+
+    @api.post("/settings/providers/{kind}/{provider_id}/test")
+    def test_provider(kind: str, provider_id: str):
+        """测试连接：发一个不花钱（或几乎不花钱）的请求，确认 Key、地址、模型名对不对。"""
+        _spec_or_404(kind, provider_id)
+        try:
+            provider = registry.create(kind, provider_id, settings)
+        except ProviderError as exc:
+            return {"ok": False, "message": str(exc)}
+        check = getattr(provider, "check", None)
+        if check is None:
+            return {"ok": False, "message": "这个服务暂不支持测试连接"}
+        ok, message = check()
+        return {"ok": ok, "message": message}
 
     @api.get("/voices")
     def voices(language: str | None = None, provider: str | None = None):
@@ -423,6 +537,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     "aspect": p.canvas.aspect,
                     "language": languages.normalize(p.language),
                     "group": p.group or p.id,
+                    "origin": _origin(p),
                     "updated_at": p.updated_at,
                     "created_at": p.created_at,
                     # 最近一次成片：时长、生成时间，以及之后有没有再改过项目。
@@ -436,11 +551,26 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                         if latest
                         else None
                     ),
+                    # 剪辑任务还没生成镜头时，从任务列表回到剪辑页要用到原片的素材 id。
+                    "source_asset": next(
+                        (a.id for a in p.assets.values() if a.kind in ("video", "audio")), None
+                    )
+                    if not p.shots
+                    else None,
                     # 封面：最近的成片或第一个有画面的镜头；地址带上来源，换了来源浏览器会重新取。
                     "cover": f"/api/v2/projects/{p.id}/cover?k={source[1]}" if source else None,
                 }
             )
         return result
+
+    def _origin(p: Project) -> str:
+        """任务来自创作还是剪辑。旧版剪辑页建的项目没有记 origin：有原声镜头、或识别过原片的算剪辑。"""
+        if p.origin == "cut" or any(s.speech == "original" for s in p.shots):
+            return "cut"
+        transcripts = store.project_dir(p.id) / "cache" / "transcripts"
+        if not p.subject and not p.idea and transcripts.is_dir() and any(transcripts.iterdir()):
+            return "cut"
+        return "create"
 
     def _latest_render(project_id: str) -> dict | None:
         directory = store.project_dir(project_id) / "renders"
@@ -507,7 +637,10 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             idea=body.idea,
             target_seconds=body.duration,
             video_type=body.video_type,
+            origin=body.origin,
         )
+        # 新项目要先确认素材（全片设定）才能生成 AI 画面。
+        project.look.confirmed = False
         if body.canvas:
             project.canvas = body.canvas
         if not body.voice and settings.default_provider("tts"):
@@ -534,6 +667,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             project.title = project.title or board.title
             project.shots = board.shots
             project.look = board.look
+            project.look.confirmed = False
             if body.video_type:
                 storyboard.suggest_sources(project.shots, visuals.available_sources(settings), project.look)
         elif body.mode == "split":
@@ -617,6 +751,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 latest.title = board.title or body.subject[:40]
             latest.shots = board.shots
             latest.look = board.look
+            latest.look.confirmed = False  # 新写的主体要先准备、确认，才能生成 AI 画面
             if latest.video_type:
                 storyboard.suggest_sources(latest.shots, visuals.available_sources(settings), latest.look)
             brief_service.apply_materials(latest, materials, board.footage)
@@ -653,7 +788,6 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 "idea",
                 "script",
                 "video_type",
-                "look",
                 "titles",
                 "chain_frames",
                 "target_seconds",
@@ -672,6 +806,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 value = getattr(body, name)
                 if value is not None:
                     setattr(project, name, value)
+            if body.look is not None:
+                project.look = readiness.carry_over(project.look, body.look)
             if "loudness" in body.model_fields_set:
                 project.loudness = body.loudness
             if "budget" in body.model_fields_set:
@@ -716,6 +852,18 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                 raise KeyError(code)
             if asset_id not in subject.images:
                 subject.images.append(asset_id)
+
+        return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/look/confirm")
+    def confirm_look(project_id: str):
+        """确认素材（全片设定）已准备好，之后才能生成 AI 画面。没准备好时返回 409 并说明缺什么。"""
+
+        def change(project: Project) -> None:
+            try:
+                readiness.confirm(project)
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from exc
 
         return _mutate(project_id, change)
 
@@ -862,7 +1010,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         """在镜头片段的第 ``at`` 秒处拆成两个镜头（只适用于视频镜头）。"""
 
         def change(project: Project) -> None:
-            editing.split_shot(project, _id(shot_id), body.at)
+            editing.split_shot(project, _id(shot_id), body.at, store)
 
         return _mutate(project_id, change)
 
@@ -877,12 +1025,19 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
     @api.patch("/projects/{project_id}/shots/{shot_id}")
     def update_shot(project_id: str, shot_id: str, body: UpdateShot):
+        # 只改审片标记时不动镜头状态：审片不影响画面。
+        review_only = body.model_fields_set == {"visual"} and body.visual is not None and (
+            body.visual.model_fields_set <= {"review", "review_note"}
+        )
+
         def change(project: Project) -> None:
             shot = project.shot(_id(shot_id))
             if body.text is not None:
                 shot.text = body.text
             if body.role is not None:
                 shot.role = body.role
+            if body.speech is not None:
+                shot.speech = body.speech
             if body.title is not None:
                 shot.title = body.title.strip()
             if body.clear_duration:
@@ -953,7 +1108,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                     # 只把第一条原因（例如「出点必须晚于入点」）返回给界面，便于翻译。
                     message = str(exc.errors()[0].get("msg", exc))
                     raise ValueError(message.removeprefix("Value error, ")) from None
-            shot.status, shot.error = "draft", None
+            if not review_only:
+                shot.status, shot.error = "draft", None
 
         return _mutate(project_id, change)
 
@@ -977,6 +1133,93 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
             except KeyError:
                 raise HTTPException(404, "候选素材不存在") from None
             shot.status, shot.error = "draft", None
+
+        return _mutate(project_id, change)
+
+    # ---- 剪辑：识别原声，按文字剪 ---------------------------------------------------
+
+    def _media_asset(project: Project, asset_id: str):
+        asset = project.assets.get(_id(asset_id))
+        if asset is None:
+            raise HTTPException(404, "素材不存在")
+        return asset
+
+    @api.get("/projects/{project_id}/transcripts/{asset_id}")
+    def read_transcript(project_id: str, asset_id: str):
+        """识别状态和结果；完成时附带语气词的下标（剪辑页一键勾选）。"""
+        project = store.load(_id(project_id))
+        _media_asset(project, asset_id)
+        data = transcribe.load(store, project.id, asset_id)
+        if data.get("state") == "done":
+            words = transcribe.words_of(data)
+            data = {**data, "fillers": transcribe.filler_indexes(words, data.get("language") or project.language)}
+        return data
+
+    @api.post("/projects/{project_id}/transcripts/{asset_id}")
+    def start_transcript(project_id: str, asset_id: str, body: TranscribeRequest | None = None):
+        """开始识别（后台进行），之后轮询 GET 查看进度。"""
+        project = store.load(_id(project_id))
+        _media_asset(project, asset_id)
+        body = body or TranscribeRequest()
+        return transcribe.start(store, settings, project, asset_id, provider_id=body.provider, language=body.language)
+
+    @api.post("/projects/{project_id}/transcripts/{asset_id}/retakes")
+    def suggest_retakes(project_id: str, asset_id: str):
+        """AI 去口误：找出重说、说一半放弃、和内容无关的句子，返回其中所有词的下标（不收费的大模型调用）。"""
+        project = store.load(_id(project_id))
+        _media_asset(project, asset_id)
+        data = transcribe.load(store, project.id, asset_id)
+        if data.get("state") != "done":
+            raise HTTPException(409, "这段原片还没有识别完成")
+        llm = registry.create("llm", None, settings)
+        return {"remove": transcribe.suggest_retakes(llm, data)}  # type: ignore[arg-type]
+
+    @api.put("/projects/{project_id}/transcripts/{asset_id}/draft")
+    def save_cut_draft(project_id: str, asset_id: str, body: CutDraft):
+        """保存剪辑进度：页面上每次删词、改字后自动保存。"""
+        project = store.load(_id(project_id))
+        _media_asset(project, asset_id)
+        try:
+            return transcribe.save_draft(store, project.id, asset_id, body.model_dump())
+        except ProviderError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @api.post("/projects/{project_id}/cut")
+    def cut_by_text(project_id: str, body: CutRequest):
+        """按剪辑结果生成原声镜头，替换项目里现有的镜头。"""
+        texts: dict[int, str] = {}
+        for key, value in body.texts.items():
+            try:
+                texts[int(key)] = value[:200]
+            except ValueError:
+                raise HTTPException(422, "改字的下标不对") from None
+
+        def change(project: Project) -> None:
+            _media_asset(project, body.asset_id)
+            transcribe.build_shots(
+                store,
+                project,
+                body.asset_id,
+                removed=set(body.removed),
+                max_pause=body.max_pause,
+                split_scenes=body.split_scenes,
+                texts=texts,
+            )
+            # 生成分镜用的设置也记为剪辑进度，回到剪辑页时还是这一版。
+            transcribe.save_draft(
+                store,
+                project.id,
+                body.asset_id,
+                {
+                    "removed": body.removed,
+                    "texts": body.texts,
+                    "pauses": body.max_pause is not None,
+                    "max_pause": body.max_pause,
+                    "scenes": body.split_scenes,
+                },
+            )
+            project.video_type = "footage"
+            project.origin = "cut"
 
         return _mutate(project_id, change)
 
@@ -1025,6 +1268,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         if shot.visual.locked:
             raise HTTPException(409, "镜头已锁定，请先解锁")
         body = body or CandidatesRequest()
+        if (body.edit_selected or shot.visual.mode in ("ai", "image")) and readiness.generation_locked(project):
+            raise HTTPException(409, readiness.LOCKED_MESSAGE)
         confirmed = body.confirm_charge
         edit = body.edit_selected
         keyframes = body.keyframes if shot.visual.mode == "ai" and not edit else 0
@@ -1092,6 +1337,94 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
         return _mutate(project_id, change)
 
+    # ---- 一键生成 ------------------------------------------------------------
+
+    @api.get("/projects/{project_id}/generate-all")
+    def generate_all_status(project_id: str, quality: Literal["draft", "final"] = "final", only_redo: bool = False):
+        """要生成哪些镜头、预计多少钱，以及最近一次一键生成的进度。"""
+        project = store.load(_id(project_id))
+        job = batch_service.get(project_id)
+        return {
+            "plan": batch_service.plan(project, settings, quality, only_redo),
+            "job": job.to_dict() if job else None,
+        }
+
+    @api.post("/projects/{project_id}/generate-all")
+    def generate_all(project_id: str, body: GenerateAll):
+        """把还没有画面的 AI 镜头和标记重做的镜头排队，后台依次生成。
+
+        用到收费服务时必须带 ``confirm_charge: true``，否则返回 402。
+        """
+        project = store.load(_id(project_id))
+        if readiness.generation_locked(project):
+            raise HTTPException(409, readiness.LOCKED_MESSAGE)
+        plan = batch_service.plan(project, settings, body.quality, body.only_redo)
+        if not plan["items"]:
+            raise HTTPException(409, "没有需要生成的镜头")
+        if (plan["paid"] or plan["total"] > 0) and not body.confirm_charge:
+            raise ChargeConfirmationRequired("一键生成会调用收费服务，需要确认费用后才会开始")
+        if project.budget is not None and project.cost_credits + plan["total"] > project.budget + 1e-9:
+            raise HTTPException(409, "预计费用超出项目费用上限，可以在渲染面板提高上限，或者少选几个镜头")
+        try:
+            job = batch_service.start(
+                project_id, [item["shot_id"] for item in plan["items"]], body.quality, plan["total"]
+            )
+        except batch_service.BatchRunning as exc:
+            raise HTTPException(409, str(exc)) from None
+        threading.Thread(target=_run_batch, args=(job,), name=f"batch-{project_id}", daemon=True).start()
+        return job.to_dict()
+
+    @api.post("/projects/{project_id}/generate-all/cancel")
+    def cancel_generate_all(project_id: str):
+        """停止一键生成：正在生成的镜头会做完，排在后面的不再提交。"""
+        job = batch_service.cancel(_id(project_id))
+        if job is None:
+            raise HTTPException(404, "任务已结束或不存在")
+        return job.to_dict()
+
+    def _run_batch(job: batch_service.BatchJob) -> None:
+        project_id = job.project_id
+        try:
+            for shot_id in job.shot_ids:
+                if job.cancel_requested:
+                    break
+                job.current = shot_id
+                try:
+                    project = store.load(project_id)
+                    shot = next((item for item in project.shots if item.id == shot_id), None)
+                    if shot is None or batch_service.needs_generation(project, shot) is None:
+                        # 排队期间镜头被删掉、锁定、或者已经手动生成好了。
+                        job.skipped.append(shot_id)
+                        continue
+                    redo = shot.visual.review == "redo"
+                    if redo and shot.visual.review_note:
+                        try:
+                            rewrite_shot(project_id, shot_id, RewriteShot(instruction=shot.visual.review_note[:500]))
+                        except Exception as exc:  # noqa: BLE001 - 改写失败就按原来的描述生成
+                            log.warning("一键生成：镜头 %s 按修改意见改写失败：%s", shot_id, exc)
+                    refresh_candidates(
+                        project_id, shot_id, CandidatesRequest(confirm_charge=True, quality=job.quality)
+                    )
+                    if redo:
+
+                        def clear_review(latest: Project, shot_id: str = shot_id) -> None:
+                            target = latest.shot(shot_id)
+                            target.visual.review, target.visual.review_note = "", ""
+
+                        _mutate(project_id, clear_review)
+                    job.done.append(shot_id)
+                except BudgetExceeded as exc:
+                    job.failed.append({"shot_id": shot_id, "error": str(exc)})
+                    job.stopped_reason = str(exc)
+                    break
+                except HTTPException as exc:
+                    job.failed.append({"shot_id": shot_id, "error": str(exc.detail)})
+                except Exception as exc:  # noqa: BLE001 - 一个镜头失败不影响后面的
+                    log.warning("一键生成：镜头 %s 失败：%s", shot_id, exc)
+                    job.failed.append({"shot_id": shot_id, "error": str(exc) or type(exc).__name__})
+        finally:
+            batch_service.finish(job)
+
     @api.post("/projects/{project_id}/expand")
     def expand_project(project_id: str, body: ExpandRequest | None = None):
         """一键补全：扩写过短的画面描述、补衔接说明，没有全片设定时一并生成。不生成画面、不收费。"""
@@ -1102,6 +1435,7 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         def change(latest: Project) -> None:
             if latest.look.is_empty() and not project.look.is_empty():
                 latest.look = project.look
+                latest.look.confirmed = False  # 补出来的主体同样要先确认
             for shot_id in changed:
                 try:
                     target = latest.shot(shot_id)
@@ -1285,6 +1619,8 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         """``confirm_charge: true`` 时，没有画面的 AI 镜头会提交收费生成；否则改用素材检索。"""
         if not store.exists(_id(project_id)):
             raise ProjectNotFound(project_id)
+        if body and body.confirm_charge and readiness.generation_locked(store.load(project_id)):
+            raise HTTPException(409, readiness.LOCKED_MESSAGE)
         return jobs.submit(
             project_id,
             allow_paid=bool(body and body.confirm_charge),

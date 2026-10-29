@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
@@ -60,6 +61,22 @@ def log_dir(settings: Settings) -> Path:
     return Path(settings.storage_dir).resolve().parent / "logs"
 
 
+_POLLING = re.compile(r'"GET /api/v2/(projects/[^/ ]+/(transcripts/[^/ ]+|in-progress)|renders/[^/ ]+) HTTP/[\d.]+" 200')
+
+
+class _QuietPolling(logging.Filter):
+    """页面每隔一两秒查询一次进度（识别、生成、渲染），成功的查询不写进访问日志，免得刷屏。"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not _POLLING.search(record.getMessage())
+
+
+def quiet_polling_access_log() -> None:
+    access = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, _QuietPolling) for f in access.filters):
+        access.addFilter(_QuietPolling())
+
+
 def setup_logging(settings: Settings, *, console: bool = True) -> Path:
     """配置 ``shotwright`` 日志。可以重复调用，不会重复添加输出。"""
     logger = logging.getLogger(LOGGER_NAME)
@@ -83,4 +100,5 @@ def setup_logging(settings: Settings, *, console: bool = True) -> Path:
         handler._shotwright = True  # type: ignore[attr-defined]
         logger.addHandler(handler)
     logger.propagate = False
+    quiet_polling_access_log()
     return path

@@ -72,9 +72,13 @@ class ClipPlan:
     """片段就是整个素材（循环时可以直接 -stream_loop，不用先切出来）。"""
     audio: bool = False
     """是否混入原声。"""
+    skips: tuple[tuple[float, float], ...] = ()
+    """选段里要剪掉的片段（素材里的秒数）；不为空时先剪成一个连续的临时文件。"""
+    span: float = 0.0
+    """含剪掉片段在内的选段长度。"""
 
     def key(self) -> tuple:
-        return (round(self.start, 3), round(self.length, 3), round(self.speed, 4), self.loop, self.audio)
+        return (round(self.start, 3), round(self.length, 3), round(self.speed, 4), self.loop, self.audio, self.skips)
 
 
 def plan_clip(visual: ShotVisual, source_duration: float, duration: float, has_audio: bool) -> ClipPlan:
@@ -84,9 +88,17 @@ def plan_clip(visual: ShotVisual, source_duration: float, duration: float, has_a
     end = min(visual.trim_end or total, total)
     if end - start < 0.1:
         start, end = 0.0, total
-    length = end - start
-    whole = start < 0.01 and end > total - 0.01
-    plan = ClipPlan(start=start, length=length, whole=whole, audio=has_audio and visual.source_volume > 0)
+    skips = tuple(visual.skips_within(start, end))
+    length = visual.kept_seconds(start, end) if skips else end - start
+    whole = start < 0.01 and end > total - 0.01 and not skips
+    plan = ClipPlan(
+        start=start,
+        length=length,
+        whole=whole,
+        audio=has_audio and visual.source_volume > 0,
+        skips=skips,
+        span=end - start,
+    )
     if length >= duration - 0.01:
         return plan
     if visual.fill == "loop":
@@ -148,7 +160,7 @@ def usable_length(visual: ShotVisual, asset, primary: bool) -> float:
         return total
     edit = visual.effective_edit()
     end = min(edit.trim_end or total, total)
-    return max(end - edit.trim_start, 0.1)
+    return max(edit.kept_seconds(edit.trim_start, end), 0.1)
 
 
 def split_duration(lengths: list[float], duration: float) -> list[float]:
@@ -244,7 +256,15 @@ def render_shot(
                 video_input = ["-protocol_whitelist", LOCAL_PROTOCOLS, "-i", str(source)]
             else:
                 assert clip is not None and source is not None
-                if clip.loop and not clip.whole:
+                if clip.skips:
+                    # 选段里有剪掉的片段：先剪成一个连续的文件，后面按整段素材处理。
+                    scratch = temp.with_name(temp.stem + "-skips.mp4")
+                    _cut_skips(source, scratch, clip, cancel)
+                    source = scratch
+                    clip_start = 0.0
+                else:
+                    clip_start = clip.start
+                if clip.loop and not clip.whole and not clip.skips:
                     # 循环一个选段：先把选段切成单独的文件，再整段循环。
                     scratch = temp.with_name(temp.stem + "-clip.mp4")
                     _cut_clip(source, scratch, clip, fps, cancel)
@@ -253,7 +273,7 @@ def render_shot(
                     video_input = ["-stream_loop", "-1", "-protocol_whitelist", LOCAL_PROTOCOLS, "-i", str(source)]
                 else:
                     video_input = [
-                        "-ss", f"{clip.start:.3f}",
+                        "-ss", f"{clip_start:.3f}",
                         "-t", f"{clip.length:.3f}",
                         "-protocol_whitelist", LOCAL_PROTOCOLS,
                         "-i", str(source),
@@ -473,6 +493,29 @@ def _render_sequence(
             piece.unlink(missing_ok=True)
     stages.append(StageRecord(f"{shot.id}:shot", "shot", fp, False, round(time.monotonic() - started, 3)))
     return fp, output
+
+
+def _cut_skips(source: Path, output: Path, clip: ClipPlan, cancel: threading.Event) -> None:
+    """把选段里剪掉的片段去掉，画面和原声一起剪，输出一个连续的临时文件。"""
+    keep = " + ".join(
+        f"between(t,{a - clip.start:.3f},{b - clip.start:.3f})" for a, b in clip.skips
+    )
+    args = [
+        "-ss", f"{clip.start:.3f}",
+        "-t", f"{clip.span:.3f}",
+        "-protocol_whitelist", LOCAL_PROTOCOLS,
+        "-i", str(source),
+        "-vf", f"select='not({keep})',setpts=N/FRAME_RATE/TB",
+        "-map", "0:v:0",
+    ]
+    if clip.audio:
+        args += ["-af", f"aselect='not({keep})',asetpts=N/SR/TB", "-map", "0:a:0", *AUDIO_ARGS]
+    else:
+        args += ["-an"]
+    run_ffmpeg(
+        [*args, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "16", "-pix_fmt", "yuv420p", "-f", "mp4", str(output)],
+        cancel=cancel,
+    )
 
 
 def _cut_clip(source: Path, output: Path, clip: ClipPlan, fps: int, cancel: threading.Event) -> None:

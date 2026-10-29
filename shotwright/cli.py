@@ -92,6 +92,9 @@ def cmd_serve(args) -> int:
     url = f"http://{args.host}:{port}"
     print(f"Shotwright 已启动：{url}")
     server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=port))
+    from shotwright.logs import quiet_polling_access_log
+
+    quiet_polling_access_log()  # uvicorn 配置日志之后再挂一次过滤，避免被覆盖
     if args.open:
 
         def open_when_ready() -> None:

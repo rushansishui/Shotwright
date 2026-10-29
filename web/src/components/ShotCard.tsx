@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { assetUrl, estimateSeconds, type GenerateOptions } from "../api";
 import { providerName, useI18n } from "../i18n";
 import type { MessageKey } from "../messages";
-import type { Asset, CameraMove, Project, ProviderInfo, Shot, ShotRole, Take, VisualMode, VisualPatch } from "../types";
+import type { Asset, CameraMove, Project, ProviderInfo, Shot, ShotRole, ShotUpdate, Take, VisualMode, VisualPatch } from "../types";
 import { Icon, Segmented } from "./Controls";
 import { ShotEdit } from "./ShotEdit";
 
@@ -26,7 +26,7 @@ export function Thumb(props: { project: Project; assetId: string | null; color: 
 }
 
 /** 候选缩略图上的版本号、检查得分和问题提示。 */
-function TakeBadge({ takes, assetId, asset }: { takes: Take[]; assetId: string; asset?: Asset }) {
+export function TakeBadge({ takes, assetId, asset }: { takes: Take[]; assetId: string; asset?: Asset }) {
   const { t } = useI18n();
   const index = takes.findIndex((item) => item.asset_id === assetId);
   if (index < 0) {
@@ -65,11 +65,17 @@ export function ShotCard(props: {
   /** 已经等了多少秒（生成 AI 画面可能要几分钟）。 */
   busySeconds?: number;
   aiVideo: ProviderInfo | null;
+  /** 已配置好的 AI 视频服务；有两个以上时每个镜头可以单独选。 */
+  videoProviders?: ProviderInfo[];
+  /** 素材还没确认：AI 视频、AI 图片暂不能生成。 */
+  aiLocked?: boolean;
+  /** 跳到「素材」那一步。 */
+  onGotoMaterials?: () => void;
   aiImage: ProviderInfo | null;
   /** 服务 id → 画面来源，用来按当前来源筛选候选素材。 */
   sourceModes: Record<string, VisualMode>;
   onFocus: () => void;
-  onUpdate: (body: { text?: string; title?: string; role?: ShotRole; visual?: VisualPatch }) => void;
+  onUpdate: (body: ShotUpdate) => void;
   /** ``patch`` 是还没失焦保存的提示词，先存好再生成。 */
   onCandidates: (confirmCharge?: boolean, patch?: VisualPatch, editSelected?: boolean, options?: GenerateOptions) => void;
   /** 配置了大模型时可以让 AI 改写这个镜头的画面。 */
@@ -134,7 +140,10 @@ export function ShotCard(props: {
       props.onUpdate({ visual: { sequence: rest.slice(1) } });
     }
   };
-  const generator = visual.mode === "ai" ? props.aiVideo : visual.mode === "image" ? props.aiImage : null;
+  const videoProviders = props.videoProviders ?? [];
+  // 镜头单独选了视频服务时用它，否则用默认服务。
+  const aiVideo = videoProviders.find((p) => p.id === visual.provider) ?? props.aiVideo;
+  const generator = visual.mode === "ai" ? aiVideo : visual.mode === "image" ? props.aiImage : null;
   const modeOf = (asset: Asset | undefined): VisualMode | undefined => {
     if (!asset) return undefined;
     const mode = props.sourceModes[asset.source];
@@ -210,14 +219,14 @@ export function ShotCard(props: {
   const editable =
     visual.mode !== "color" && (selectedAsset?.kind === "video" || selectedAsset?.kind === "image");
   const canModify =
-    !!props.aiVideo &&
-    props.aiVideo.video_to_video &&
+    !!aiVideo &&
+    aiVideo.video_to_video &&
     selectedAsset?.kind === "video" &&
     !visual.locked &&
     !props.busy;
   const modify = () => {
     if (!prompt.trim()) return;
-    const name = props.aiVideo ? providerName(props.aiVideo, lang) : "";
+    const name = aiVideo ? providerName(aiVideo, lang) : "";
     if (window.confirm(t("shot.confirm.modify", { n: index + 1, name }))) {
       props.onCandidates(true, prompt !== visual.prompt ? { prompt } : undefined, true);
     }
@@ -256,22 +265,6 @@ export function ShotCard(props: {
           {t("shot.duration", { n: seconds })}
           {exceedsMax ? ` · ${t("shot.overMaxDurationShort", { max: maxDuration })}` : ""}
         </span>
-        <select
-          className="role-select"
-          aria-label={t("shot.role")}
-          title={t("shot.roleHint")}
-          value={shot.role ?? ""}
-          onChange={(e) => e.target.value && props.onUpdate({ role: e.target.value as ShotRole })}
-        >
-          <option value="" disabled>
-            {t("shot.role")}
-          </option>
-          {ROLES.map((role) => (
-            <option key={role} value={role}>
-              {t(`shot.role.${role}` as MessageKey)}
-            </option>
-          ))}
-        </select>
       </div>
 
       <div className="shot-main">
@@ -287,15 +280,7 @@ export function ShotCard(props: {
           onChange={(e) => setText(e.target.value)}
           onBlur={() => text !== shot.text && props.onUpdate({ text })}
         />
-        <input
-          className="input shot-title"
-          aria-label={t("shot.titleLabel")}
-          placeholder={t("shot.titlePlaceholder")}
-          value={shotTitle}
-          maxLength={60}
-          onChange={(e) => setShotTitle(e.target.value)}
-          onBlur={() => shotTitle !== (shot.title ?? "") && props.onUpdate({ title: shotTitle })}
-        />
+        {shot.speech === "original" && <p className="muted small original-note">{t("shot.originalSpeech")}</p>}
 
         <div className="shot-visual-row">
           <Segmented
@@ -360,11 +345,34 @@ export function ShotCard(props: {
                 if (patch) props.onUpdate({ visual: patch });
               }}
             />
+            {visual.mode === "ai" && videoProviders.length > 1 && (
+              <select
+                className="input video-model"
+                aria-label={t("shot.videoModel")}
+                title={t("shot.videoModelHint")}
+                value={aiVideo?.id ?? ""}
+                disabled={props.busy || visual.locked}
+                onChange={(e) => props.onUpdate({ visual: { provider: e.target.value } })}
+              >
+                {videoProviders.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {providerName(p, lang)}
+                    {p.default ? t("shot.videoModelDefault") : ""}
+                  </option>
+                ))}
+              </select>
+            )}
             <button
               type="button"
               className="btn"
-              disabled={props.busy || visual.locked || !generator || !(promptValue.trim() || (isImage && visual.prompt.trim()))}
-              title={generator ? `${providerName(generator, lang)}${generator.paid ? t("common.paidSuffix") : ""}` : t("shot.noGenerator")}
+              disabled={props.aiLocked || props.busy || visual.locked || !generator || !(promptValue.trim() || (isImage && visual.prompt.trim()))}
+              title={
+                props.aiLocked
+                  ? t("steps.lockedHint")
+                  : generator
+                    ? `${providerName(generator, lang)}${generator.paid ? t("common.paidSuffix") : ""}`
+                    : t("shot.noGenerator")
+              }
               onClick={generate}
             >
               {props.busy ? (
@@ -380,36 +388,13 @@ export function ShotCard(props: {
             </button>
           </div>
         )}
-        {props.canRewrite && (visual.mode === "ai" || visual.mode === "image") && (
-          <div className="inline-field">
-            <label htmlFor={`rewrite-${shot.id}`}>{t("shot.rewrite")}</label>
-            <input
-              id={`rewrite-${shot.id}`}
-              className="input"
-              value={instruction}
-              placeholder={t("shot.rewritePlaceholder")}
-              disabled={visual.locked || props.busy}
-              onChange={(e) => setInstruction(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && instruction.trim()) {
-                  props.onRewrite?.(instruction.trim());
-                  setInstruction("");
-                }
-              }}
-            />
-            <button
-              type="button"
-              className="btn small"
-              disabled={visual.locked || props.busy || !instruction.trim()}
-              title={t("shot.rewriteHint")}
-              onClick={() => {
-                props.onRewrite?.(instruction.trim());
-                setInstruction("");
-              }}
-            >
-              {t("shot.rewriteRun")}
+        {props.aiLocked && (visual.mode === "ai" || visual.mode === "image") && (
+          <p className="hint warn small lock-note">
+            {t("steps.lockedShort")}
+            <button type="button" className="linkish" onClick={props.onGotoMaterials}>
+              {t("steps.gotoMaterials")}
             </button>
-          </div>
+          </p>
         )}
         {visual.mode === "ai" && (
           <div className="inline-field gen-options">
@@ -440,64 +425,11 @@ export function ShotCard(props: {
             <button
               type="button"
               className="btn small"
-              disabled={props.busy || visual.locked || !props.aiImage || !(promptValue.trim() || still.trim())}
+              disabled={props.aiLocked || props.busy || visual.locked || !props.aiImage || !(promptValue.trim() || still.trim())}
               title={props.aiImage ? t("shot.keyframesHint") : t("shot.noGenerator")}
               onClick={keyframes}
             >
               {t("shot.keyframes")}
-            </button>
-          </div>
-        )}
-        {visual.mode === "ai" && (
-          <div className="inline-field shot-link">
-            <label htmlFor={`camera-${shot.id}`}>{t("shot.camera")}</label>
-            <select
-              id={`camera-${shot.id}`}
-              className="input camera"
-              value={visual.camera ?? "auto"}
-              disabled={visual.locked}
-              onChange={(e) => props.onUpdate({ visual: { camera: e.target.value as CameraMove } })}
-            >
-              {CAMERAS.map((camera) => (
-                <option key={camera} value={camera}>
-                  {t(`shot.camera.${camera}` as MessageKey)}
-                </option>
-              ))}
-            </select>
-            <label htmlFor={`link-${shot.id}`} className="sr-only">
-              {t("shot.link")}
-            </label>
-            <textarea
-              id={`link-${shot.id}`}
-              className="input"
-              rows={1}
-              value={link}
-              placeholder={`${t("shot.link")}：${t("shot.linkPlaceholder")}`}
-              disabled={visual.locked}
-              onChange={(e) => setLink(e.target.value)}
-              onBlur={() => link !== (visual.link ?? "") && props.onUpdate({ visual: { link } })}
-            />
-          </div>
-        )}
-        {canModify && (
-          <div className="inline-field">
-            <label htmlFor={`modify-${shot.id}`}>{t("shot.modify")}</label>
-            <input
-              id={`modify-${shot.id}`}
-              className="input"
-              value={prompt}
-              placeholder={t("shot.modifyPlaceholder")}
-              onChange={(e) => setPrompt(e.target.value)}
-              onBlur={() => prompt !== visual.prompt && props.onUpdate({ visual: { prompt } })}
-            />
-            <button
-              type="button"
-              className="btn"
-              disabled={!prompt.trim()}
-              title={t("shot.modifyHint")}
-              onClick={modify}
-            >
-              {t("shot.modifyRun")}
             </button>
           </div>
         )}
@@ -567,6 +499,141 @@ export function ShotCard(props: {
             </span>
           </div>
         )}
+
+        <details className="shot-more">
+          <summary>{t("shot.moreSettings")}</summary>
+          <div className="shot-more-body">
+            {(shot.speech === "original" || visual.mode === "upload") && (
+              <div className="inline-field">
+                <span className="label">{t("shot.speech")}</span>
+                <select
+                  className="input role-select"
+                  aria-label={t("shot.speech")}
+                  value={shot.speech ?? "tts"}
+                  onChange={(e) => props.onUpdate({ speech: e.target.value as "tts" | "original" })}
+                >
+                  <option value="original">{t("shot.speechOriginal")}</option>
+                  <option value="tts">{t("shot.speechTts")}</option>
+                </select>
+              </div>
+            )}
+            <div className="inline-field">
+              <span className="label">{t("shot.role")}</span>
+              <select
+                className="input role-select"
+                aria-label={t("shot.role")}
+                title={t("shot.roleHint")}
+                value={shot.role ?? ""}
+                onChange={(e) => e.target.value && props.onUpdate({ role: e.target.value as ShotRole })}
+              >
+                <option value="" disabled>
+                  {t("shot.role")}
+                </option>
+                {ROLES.map((role) => (
+                  <option key={role} value={role}>
+                    {t(`shot.role.${role}` as MessageKey)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="inline-field">
+              <span className="label">{t("shot.titleShort")}</span>
+              <input
+                className="input shot-title"
+                aria-label={t("shot.titleLabel")}
+                placeholder={t("shot.titlePlaceholder")}
+                value={shotTitle}
+                maxLength={60}
+                onChange={(e) => setShotTitle(e.target.value)}
+                onBlur={() => shotTitle !== (shot.title ?? "") && props.onUpdate({ title: shotTitle })}
+              />
+            </div>
+            {visual.mode === "ai" && (
+              <div className="inline-field shot-link">
+                <label htmlFor={`camera-${shot.id}`}>{t("shot.camera")}</label>
+                <select
+                  id={`camera-${shot.id}`}
+                  className="input camera"
+                  value={visual.camera ?? "auto"}
+                  disabled={visual.locked}
+                  onChange={(e) => props.onUpdate({ visual: { camera: e.target.value as CameraMove } })}
+                >
+                  {CAMERAS.map((camera) => (
+                    <option key={camera} value={camera}>
+                      {t(`shot.camera.${camera}` as MessageKey)}
+                    </option>
+                  ))}
+                </select>
+                <label htmlFor={`link-${shot.id}`} className="sr-only">
+                  {t("shot.link")}
+                </label>
+                <textarea
+                  id={`link-${shot.id}`}
+                  className="input"
+                  rows={1}
+                  value={link}
+                  placeholder={`${t("shot.link")}：${t("shot.linkPlaceholder")}`}
+                  disabled={visual.locked}
+                  onChange={(e) => setLink(e.target.value)}
+                  onBlur={() => link !== (visual.link ?? "") && props.onUpdate({ visual: { link } })}
+                />
+              </div>
+            )}
+            {props.canRewrite && (visual.mode === "ai" || visual.mode === "image") && (
+              <div className="inline-field">
+                <label htmlFor={`rewrite-${shot.id}`}>{t("shot.rewrite")}</label>
+                <input
+                  id={`rewrite-${shot.id}`}
+                  className="input"
+                  value={instruction}
+                  placeholder={t("shot.rewritePlaceholder")}
+                  disabled={visual.locked || props.busy}
+                  onChange={(e) => setInstruction(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && instruction.trim()) {
+                      props.onRewrite?.(instruction.trim());
+                      setInstruction("");
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="btn small"
+                  disabled={visual.locked || props.busy || !instruction.trim()}
+                  title={t("shot.rewriteHint")}
+                  onClick={() => {
+                    props.onRewrite?.(instruction.trim());
+                    setInstruction("");
+                  }}
+                >
+                  {t("shot.rewriteRun")}
+                </button>
+              </div>
+            )}
+            {canModify && (
+              <div className="inline-field">
+                <label htmlFor={`modify-${shot.id}`}>{t("shot.modify")}</label>
+                <input
+                  id={`modify-${shot.id}`}
+                  className="input"
+                  value={prompt}
+                  placeholder={t("shot.modifyPlaceholder")}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onBlur={() => prompt !== visual.prompt && props.onUpdate({ visual: { prompt } })}
+                />
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={props.aiLocked || !prompt.trim()}
+                  title={t("shot.modifyHint")}
+                  onClick={modify}
+                >
+                  {t("shot.modifyRun")}
+                </button>
+              </div>
+            )}
+          </div>
+        </details>
 
         {visual.mode === "upload" && (
           <div className="inline-field">

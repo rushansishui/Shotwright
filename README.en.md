@@ -6,19 +6,23 @@
 
 Shotwright is built around the *shot*. The script is split into shots, and each shot picks its own visual source (stock search, AI generation, or your own uploaded image or video). Any shot can be replaced, locked or redone by itself. Change one shot and only that shot is re-rendered, plus the final assembly.
 
-> Current version: v0.4.0. All v0.4 "product ads" and "video quality" features are built and being tested (editing a clip with a prompt needs Seedance 2.5 enabled on Volcengine Ark). Next up is v0.5 "delivery and efficiency". See the [roadmap](docs/ROADMAP.md).
+> Current version: v0.4.0. All v0.4 "product ads" and "video quality" features are built and being tested (editing a clip with a prompt needs Seedance 2.5 enabled on Volcengine Ark). In v0.5 "delivery and efficiency", configuring services in the UI, the extra AI video services, the Cut page (cut a video by its text) and the material readiness checklist are done; the rest is in progress. See the [roadmap](docs/ROADMAP.md).
 
 ![Demo: write a brief, edit the storyboard, trim a clip, preview the video](docs/images/demo-en.gif)
 
 ## Features
 
+- **Consistent people and products**: in the look, every subject can take uploaded photos, or have AI paint a plain-background reference portrait from its appearance description; those images are sent as references when generating AI video and images, so it is the same person and the same product in every shot. When one product comes in several colours, label each image: a shot uses only the main image by default (so the model is never handed several colours at once), and you can pick which variant a single shot uses; the prompt then demands the colour match the reference exactly. If a shot names several colours (four kids each in a different one), those variants are sent along. "Describe from images" reads the collar, hood or no hood, zips, pockets and seams off the photos, and the prompt insists the construction follows the reference instead of the model inventing a hood. Shots that show a subject default to AI generation, and the pre-render check flags subjects without a reference image and shots that show a subject but use stock footage.
+- **Guided creation**: start with a few sentences about your idea, and AI turns them into a full brief using the template for the chosen video type (facts it cannot know become "[to be added]", for you to fill in); then it writes a paragraph-by-paragraph voice-over script you can edit, reorder, add to or trim; the storyboard is finally written from that final script with the wording kept word for word. The original idea, the brief and the storyboard script are kept on the project as a "creation record" you can read, copy, or use to start a new video from: back to the new-video page with all of it loaded, edit, and generate a new video. Media can be uploaded at the same time: product and people photos go into the look's subject images, logos and style images into the references, clips straight into shots, and audio becomes the background music.
 - **Storyboard editing**: split a script into shots sentence by sentence, or write a video brief (audience, tone, key points; up to 4096 bytes), pick a length, and let an LLM write the script, decide how many shots it needs, and suggest search terms and visual prompts for each shot. An existing video can be **duplicated into a new project** to keep editing, carrying its assets, settings and render cache along.
-- **Mixed visuals**: in one video, some shots can use Pixabay / Pexels / Coverr footage, some AI video (Seedance) or AI images (Seedream with a slow Ken Burns push-in), and some your own uploads. An AI image can also serve as the first frame of an AI video. A shot can hold **several clips played in sequence**, and candidates can be deleted. Under each shot, a hint shows how many candidates the other sources have, with one click to switch, so switching sources never loses footage you already generated.
+- **Mixed visuals**: in one video, some shots can use Pixabay / Pexels / Coverr footage, some AI video (Seedance, Wan, Kling, MiniMax Hailuo, or Veo, Vidu and others via fal.ai, chosen per shot) or AI images (Seedream with a slow Ken Burns push-in), and some your own uploads. An AI image can also serve as the first frame of an AI video. A shot can hold **several clips played in sequence**, and candidates can be deleted. Under each shot, a hint shows how many candidates the other sources have, with one click to switch, so switching sources never loses footage you already generated.
 - **Footage import and in-shot editing**: import footage shot on a phone and have it split into shots at scene changes; in each shot you can drag the in and out points, split it or merge it with the next. When a clip is shorter than its shot it is slowed down a little (to no less than 0.8×) and then holds its last frame, instead of jumping back to the start. The clip's own sound can be kept at an adjustable volume and is lowered automatically under the voice-over. When switching between portrait and landscape you can choose what part of the frame to keep, or keep the whole subject over a blurred fill.
+- **Cut an existing video**: "Cut" in the top bar is separate from "Create" and has its own task list. There are two ways to cut: for footage without speech (product shots, b-roll, montage material) choose "Edit by scenes", which skips speech recognition and splits the video at scene changes, several videos at a time; for talking-head, explainer and live-selling videos choose "Edit by what is said": upload the video and it transcribes what is said (local faster-whisper — free, and the footage never leaves your machine — or an OpenAI-compatible cloud service), with progress shown while the model downloads and while it transcribes. Click a word to jump and play, select a passage and delete it to cut the video with it; one click ticks off filler words (um, uh, 嗯, 啊), "AI retakes" finds sentences that were restarted or abandoned halfway, and long pauses can be squeezed. Double-click to fix a mis-transcribed word. Generate original-sound shots from the result: no re-voicing, subtitles follow the word timings, the removed parts are skipped inside each shot, and subtitles, music, titles and translated voice-over versions all work as usual.
 - **Video quality**: pick a video type on the home page (product ad, brand film, explainer, talking head, footage makeover) to get a brief template and writing tips, with a check for unfilled placeholders before you submit. The storyboard starts with a look (subject appearance, setting, style, taboos, color grade); every shot gets a 60–120-word description, a camera move and a continuity note, and the storyboard is self-checked and rewritten once if needed. At generation time you can create keyframes first, several takes at once, or extend shots longer than the model allows from the last frame. With a vision model configured, results are checked for product drift, stock candidates are ranked and the final video is scanned for flaws. A pre-render check lists things worth fixing, and `shotwright bench` runs a fixed quality benchmark compared with the previous batch.
 - **Finishing**: export normalizes loudness to -14 LUFS and ducks the music under the voice with a fade in and out. Optionally cuts snap to the music's beat, transition whooshes and ambience can be layered in, the whole video can share one color grade, and delivery targets (Douyin, Kuaishou, Channels, Xiaohongshu, Shorts, Bilibili) set the encoding and keep subtitles and overlays inside the safe area.
 - **Product ads**: a project-level library of product shots, people, logos and style images used as references for generation; edit a clip with a prompt (video-to-video); overlay selling points, prices and logos separately from the subtitles, with transitions between shots; overlay text is translated along with the language versions.
 - **Charge confirmation**: every paid generation must be confirmed in the UI before it is submitted. If the result of a submission can't be confirmed, it is never retried automatically, so you are never charged twice.
+- **Generate all and review**: in the Visuals step, one click generates every AI shot that has no picture yet: it first lists each shot's reference cost and the total, then queues them in the background, and you can stop at any time. **Review** puts every shot's candidate versions on one page: click to use one, mark each shot OK or Redo with a short note, then regenerate all the redo shots at once (with a text model configured, the shot description is first rewritten from your note).
 - **Incremental rendering**: each stage is fingerprinted by its inputs and cached, so unchanged shots are reused. Renders can be cancelled at any time. A draft quality renders faster for a first look; the estimated cost is shown before rendering and the project keeps a running total of generation spend.
 - **AI content labels**: the MP4 metadata of every render marks it as AI-generated and credits CC BY background music; an optional "AI" badge can be shown on screen.
 - **Voice-over**: free Edge online voices by default, with Azure, SiliconFlow, MiniMax and ElevenLabs available as alternatives you can switch between in the UI.
@@ -36,21 +40,29 @@ Shotwright is built around the *shot*. The script is split into shots, and each 
 
 ## Screenshots
 
-**New video**: write a brief, pick the language, aspect ratio and length, and the AI writes the script and decides how many shots it needs.
+**Create a new video**: describe the idea in a few sentences, the AI turns it into a full brief from the template for the video type, then writes an editable script, and the storyboard is generated from that script; your projects are listed on the right.
 
 ![New video](docs/images/en-home.png)
 
-**Storyboard editor**: each shot picks its own visual source; the live preview on the right shows the subtitles, and only changed shots are re-rendered.
+**Storyboard editor**: five steps in production order — ① Materials (subject reference images and looks, brand and style references) → ② Visuals → ③ Voice & subtitles → ④ Music & SFX → ⑤ Titles & text. AI visuals can only be generated once every subject has its reference images and look and the checklist is confirmed. Each shot picks its own visual source; the live preview on the right shows the subtitles, and only changed shots are re-rendered.
 
 ![Storyboard editor](docs/images/en-editor.png)
 
-**Mixed visuals in one video**: the upper shot uses stock footage, the lower one an AI image; under each shot a hint shows how many candidates the other sources have, one click to switch.
+**Shot card**: every shot picks its own visual source (stock, AI video, AI image, upload, solid colour), and one video can mix them; AI video prompts are built from the shared look, you can draft keyframes first, generate several takes at once and pick draft or final resolution, and every generation is kept as a version; shot type, caption title, camera move and AI rewrite sit under "More".
 
-![Stock search and AI image](docs/images/en-shots.png)
+![Shot card](docs/images/en-shots.png)
 
 **Audio, subtitles and language versions**: switch the video language and voice; upload background music or find it automatically and preview the candidates; translate the video into another language in one click.
 
 ![Audio, subtitles and language versions](docs/images/en-audio.png)
+
+**Cut an existing video**: with "Edit by what is said", click a word to play from there; struck-through words are deleted fillers and retakes and are skipped during playback; then generate original-sound shots. For footage without speech, "Edit by scenes" splits it into shots directly.
+
+![Cut by text](docs/images/en-cut.png)
+
+**Settings**: fill in each service's key, model and endpoint in the page; saving writes back to `config.toml` and takes effect immediately, keys are shown only as their last four characters, and LLMs, AI video and speech recognition have a "Test connection" button.
+
+![Settings](docs/images/en-settings.png)
 
 ## Hardware requirements
 
@@ -76,7 +88,7 @@ You need Python 3.11+, [FFmpeg](https://ffmpeg.org/download.html) (with libass, 
 # 1. Install the backend
 python -m venv .venv
 .venv\Scripts\activate          # macOS / Linux: source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev,asr]"   # asr: local speech recognition for the Cut page (faster-whisper); drop it if you won't use Cut
 
 # 2. Configure (optional): copy the template and fill in Pixabay and LLM API keys
 copy config.example.toml config.toml   # macOS / Linux: cp
@@ -116,7 +128,9 @@ shotwright bench                                          # run the quality benc
 
 ## Configuration
 
-See [config.example.toml](config.example.toml) (comments are in Chinese). Every provider field can also be overridden with an environment variable named `SHOTWRIGHT_<KIND>_<ID>_<FIELD>`, for example:
+The easiest way is the **Settings** page in the web UI: each service's key, model and endpoint can be edited there, and saving writes back to `config.toml` and takes effect immediately without a restart; LLM and AI video services also have a one-click **Test connection** to check the key, endpoint and model name. Keys are shown only as their last four characters.
+
+You can also edit the config file directly, see [config.example.toml](config.example.toml) (comments are in Chinese; a restart is needed). Every provider field can also be overridden with an environment variable named `SHOTWRIGHT_<KIND>_<ID>_<FIELD>`, for example:
 
 ```bash
 SHOTWRIGHT_STOCK_PIXABAY_API_KEY=xxxx
@@ -130,9 +144,13 @@ Voice-over uses the free, key-less Edge voices by default. For steadier quality 
 
 Stock footage uses Pixabay by default. Pexels needs your own key; Coverr needs no key and its library is mostly landscape.
 
+Speech recognition for the Cut page uses local `faster_whisper` by default: it needs no network, costs nothing and the footage never leaves the machine. The first run downloads a model (about 480 MB for `small`); if Hugging Face is unreachable it switches to the hf-mirror.com mirror automatically. To use a cloud service instead, set `asr` under `[defaults]` to `openai` and fill in `[providers.asr.openai]` — any OpenAI-compatible `/audio/transcriptions` endpoint that returns word timestamps works (OpenAI `whisper-1`, Groq `whisper-large-v3-turbo`, …), with a 25 MB limit per file.
+
 Background music search uses Internet Archive by default and needs no key. **Licences on Internet Archive vary**: some tracks forbid commercial use or adaptation (for example CC BY-NC-ND), and some carry no licence at all. Results are classified by licence and non-commercial tracks are skipped; tracks with no stated licence are kept by default and flagged in the UI, so check before you publish. To be stricter, set `allow_unknown_license` to `"false"` under `[providers.music.archive]` to keep only clearly commercial-friendly licences (CC0 / public domain / CC BY / CC BY-SA), restrict the search to a collection with clear licences via `collection`, or upload your own music.
 
 AI video (Seedance) and AI images (Seedream) run on Volcengine Ark, the same platform as Doubao. Once the key in `[providers.llm.doubao]` is filled in and the models are enabled in the Ark console, they work without entering the key again.
+
+Other AI video services (Wan, Kling, MiniMax Hailuo, fal.ai) each have a section in `config.toml`; see `config.example.toml`. With more than one configured, a "Video model" picker appears next to each shot's prompt so you can generate the same shot with different models and compare. Models that accept reference images (Seedance 2.x, Wan 3.0, MiniMax H3) get the product photos as references; the others use the first product photo as the first frame. Prices are estimates; set `price` to your account's actual rate per second for accurate cost estimates and budgets.
 
 Keys live only in the config file or environment variables and are never written into project files, so projects are safe to share.
 

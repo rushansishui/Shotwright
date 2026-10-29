@@ -145,7 +145,7 @@ export function LookSection({ project, run, setError }: LookSectionProps) {
       </div>
       {draft.subjects.length === 0 && <p className="muted small">{t("look.empty")}</p>}
       {draft.subjects.map((subject, index) => (
-        <div className="look-subject" key={index}>
+        <div className="look-subject" key={index} id={`look-subject-${subject.code}`}>
           <div className="look-row">
             <input
               className="input code"
@@ -208,6 +208,23 @@ export function LookSection({ project, run, setError }: LookSectionProps) {
               </button>
               <span className="muted small">{t("look.describeHint")}</span>
             </div>
+          )}
+          {subject.kind !== "place" && !(subject.images?.length ?? 0) && (
+            <label className="check small look-no-ref" title={t("ready.noReferenceHint")}>
+              <input
+                type="checkbox"
+                checked={!!subject.no_reference}
+                onChange={(e) => {
+                  const next = {
+                    ...draft,
+                    subjects: draft.subjects.map((s, i) => (i === index ? { ...s, no_reference: e.target.checked } : s)),
+                  };
+                  setDraft(next);
+                  save(next);
+                }}
+              />
+              {t("ready.noReferenceToggle")}
+            </label>
           )}
           {subject.kind !== "place" && (
             <div className="look-images">
@@ -310,33 +327,36 @@ export function LookSection({ project, run, setError }: LookSectionProps) {
         {invalid && <span className="hint error small">{t("look.badCode")}</span>}
         {dirty && !invalid && <span className="muted small">{t("look.unsaved")}</span>}
       </div>
-      <label className="look-field">
-        <span className="label">{t("look.grade")}</span>
-        <select
-          className="input"
-          value={draft.grade ?? ""}
-          onChange={(e) => {
-            const next = { ...draft, grade: e.target.value };
-            setDraft(next);
-            save(next);
-          }}
-        >
-          {GRADES.map((grade) => (
-            <option key={grade} value={grade}>
-              {t(`look.grade.${grade || "none"}` as MessageKey)}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="check">
-        <input
-          type="checkbox"
-          checked={!!project.chain_frames}
-          onChange={(e) => run(() => api.updateProject(project.id, { chain_frames: e.target.checked }))}
-        />
-        {t("look.chainFrames")}
-      </label>
-      <p className="muted small">{t("look.chainFramesHint")}</p>
+      <details className="look-advanced">
+        <summary>{t("look.advanced")}</summary>
+        <label className="look-field">
+          <span className="label">{t("look.grade")}</span>
+          <select
+            className="input"
+            value={draft.grade ?? ""}
+            onChange={(e) => {
+              const next = { ...draft, grade: e.target.value };
+              setDraft(next);
+              save(next);
+            }}
+          >
+            {GRADES.map((grade) => (
+              <option key={grade} value={grade}>
+                {t(`look.grade.${grade || "none"}` as MessageKey)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={!!project.chain_frames}
+            onChange={(e) => run(() => api.updateProject(project.id, { chain_frames: e.target.checked }))}
+          />
+          {t("look.chainFrames")}
+        </label>
+        <p className="muted small">{t("look.chainFramesHint")}</p>
+      </details>
       {(["scene", "style", "avoid"] as const).map((key) => (
         <label className="look-field" key={key}>
           <span className="label">{t(`look.${key}` as MessageKey)}</span>

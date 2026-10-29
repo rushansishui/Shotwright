@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, assetUrl, estimateSeconds, plainText, renderUrl } from "../api";
+import { clipRange, nextPosition } from "../clip";
 import { useI18n } from "../i18n";
 import { Segmented } from "./Controls";
 import type { MessageKey } from "../messages";
@@ -44,6 +45,7 @@ function Preview({ project, shotIndex, platform }: { project: Project; shotIndex
   const asset = shot?.visual.selected && shot.visual.mode !== "color" ? project.assets[shot.visual.selected] : undefined;
   const position = { top: "flex-start", middle: "center", bottom: "flex-end" }[style.position];
   const fit = shot?.visual.fit === "contain" ? "contain" : "cover";
+  const range = shot ? clipRange(shot.visual, asset) : { start: 0, end: Infinity, skips: [] };
   const canvasHeight = project.canvas.aspect === "9:16" ? 1920 : 1080;
   const safe = platform && platform.id !== "general" ? platform.safe : null;
   // 和后端 render.safe_margin 一致：字幕挪进安全区，再留 24 像素。
@@ -56,7 +58,27 @@ function Preview({ project, shotIndex, platform }: { project: Project; shotIndex
   return (
     <div ref={frame} className={`preview a${project.canvas.aspect.replace(":", "-")}`} style={{ background: shot?.visual.color ?? "#1F2937" }}>
       {asset?.kind === "video" && (
-        <video key={asset.id} src={assetUrl(project.id, asset.id)} muted loop autoPlay playsInline style={{ objectFit: fit }} />
+        <video
+          key={`${asset.id}:${range.start}:${range.end}`}
+          src={assetUrl(project.id, asset.id)}
+          muted
+          autoPlay
+          playsInline
+          style={{ objectFit: fit }}
+          onLoadedMetadata={(e) => {
+            e.currentTarget.currentTime = range.start;
+          }}
+          onTimeUpdate={(e) => {
+            // 预览和成片一致：只播入出点之间，跳过剪辑页剪掉的口误和停顿，播完回到入点。
+            const el = e.currentTarget;
+            const next = nextPosition(el.currentTime, range, true);
+            if (next !== null) el.currentTime = next;
+          }}
+          onEnded={(e) => {
+            e.currentTarget.currentTime = range.start;
+            void e.currentTarget.play().catch(() => undefined);
+          }}
+        />
       )}
       {asset?.kind === "image" && <img src={assetUrl(project.id, asset.id)} alt="" style={{ objectFit: fit }} />}
       {style.enabled && shot?.text && (

@@ -563,7 +563,8 @@ class Renderer:
                     max_width=max_width,
                     words=timing.words,
                     spacing=style.spacing,
-                    respell=lambda text: pronounce.respell(project, text),
+                    # 原声镜头没有经过读音纠正，时间戳直接对应原文。
+                    respell=None if shot.speech == "original" else (lambda text: pronounce.respell(project, text)),
                 )
             )
         return cues

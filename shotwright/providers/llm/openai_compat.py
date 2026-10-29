@@ -32,6 +32,28 @@ class OpenAICompatibleLLM:
         self.timeout = float(settings.get("timeout", "120"))
         self.proxy = settings.get("proxy") or None
 
+    def check(self) -> tuple[bool, str]:
+        """测试连接：用配置的模型回一个字（max_tokens=1，几乎不花钱），能同时验证 Key、地址和模型名。"""
+        payload = {"model": self.model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        try:
+            with httpx.Client(timeout=min(self.timeout, 30), proxy=self.proxy) as client:
+                response = client.post(f"{self.base_url}/chat/completions", json=payload, headers=headers)
+        except httpx.HTTPError as exc:
+            message = str(exc).replace(self.api_key, "***") if self.api_key else str(exc)
+            return False, f"连不上：{message[:200]}。请检查网络、代理或 base_url"
+        if response.status_code < 300:
+            return True, f"连接正常，模型 {self.model} 可用"
+        from shotwright.providers.video_gen.common import describe_check
+
+        ok, message = describe_check(response)
+        if ok:  # 400 之类：Key 对，但模型名或参数不对
+            detail = response.text[:200].replace(self.api_key, "***") if self.api_key else response.text[:200]
+            return False, f"Key 有效，但请求被拒绝（HTTP {response.status_code}）：{detail}。请检查模型名"
+        return False, message
+
     def see(self, prompt: str, images: list[Path]) -> str:
         """把几张图片和一段文字交给看图模型，返回它的回答（要求 JSON 时由调用方解析）。"""
         if not self.vision_model:

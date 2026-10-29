@@ -16,10 +16,13 @@ from shotwright.core.models import (
     FitMode,
     Look,
     Overlay,
+    ProjectOrigin,
     Pronunciation,
     ReferenceAsset,
+    ReviewMark,
     SfxSettings,
     ShotRole,
+    SpeechMode,
     SubtitleStyle,
     TitleSettings,
     TransitionSettings,
@@ -53,6 +56,8 @@ class CreateProject(_Body):
     """视频内容的语言代码（见 /api/v2/languages），也接受"简体中文"这类旧写法。"""
     canvas: Canvas | None = None
     voice: VoiceSettings | None = None
+    origin: ProjectOrigin = "create"
+    """cut：剪辑页导入已有视频建的项目，在「剪辑」的任务列表里显示。"""
 
     @field_validator("subject")
     @classmethod
@@ -144,6 +149,9 @@ class VisualPatch(_Body):
     fill: FillMode | None = None
     source_volume: float | None = Field(None, ge=0.0, le=2.0)
     locked: bool | None = None
+    review: ReviewMark | None = None
+    """审片结论：ok 通过、redo 重做、空字符串清除。"""
+    review_note: str | None = Field(None, max_length=300)
 
 
 class UpdateShot(_Body):
@@ -156,6 +164,8 @@ class UpdateShot(_Body):
     role: ShotRole | None = None
     voice: VoiceSettings | None = None
     clear_voice: bool = False
+    speech: SpeechMode | None = None
+    """original：保留原片人声、文案只做字幕；tts：用文案配音。"""
 
 
 class AddShot(_Body):
@@ -189,6 +199,11 @@ class CandidatesRequest(ChargeConsent):
     """AI 视频镜头先出几张关键帧图片（0 表示直接生成视频）。"""
     quality: Literal["draft", "final"] = "final"
     """草稿档用较低分辨率生成 AI 视频。"""
+
+
+class GenerateAll(ChargeConsent):
+    only_redo: bool = False
+    """只重新生成审片时标记重做的镜头。"""
 
 
 class AmbienceSearch(_Body):
@@ -305,3 +320,48 @@ class StoryboardRequest(_Body):
 
 class ApplyMaterials(_Body):
     materials: list[MaterialNote] = Field(default_factory=list, max_length=30)
+
+
+class ProviderValues(_Body):
+    """设置页保存一个服务的配置：字符串设置；空字符串删除这一项；不传的项不改。"""
+
+    values: dict[str, str] = Field(default_factory=dict)
+
+
+class DefaultProvider(_Body):
+    kind: str = Field(..., max_length=20)
+    provider: str = Field(..., max_length=40)
+
+
+class AppSettings(_Body):
+    proxy: str = Field("", max_length=300)
+    """访问外网用的代理，例如 http://127.0.0.1:7890；空字符串表示不用代理。"""
+
+
+class TranscribeRequest(_Body):
+    """识别原片里的人声。``provider`` 为空时用默认的语音识别服务，``language`` 为空时用项目语言。"""
+
+    provider: str | None = Field(None, max_length=40)
+    language: str | None = Field(None, max_length=20)
+
+
+class CutRequest(_Body):
+    """按文字剪辑：删掉的词、是否压缩长停顿，生成原声镜头（替换现有镜头）。"""
+
+    asset_id: str = Field(..., max_length=40)
+    removed: list[int] = Field(default_factory=list, max_length=50000)
+    max_pause: float | None = Field(None, ge=0.3, le=10.0)
+    """超过这么长的停顿压缩掉；为空时保留所有没说话的画面。"""
+    split_scenes: bool = True
+    texts: dict[str, str] = Field(default_factory=dict, max_length=5000)
+    """改过错字的词：下标 → 新文字。"""
+
+
+class CutDraft(_Body):
+    """剪辑页的进度：删掉的词、改过的字、停顿和分镜设置。"""
+
+    removed: list[int] = Field(default_factory=list, max_length=50000)
+    texts: dict[str, str] = Field(default_factory=dict, max_length=5000)
+    pauses: bool = False
+    max_pause: float | None = Field(None, ge=0.3, le=10.0)
+    scenes: bool = True

@@ -8,7 +8,7 @@ import { expect, test, type Page } from "@playwright/test";
  * 主流程端到端测试。用真实浏览器跑，不模拟网络。
  *
  * 前提：本地已装 FFmpeg（渲染需要）。测试只走完全本地的路径
- * （粘贴文案 → 按标点拆镜头 → 纯色画面渲染），不会调用任何收费服务。
+ * （按标点拆镜头 → 纯色画面渲染），不会调用任何收费服务。
  */
 
 const RUN_ID = Date.now().toString(36);
@@ -16,13 +16,18 @@ const RUN_ID = Date.now().toString(36);
 /** 两句足够长的文案：按句拆镜头时会合并过短的句子，短句会被并成一个镜头。 */
 const TWO_SHOTS = "镜头从城市的清晨慢慢推进到街角的路口和天桥。第二句，阳光照在刚刚开门的咖啡店橱窗上面闪闪发亮。";
 
-/** 用"粘贴现成文案"模式新建项目：不调用大模型，离线可用。 */
+/** 直接调用接口按句拆镜头新建项目：不调用大模型，离线可用。 */
 async function createProject(page: Page, script: string) {
-  await page.goto("/");
-  await page.getByRole("radio", { name: /粘贴现成文案|Paste a script/ }).click();
-  await page.locator("#script").fill(script);
-  await page.getByRole("button", { name: /生成分镜|Create storyboard/ }).click();
+  const response = await page.request.post("/api/v2/projects", { data: { mode: "split", script } });
+  expect(response.ok()).toBeTruthy();
+  const project = await response.json();
+  await page.goto(`/#/p/${project.id}`);
   await expect(page.locator(".editor")).toBeVisible();
+}
+
+/** 编辑页分步：素材 → 画面 → 配音与字幕 → 音乐与音效 → 标题与文字。 */
+async function gotoStep(page: Page, name: RegExp) {
+  await page.locator(".editor-steps").getByRole("button", { name }).click();
 }
 
 test.describe("Shotwright 主流程", () => {
@@ -65,9 +70,14 @@ test.describe("Shotwright 主流程", () => {
     await expect(shots).toHaveCount(1);
   });
 
-  test("全片设定与主体库、文字与转场、语言版本区块都在", async ({ page }) => {
+  test("分步：素材、画面、标题与文字各步的区块都在", async ({ page }) => {
     await createProject(page, `区块${RUN_ID}，${TWO_SHOTS}`);
-    await expect(page.getByRole("heading", { name: /全片设定与主体库|Look and references/ })).toBeVisible();
+    await gotoStep(page, /素材|Materials/);
+    await expect(page.getByRole("heading", { name: /主体与参考|Subjects and references/ })).toBeVisible();
+    await expect(page.locator(".readiness")).toBeVisible();
+    await gotoStep(page, /画面|Visuals/);
+    await expect(page.locator("article.shot")).toHaveCount(2);
+    await gotoStep(page, /标题与文字|Titles & text/);
     await expect(page.getByRole("heading", { name: /文字与转场|Text & transitions/ })).toBeVisible();
     await expect(page.getByRole("heading", { name: /语言版本|Language versions/ })).toBeVisible();
   });
@@ -137,6 +147,7 @@ test.describe("Shotwright 主流程", () => {
 
   test("全片设定：添加主体并保存外观", async ({ page }) => {
     await createProject(page, `全片设定${RUN_ID}。${TWO_SHOTS}`);
+    await gotoStep(page, /素材|Materials/);
     const look = page.locator(".look");
     await look.getByRole("button", { name: /添加主体|Add subject/ }).click();
     const appearance = look.getByRole("textbox", { name: /外观|Appearance/ }).first();
@@ -201,4 +212,43 @@ test.describe("Shotwright 主流程", () => {
     await page.goto("/");
     await expect(page.locator(".project-grid li").first()).toContainText(/（副本）|\(copy\)/);
   });
+  test("素材没确认前不能生成 AI 画面，确认后解锁", async ({ page }) => {
+    const created = await (await page.request.post("/api/v2/projects", { data: { mode: "split", script: `素材${RUN_ID}。${TWO_SHOTS}` } })).json();
+    const look = {
+      subjects: [{ code: "P1", name: "咖啡机", kind: "product", appearance: "哑光白色圆柱形机身", images: [] }],
+      scene: "",
+      style: "",
+      avoid: "",
+    };
+    expect((await page.request.patch(`/api/v2/projects/${created.id}`, { data: { look } })).ok()).toBeTruthy();
+    await page.goto(`/#/p/${created.id}`);
+    // 还没确认：默认停在「素材」，清单显示缺参考图
+    await expect(page.locator(".editor-steps button.on")).toContainText(/素材|Materials/);
+    await expect(page.locator(".readiness")).toContainText(/0\/1/);
+    await gotoStep(page, /画面|Visuals/);
+    await expect(page.locator(".lock-hint")).toBeVisible();
+    // 回到素材，标记不需要参考图后确认
+    await gotoStep(page, /素材|Materials/);
+    await page.locator(".readiness-list li").getByRole("checkbox").click();
+    await expect(page.locator(".readiness")).toContainText(/1\/1/);
+    await page.getByRole("button", { name: /确认素材|Confirm materials/ }).click();
+    await expect(page.locator(".editor-steps button.on")).toContainText(/画面|Visuals/);
+    await expect(page.locator(".lock-hint")).toHaveCount(0);
+  });
+});
+
+test("服务设置：在页面里填写 Key，保存后只显示后 4 位", async ({ page }) => {
+  await page.goto("/#/settings");
+  const card = page.locator('[data-provider="video_gen.wan"]');
+  await card.getByRole("button", { name: /填写配置|Configure/ }).click();
+  const key = card.locator('input[type="password"]').first();
+  await key.fill("sk-e2e-secret-9876");
+  await card.getByRole("button", { name: /^(保存|Save)$/ }).click();
+  await expect(card.getByText(/已保存|Saved/)).toBeVisible();
+  await expect(card.locator('input[type="password"]').first()).toHaveAttribute("placeholder", /••••9876/);
+  await expect(page.getByText("sk-e2e-secret-9876")).toHaveCount(0);
+  // 清除，恢复原样
+  await card.getByLabel(/清除|Clear/).first().click();
+  await card.getByRole("button", { name: /^(保存|Save)$/ }).click();
+  await expect(card.getByText(/未配置|Not configured/)).toBeVisible();
 });

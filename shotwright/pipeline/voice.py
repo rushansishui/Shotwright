@@ -74,6 +74,8 @@ def synthesize_shot(
 
     返回 (指纹, 音频路径, 时长秒, 逐词时间戳列表)。
     """
+    if shot.speech == "original":
+        return _original_speech(store, project, shot, stages=stages, cancel=cancel)
     voice = project.voice_for(shot)
     # 读音纠正：易读错的词换成同音字再合成（字幕仍显示原文）；替换后的文字参与指纹，改了会重新配音。
     text = pronounce.spoken(project, shot.text.strip())
@@ -140,6 +142,33 @@ def synthesize_shot(
         StageRecord(f"{shot.id}:voice", "voice", fp, False, round(time.monotonic() - started, 3))
     )
     return fp, cache / filename, round(duration, 3), words
+
+
+def _original_speech(
+    store: ProjectStore, project: Project, shot: Shot, *, stages: list[StageRecord], cancel: threading.Event
+) -> tuple[str, Path, float, list[tuple[str, float, float]]]:
+    """原声镜头：人声来自原片（按原声音量混进去），这里只生成镜头时长的静音轨，
+    逐词时间取语音识别结果，字幕跟着原声走。"""
+    from shotwright.services import transcribe
+
+    seconds = shot.duration or 2.0
+    words = transcribe.shot_words(store, project, shot)
+    fp = fingerprint("voice-original", round(seconds, 3), words)
+    cache = store.cache_dir(project.id, "voice")
+    path = cache / f"{fp}.m4a"
+    cached = path.is_file()
+    started = time.monotonic()
+    if not cached:
+        with tempfile.TemporaryDirectory(prefix="shotwright-voice-") as temp:
+            out = Path(temp) / "voice.m4a"
+            run_ffmpeg(
+                ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                 "-t", f"{seconds:.3f}", *AUDIO_ARGS, str(out)],
+                cancel=cancel,
+            )
+            shutil.move(str(out), path)
+    stages.append(StageRecord(f"{shot.id}:voice", "voice", fp, cached, round(time.monotonic() - started, 3)))
+    return fp, path, round(seconds, 3), words
 
 
 PREVIEW_LIMIT = 200

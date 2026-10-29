@@ -128,17 +128,15 @@ export function OriginRecord({ project, run }: OriginRecordProps) {
     } catch {
       existing = {};
     }
-    const unsaved = !!(existing.idea?.trim() || existing.subject?.trim() || existing.lines?.some((line) => line.trim()) || existing.script?.trim());
+    const unsaved = !!(existing.idea?.trim() || existing.subject?.trim() || existing.lines?.some((line) => line.trim()));
     if (unsaved && !window.confirm(t("origin.replaceDraft"))) return;
-    const aiFlow = !!subject;
+    // 有诉求时直接回到脚本（或诉求）这一步；没有诉求的旧项目从想法开始，把原来的文案带过去。
     const next: Draft = {
-      mode: aiFlow ? "llm" : "split",
-      step: aiFlow ? (lines.length ? 3 : 2) : 1,
-      idea,
+      step: subject ? (lines.length ? 3 : 2) : 1,
+      idea: idea || (subject ? "" : scriptText),
       subject,
       title: project.title,
-      lines,
-      script: aiFlow ? "" : scriptText,
+      lines: subject ? lines : [],
       videoType: project.video_type ?? "product_ad",
       aspect: project.canvas.aspect,
       duration: project.target_seconds ?? 30,

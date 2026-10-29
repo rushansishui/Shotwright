@@ -61,6 +61,12 @@ EN: dict[str, str] = {
     # 冲突
     "镜头已锁定，请先解锁": "This shot is locked. Unlock it first.",
     "这个镜头正在生成，请等它完成": "This shot is already being generated. Please wait for it to finish.",
+    "没有需要生成的镜头": "No shots need generating",
+    "一键生成会调用收费服务，需要确认费用后才会开始": "Generate all uses paid services; confirm the cost to start",
+    "预计费用超出项目费用上限，可以在渲染面板提高上限，或者少选几个镜头": (
+        "The estimated cost exceeds the project's budget. Raise the budget in the render panel or generate fewer shots"
+    ),
+    "正在一键生成，请等它完成或先停止": "Generate all is already running. Wait for it to finish or stop it first",
     "这个项目正在渲染，请等它结束，或加 ?force=true 强制删除": "This project is rendering. Wait for it to finish, or pass ?force=true to delete it anyway.",
     # 上传
     "文件超过 500MB": "The file is larger than 500 MB",

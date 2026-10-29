@@ -13,6 +13,10 @@ interface ProjectListProps {
   loading?: boolean;
   onChanged: () => void;
   onError: (message: string) => void;
+  /** 列表标题；默认「最近的项目」。 */
+  title?: string;
+  /** 列表为空时的提示。 */
+  empty?: string;
 }
 
 const PAGE = 12;
@@ -44,7 +48,22 @@ function useRelativeTime() {
 }
 
 /** 首页的项目列表：带封面的卡片网格，可以搜索、复制、删除。 */
-export function ProjectList({ projects, onChanged, onError, className = "", compact = false, loading = false }: ProjectListProps) {
+/** 打开项目的地址：还没生成镜头的剪辑任务回到剪辑页，其余进编辑器。 */
+function projectHref(p: ProjectSummary): string {
+  if (p.origin === "cut" && p.shots === 0 && p.source_asset) return `#/cut/${p.id}/${p.source_asset}`;
+  return `#/p/${p.id}`;
+}
+
+export function ProjectList({
+  projects,
+  onChanged,
+  onError,
+  className = "",
+  compact = false,
+  loading = false,
+  title,
+  empty,
+}: ProjectListProps) {
   const { t } = useI18n();
   const when = useRelativeTime();
   const [query, setQuery] = useState("");
@@ -88,7 +107,7 @@ export function ProjectList({ projects, onChanged, onError, className = "", comp
     <section className={`card projects ${compact ? "compact" : ""} ${className}`}>
       <div className="projects-head">
         <h2>
-          {t("home.recent")}
+          {title ?? t("home.recent")}
           {projects.length > 0 && <span className="projects-count">{projects.length}</span>}
         </h2>
         {projects.length > (compact ? 6 : 4) && (
@@ -108,7 +127,7 @@ export function ProjectList({ projects, onChanged, onError, className = "", comp
       {loading ? (
         <p className="muted">{t("projects.loading")}</p>
       ) : projects.length === 0 ? (
-        <p className="muted">{t("home.empty")}</p>
+        <p className="muted">{empty ?? t("home.empty")}</p>
       ) : filtered.length === 0 ? (
         <p className="muted">{t("projects.noMatch")}</p>
       ) : (
@@ -119,7 +138,7 @@ export function ProjectList({ projects, onChanged, onError, className = "", comp
             const cover = p.cover && !broken.has(p.id) ? p.cover : null;
             return (
               <li key={p.id} className={`project-card ${busy === p.id ? "busy" : ""}`}>
-                <a href={`#/p/${p.id}`} className="project-link">
+                <a href={projectHref(p)} className="project-link">
                   <div className={`project-cover a${p.aspect.replace(":", "-")}`}>
                     {cover ? (
                       <>

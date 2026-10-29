@@ -51,14 +51,23 @@ def redact(value: object, secret: str) -> str:
     return text.replace(secret, "***") if secret else text
 
 
-def rejection_message(label: str, response: httpx.Response, secret: str, model: str = "") -> str:
+DEFAULT_CONSOLE = "火山方舟控制台的「开通管理」"
+
+
+def rejection_message(
+    label: str, response: httpx.Response, secret: str, model: str = "", console: str = DEFAULT_CONSOLE
+) -> str:
     """4xx 拒绝的提示；模型不存在或未开通时告诉用户怎么处理。"""
     detail = error_detail(response, secret)
+    if response.status_code == 404 and not detail.strip():
+        # 没有任何说明的 404 是接口路径不存在（多半是 base_url 写错了），不是模型没开通。
+        url = redact(str(response.request.url), secret) if response.request is not None else ""
+        return f"{label} 的接口地址不存在（HTTP 404）：{url}。请检查 config.toml 里这个服务的 base_url 写法"
     message = f"{label} 拒绝了请求：HTTP {response.status_code}，{detail}"
     lowered = detail.lower()
     if response.status_code == 404 or "does not exist" in lowered or "modelnotopen" in lowered:
         target = f"模型 {model} " if model else "该模型"
-        message += f"。请先在火山方舟控制台的「开通管理」里开通{target}，或在 config.toml 中换成已开通的模型"
+        message += f"。请先在{console}里开通{target}，或在 config.toml 中换成已开通的模型"
     return message
 
 
@@ -70,8 +79,15 @@ def error_detail(response: httpx.Response, secret: str) -> str:
     error = body.get("error") if isinstance(body, dict) else None
     if isinstance(error, dict):
         message = error.get("message") or error.get("code") or error
+    elif error:
+        message = error
+    elif isinstance(body, dict) and (body.get("message") or body.get("msg") or body.get("detail")):
+        # 百炼、可灵等返回 {"code": ..., "message": ...}
+        message = body.get("message") or body.get("msg") or body.get("detail")
+        if body.get("code") not in (None, 0, "0", ""):
+            message = f"{body.get('code')}: {message}"
     else:
-        message = error or body
+        message = body
     return redact(str(message)[:300], secret)
 
 
@@ -84,8 +100,15 @@ def _submit(
     label: str,
     secret: str,
     task_id_field: str = "id",
+    task_id_of: Callable[[dict], Any] | None = None,
+    reject_of: Callable[[dict], Any] | None = None,
+    console: str = DEFAULT_CONSOLE,
 ) -> str:
-    """提交收费任务，返回远端任务 id。不重试。"""
+    """提交收费任务，返回远端任务 id。不重试。
+
+    ``task_id_of`` 从响应里取任务 id（嵌套在 ``output`` / ``data`` 里时用）；
+    ``reject_of`` 返回非空时表示 HTTP 200 但业务上拒绝了请求（例如余额不足），没有创建任务。
+    """
     try:
         response = client.post(url, json=dict(payload), headers=dict(headers), follow_redirects=False)
     except httpx.HTTPError as exc:
@@ -98,13 +121,23 @@ def _submit(
         raise UnconfirmedTaskError(
             f"{label} 提交返回 HTTP {status}，远端可能已经创建任务并扣费，请到服务商控制台确认"
         )
+    model = str(payload.get("model") or payload.get("model_name") or "")
     if status >= 400:
-        raise ProviderError(rejection_message(label, response, secret, str(payload.get("model") or "")))
+        raise ProviderError(rejection_message(label, response, secret, model, console))
     try:
         body = response.json()
     except ValueError as exc:
         raise UnconfirmedTaskError(f"{label} 提交的响应无法解析，远端可能已经创建任务") from exc
-    task_id = str((body or {}).get(task_id_field) or "").strip() if isinstance(body, dict) else ""
+    if isinstance(body, dict) and reject_of is not None:
+        reason = reject_of(body)
+        if reason:
+            raise ProviderError(f"{label} 拒绝了请求：{redact(reason, secret)[:300]}")
+    if not isinstance(body, dict):
+        task_id = ""
+    elif task_id_of is not None:
+        task_id = str(task_id_of(body) or "").strip()
+    else:
+        task_id = str(body.get(task_id_field) or "").strip()
     if not task_id:
         raise UnconfirmedTaskError(f"{label} 接受了请求但没有返回任务 id")
     return task_id
@@ -215,13 +248,25 @@ def submit(
     label: str,
     secret: str,
     task_id_field: str = "id",
+    task_id_of: Callable[[dict], Any] | None = None,
+    reject_of: Callable[[dict], Any] | None = None,
+    console: str = DEFAULT_CONSOLE,
 ) -> str:
     """提交收费任务，返回远端任务 id。不重试。"""
-    model = str(payload.get("model") or "")
+    model = str(payload.get("model") or payload.get("model_name") or "")
     log.info("%s 提交收费任务：模型 %s", label, model)
     try:
         task_id = _submit(
-            client, url, payload, headers=headers, label=label, secret=secret, task_id_field=task_id_field
+            client,
+            url,
+            payload,
+            headers=headers,
+            label=label,
+            secret=secret,
+            task_id_field=task_id_field,
+            task_id_of=task_id_of,
+            reject_of=reject_of,
+            console=console,
         )
     except UnconfirmedTaskError as exc:
         log.error("%s 提交结果无法确认，可能已扣费：%s", label, exc)

@@ -33,8 +33,14 @@ _BUILTIN_MODULES = (
     "shotwright.providers.stock.pexels",
     "shotwright.providers.stock.coverr",
     "shotwright.providers.video_gen.seedance",
+    "shotwright.providers.video_gen.wan",
+    "shotwright.providers.video_gen.kling",
+    "shotwright.providers.video_gen.minimax",
+    "shotwright.providers.video_gen.fal",
     "shotwright.providers.image_gen.openai_images",
     "shotwright.providers.music.archive",
+    "shotwright.providers.asr.faster_whisper",
+    "shotwright.providers.asr.openai_asr",
 )
 
 
@@ -95,7 +101,7 @@ def create(kind: str, provider_id: str | None, settings: Settings) -> object:
         values["proxy"] = settings.proxy
     missing = entry.spec.missing_fields(values)
     if missing:
-        raise ProviderNotConfigured(f"{entry.spec.name} 缺少配置：{', '.join(missing)}")
+        raise ProviderNotConfigured(f"{entry.spec.name} 缺少配置：{', '.join(missing)}，请到「服务设置」里填写")
     try:
         return entry.factory(values)
     except (ValueError, TypeError, KeyError) as exc:

@@ -100,6 +100,15 @@ registry.register(ProviderSpec(kind="video_gen", id="fakevid", name="FakeVid", p
 registry.register(ProviderSpec(kind="image_gen", id="fakeimg", name="FakeImg", paid=True), FakeImageGen)
 
 
+@pytest.fixture(autouse=True)
+def _skip_look_gate(request, monkeypatch):
+    """大多数测试关心的是生成本身，不是「先确认素材」的拦截；带 @pytest.mark.gate 的测试才检查拦截。"""
+    if request.node.get_closest_marker("gate") is None:
+        from shotwright.services import readiness
+
+        monkeypatch.setattr(readiness, "generation_locked", lambda project: False)
+
+
 @pytest.fixture
 def settings(tmp_path) -> Settings:
     s = Settings(storage_dir=tmp_path / "projects", auto_fetch_visuals=False)

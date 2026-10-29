@@ -196,7 +196,9 @@ class SeedanceVideo:
             except UnconfirmedTaskError:
                 raise
             except ProviderError as exc:
-                if not refs:
+                from shotwright.providers.video_gen.common import is_account_problem
+
+                if not refs or is_account_problem(str(exc)):
                     raise
                 # 远端明确拒绝（4xx，没扣费）：多数是不支持参考图。交给调用方去掉提示词里的参考图
                 # 要求后再提交，这里不自己重试——提示词里的「参考图 1/2」由调用方拼的。
@@ -204,6 +206,14 @@ class SeedanceVideo:
             if on_task is not None:
                 on_task(task_id)
             return self._finish(client, task_id, output)
+
+    def check(self) -> tuple[bool, str]:
+        """测试连接：列出最近的一个任务，不花钱。"""
+        from shotwright.providers.video_gen.common import run_check
+
+        with self._client() as client:
+            url = f"{self.base_url}/contents/generations/tasks?page_num=1&page_size=1"
+            return run_check(client, url, self._headers, secret=self.api_key)
 
     def resume(self, task_id: str, *, output: Path) -> Path:
         """继续轮询一个已提交的任务（进程重启后恢复用）。"""

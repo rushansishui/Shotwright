@@ -254,10 +254,12 @@ def _provider_id(settings: Settings, kind: str, shot: Shot) -> str | None:
     chosen = shot.visual.provider
     if chosen:
         try:
-            registry.spec(kind, chosen)
-            return chosen
+            spec = registry.spec(kind, chosen)
         except ProviderError:
-            pass
+            spec = None
+        # 镜头当初选的服务后来删掉了 Key：界面上已经显示成默认服务，这里也跟着用默认服务。
+        if spec is not None and (chosen == settings.default_provider(kind) or registry.is_configured(spec, settings)):
+            return chosen
     return settings.default_provider(kind)
 
 
@@ -330,13 +332,18 @@ def apply_quality(settings: Settings, provider: object, provider_id: str | None,
         return ""
     if quality != "draft":
         return current
+    from shotwright.providers.video_gen.common import draft_resolution
+
     config = settings.provider_settings("video_gen", provider_id or "")
-    draft = (config.get("draft_resolution") or DRAFT_RESOLUTION).strip().lower()
-    order = ("480p", "720p", "1080p")
-    if draft in order and current in order and order.index(draft) < order.index(current):
+    supported = getattr(provider, "resolutions", None)
+    draft = draft_resolution(
+        current,
+        config.get("draft_resolution") or DRAFT_RESOLUTION,
+        supported if isinstance(supported, tuple | list) else None,
+    )
+    if draft != current:
         provider.resolution = draft  # type: ignore[attr-defined]
-        return draft
-    return current
+    return draft
 
 
 def generate_keyframes(
@@ -557,9 +564,9 @@ def _reference_files(
 
 
 def _reference_limit(provider) -> int:
-    """生成服务一次最多接受几张参考图（Seedance 2.x 9 张）；没说明时按 4 张。"""
+    """生成服务一次最多接受几张参考图（Seedance 2.x 9 张；0 表示当前模型不支持参考图）；没说明时按 4 张。"""
     value = getattr(provider, "max_reference_images", 4)
-    return value if isinstance(value, int) and value > 0 else 4
+    return value if isinstance(value, int) and value >= 0 else 4
 
 
 def _accepts_references(provider, name: str = "references") -> bool:
@@ -611,6 +618,7 @@ def generate_ai_candidate(
         first_frame is None
         and reference_video is None
         and _accepts_references(provider, "reference_images")
+        and _reference_limit(provider) > 0
         and bool(subject_images(project, shot))
     )
     if first_frame is None and reference_video is None and not use_references:
@@ -618,6 +626,8 @@ def generate_ai_candidate(
         first_frame, frame_ref = _reference_first_frame(store, project, shot)
         frame_source = frame_ref.asset_id if frame_ref is not None else ""
     ref_limit = _reference_limit(provider) if use_references else 0
+    if use_references:
+        log.info("项目 %s 镜头 %s：用参考图生成（最多 %d 张）", project.id, shot.id, ref_limit)
     meta: dict[str, str] = {}
     if resolution:
         meta["resolution"] = resolution

@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_FONTS_DIR = ROOT_DIR / "resources" / "fonts"
 
-PROVIDER_KINDS = ("llm", "tts", "stock", "video_gen", "image_gen", "music")
+PROVIDER_KINDS = ("llm", "tts", "stock", "video_gen", "image_gen", "music", "asr")
 
 DEFAULT_PROVIDERS = {
     "llm": "doubao",
@@ -27,6 +27,7 @@ DEFAULT_PROVIDERS = {
     "video_gen": "seedance",
     "image_gen": "seedream",
     "music": "archive",
+    "asr": "faster_whisper",
 }
 
 
@@ -46,6 +47,8 @@ class Settings:
     )
     allowed_hosts: list[str] = field(default_factory=list)
     """额外放行的 Host（例如局域网部署时的 192.168.x.x）。本机地址始终放行。"""
+    config_path: Path | None = None
+    """读取的 config.toml 路径；在设置页修改配置时写回这个文件。为空时不能在界面里改配置。"""
 
     def provider_settings(self, kind: str, provider_id: str) -> dict[str, str]:
         values = dict(self.providers.get(kind, {}).get(provider_id, {}))
@@ -78,6 +81,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
 
     app = data.get("app", {})
     settings = Settings()
+    settings.config_path = config_path.resolve()
     storage = os.environ.get("SHOTWRIGHT_STORAGE") or app.get("storage_dir")
     if storage:
         settings.storage_dir = Path(storage)
