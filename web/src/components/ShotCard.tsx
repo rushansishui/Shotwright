@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { assetUrl, estimateSeconds, type GenerateOptions } from "../api";
+import { api, assetUrl, estimateSeconds, type GenerateOptions } from "../api";
 import { providerName, useI18n } from "../i18n";
 import type { MessageKey } from "../messages";
-import type { Asset, CameraMove, Project, ProviderInfo, Shot, ShotRole, ShotUpdate, Take, VisualMode, VisualPatch } from "../types";
+import { riskConfirmText, riskText } from "../risks";
+import type { Asset, CameraMove, PrecheckRisk, Project, ProviderInfo, Shot, ShotRole, ShotUpdate, Take, VisualMode, VisualPatch } from "../types";
 import { Icon, Segmented } from "./Controls";
 import { ShotEdit } from "./ShotEdit";
 
@@ -87,6 +88,8 @@ export function ShotCard(props: {
   onMove: (delta: number) => void;
   onInsert: () => void;
   onSplit: (at: number) => void;
+  /** 把配音文案从中间的句子处拆成两个镜头（配音超过 AI 视频单次上限时）。 */
+  onSplitText?: () => void;
   onMerge: () => void;
   onDelete: () => void;
   /** 从候选素材里删掉一个。 */
@@ -146,6 +149,39 @@ export function ShotCard(props: {
   // 镜头单独选了视频服务时用它，否则用默认服务。
   const aiVideo = videoProviders.find((p) => p.id === visual.provider) ?? props.aiVideo;
   const generator = visual.mode === "ai" ? aiVideo : visual.mode === "image" ? props.aiImage : null;
+
+  /** 生成前检查（只看文字、不花钱）：描述改了就重新查，停顿一会儿再请求。 */
+  const checkPrompt = isImage ? still || visual.prompt : prompt;
+  const [risks, setRisks] = useState<PrecheckRisk[]>([]);
+  const checkable = (visual.mode === "ai" || visual.mode === "image") && !visual.locked;
+  useEffect(() => {
+    if (!checkable || !checkPrompt.trim()) {
+      setRisks([]);
+      return;
+    }
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      api
+        .precheck(project.id, shot.id, checkPrompt)
+        .then((data) => alive && setRisks(data.risks))
+        .catch(() => alive && setRisks([]));
+    }, 600);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [checkable, checkPrompt, project.id, shot.id, shot.text, visual.mode, visual.provider, (shot.voice ?? project.voice).rate]);
+  /** 点生成时再查一次（描述可能刚改完），把结果附在确认框里。 */
+  const risksForConfirm = async (stillsOnly = false) => {
+    if (!checkPrompt.trim()) return "";
+    try {
+      const found = (await api.precheck(project.id, shot.id, checkPrompt)).risks;
+      // 关键帧只是静态图片：配音时长超限要到生成视频时才有影响，这里不提。
+      return riskConfirmText(t, stillsOnly ? found.filter((risk) => risk.code !== "too_long") : found);
+    } catch {
+      return "";
+    }
+  };
   const modeOf = (asset: Asset | undefined): VisualMode | undefined => {
     if (!asset) return undefined;
     const mode = props.sourceModes[asset.source];
@@ -195,19 +231,29 @@ export function ShotCard(props: {
         : t("shot.confirm.image");
     const cost = generator.paid ? `\n${t("shot.confirm.cost", { name: providerName(generator, lang) })}` : "";
     const times = visual.mode === "ai" && count > 1 ? `\n${t("shot.confirm.count", { n: count })}` : "";
-    if (window.confirm(t("shot.confirm.question", { n: index + 1, what }) + times + cost)) {
+    const warned = await risksForConfirm();
+    if (window.confirm(t("shot.confirm.question", { n: index + 1, what }) + times + cost + warned)) {
       props.onCandidates(true, unsavedPrompt(), false, visual.mode === "ai" ? { count, quality } : {});
     }
   };
 
   /** 先出关键帧：用 AI 图片服务出几张静态画面，选一张作首帧再生成视频。 */
-  const keyframes = () => {
+  const keyframes = async () => {
     if (!props.aiImage) return;
     const cost = props.aiImage.paid ? `\n${t("shot.confirm.cost", { name: providerName(props.aiImage, lang) })}` : "";
-    if (window.confirm(t("shot.confirm.keyframes", { n: index + 1, count: 3 }) + cost)) {
+    const warned = await risksForConfirm(true);
+    if (window.confirm(t("shot.confirm.keyframes", { n: index + 1, count: 3 }) + cost + warned)) {
       props.onCandidates(true, unsavedPrompt(), false, { keyframes: 3 });
     }
   };
+
+  /**
+   * 关键帧先行（默认）：AI 视频镜头还没有首帧、也配了 AI 图片服务时，主按钮是「先出关键帧」，
+   * 直接生成视频退为次要按钮。图片便宜得多，挑满意的一张作首帧再生成视频，少抽卡。
+   */
+  const keyframeFirst = visual.mode === "ai" && !!props.aiImage && !firstFrame && frameChoices.length === 0;
+  const keyframesDisabled =
+    props.aiLocked || props.busy || visual.locked || !props.aiImage || !(promptValue.trim() || still.trim());
 
   const generating = visual.mode === "ai" || visual.mode === "image";
   const busyVerb = t(props.queued ? "shot.busy.queued" : generating ? "shot.busy.generating" : visual.mode === "stock" ? "shot.busy.searching" : "shot.busy.working");
@@ -364,6 +410,17 @@ export function ShotCard(props: {
                 ))}
               </select>
             )}
+            {keyframeFirst && (
+              <button
+                type="button"
+                className="btn primary"
+                disabled={keyframesDisabled}
+                title={t("shot.keyframesFirstHint")}
+                onClick={keyframes}
+              >
+                {t("shot.keyframesFirst")}
+              </button>
+            )}
             <button
               type="button"
               className="btn"
@@ -382,12 +439,57 @@ export function ShotCard(props: {
                   <span className="spinner" aria-hidden="true" />
                   {busyLabel}
                 </>
+              ) : keyframeFirst ? (
+                t(generator?.paid ? "shot.generateDirectPaid" : "shot.generateDirect")
               ) : generator?.paid ? (
                 t("shot.generatePaid")
               ) : (
                 t("shot.generate")
               )}
             </button>
+          </div>
+        )}
+        {risks.length > 0 && (
+          <div className="hint warn small risks" role="note">
+            <p className="risks-title">{t("risk.title", { n: risks.length })}</p>
+            <ul>
+              {risks.map((risk) => {
+                const { what, fix } = riskText(t, risk);
+                return (
+                  <li key={risk.code}>
+                    {what}
+                    <br />
+                    <span className="muted">
+                      {t("risk.fixLabel")}
+                      {fix}
+                    </span>
+                    {risk.code === "too_long" && props.onSplitText && (
+                      <button type="button" className="linkish" disabled={props.busy || visual.locked} onClick={props.onSplitText}>
+                        {t("risk.splitText")}
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            {props.canRewrite && props.onRewrite && risks.some((risk) => risk.code !== "too_long") && (
+              <button
+                type="button"
+                className="btn small"
+                disabled={visual.locked || props.busy}
+                title={t("risk.aiFixHint")}
+                onClick={() => {
+                  // 改写要求：每条风险的建议（时长问题靠拆镜头或删文案解决，不交给改写）。
+                  const tips = risks
+                    .filter((risk) => risk.code !== "too_long")
+                    .map((risk) => riskText(t, risk).fix)
+                    .join("；");
+                  props.onRewrite?.(`${t("risk.aiFixPrefix")}${tips}`.slice(0, 500));
+                }}
+              >
+                {t("risk.aiFix")}
+              </button>
+            )}
           </div>
         )}
         {props.aiLocked && (visual.mode === "ai" || visual.mode === "image") && (
@@ -424,15 +526,17 @@ export function ShotCard(props: {
               <option value="final">{t("shot.genQuality.final")}</option>
               <option value="draft">{t("shot.genQuality.draft")}</option>
             </select>
-            <button
-              type="button"
-              className="btn small"
-              disabled={props.aiLocked || props.busy || visual.locked || !props.aiImage || !(promptValue.trim() || still.trim())}
-              title={props.aiImage ? t("shot.keyframesHint") : t("shot.noGenerator")}
-              onClick={keyframes}
-            >
-              {t("shot.keyframes")}
-            </button>
+            {!keyframeFirst && (
+              <button
+                type="button"
+                className="btn small"
+                disabled={keyframesDisabled}
+                title={props.aiImage ? t("shot.keyframesHint") : t("shot.noGenerator")}
+                onClick={keyframes}
+              >
+                {t("shot.keyframes")}
+              </button>
+            )}
           </div>
         )}
         {frameChoices.length > 0 && (
@@ -672,7 +776,7 @@ export function ShotCard(props: {
         )}
 
         {visual.mode !== "color" && shown.length === 0 && !props.busy && (
-          <p className="muted small">{emptyHint[visual.mode]}</p>
+          <p className="muted small">{keyframeFirst ? t("shot.empty.aiKeyframes") : emptyHint[visual.mode]}</p>
         )}
         {shown.length > 0 && (
           <div className="candidates" role="listbox" aria-label={t("shot.candidates")} aria-multiselectable="true">

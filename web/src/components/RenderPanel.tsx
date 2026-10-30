@@ -8,7 +8,8 @@ import { subtitleMargin } from "../types";
 import { textCss, useFontReady, useFonts, weightFile } from "../textStyle";
 import { highlightKeywords } from "./editor/KeywordField";
 import type { TextStyle } from "../types";
-import type { CheckIssue, CostEstimate, Job, PlatformInfo, Project, RenderResult } from "../types";
+import type { CheckIssue, CostEstimate, Job, PlatformInfo, PrecheckRisk, Project, RenderResult } from "../types";
+import { riskText } from "../risks";
 
 const alignFlex = (align: string | undefined) =>
   ({ left: "flex-start", center: "center", right: "flex-end" })[align ?? "center"] ?? "center";
@@ -179,6 +180,11 @@ export function RenderPanel(props: {
   const { t, lang } = useI18n();
   /** 体检问题按 code 本地化；没有对应文案时用后端的中文说明。 */
   const checkupText = (issue: CheckIssue) => {
+    if (issue.code.startsWith("risk_")) {
+      // 生成前检查的风险：问题和建议都按界面语言显示。
+      const { what, fix } = riskText(t, { code: issue.code.slice(5) as PrecheckRisk["code"], params: issue.params ?? {} });
+      return t("checkup.risk", { n: issue.shot ?? "", what, fix });
+    }
     const key = `checkup.${issue.code}` as MessageKey;
     const params = { ...(issue.params ?? {}) };
     if (typeof params.position === "string") params.position = t(`checkup.position.${params.position}` as MessageKey);

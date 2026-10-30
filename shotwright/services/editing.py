@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import re
+
 from shotwright.core.ids import new_id
 from shotwright.core.models import Asset, Project, Shot, ShotVisual
 from shotwright.core.store import ProjectStore
@@ -152,3 +154,50 @@ def _split_original_text(store: ProjectStore, project: Project, first: Shot, sec
         return
     for target, words in zip((first, second), parts, strict=True):
         target.text = transcribe.join_words([w[0] for w in words])
+
+
+_CLAUSE_END = re.compile(r"(?<=[。！？!?；;…，,、：:])\s*|(?<=\.)\s+")
+"""文案里可以断开的位置：句末，其次是逗号这类分句处。"""
+
+
+def split_text(project: Project, shot_id: str) -> Shot:
+    """把一个配音镜头的文案从中间最近的句子（或分句）处拆成两个镜头，返回新插入的后半段。
+
+    配音比 AI 视频模型一次能生成的长度还长时用：拆开后每个镜头单独生成，比分段续生成
+    便宜，衔接也自然。后半段沿用画面来源、画面描述、运镜和服务选择，但不带已经生成的
+    候选素材，需要单独生成；两个镜头都跟随配音时长。
+    """
+    shot = project.shot(shot_id)
+    if shot.speech == "original":
+        raise ValueError("原声镜头请在画面上按时间拆分")
+    text = shot.text.strip()
+    cuts = [m.end() for m in _CLAUSE_END.finditer(text) if 0 < m.end() < len(text)]
+    if not cuts:
+        raise ValueError("这句文案里没有可以断开的句号或逗号，请手动拆分或删减")
+    middle = len(text) / 2
+    sentence = [c for c in cuts if text[:c].rstrip()[-1:] in "。！？!?；;….\n"]
+    # 优先在句末断开；句末离中间太远（超过三分之一）时改在逗号处断开。
+    pool = sentence if sentence and min(abs(c - middle) for c in sentence) <= len(text) / 3 else cuts
+    cut = min(pool, key=lambda c: abs(c - middle))
+    head, tail = text[:cut].strip(), text[cut:].strip()
+    visual = shot.visual
+    second = Shot(
+        id=new_id(),
+        text=tail,
+        role=shot.role,
+        voice=shot.voice,
+        visual=ShotVisual(
+            mode=visual.mode,
+            prompt=visual.prompt,
+            image_prompt=visual.image_prompt,
+            camera=visual.camera,
+            terms=list(visual.terms),
+            provider=visual.provider,
+            color=visual.color,
+            refs=list(visual.refs or []),
+        ),
+    )
+    shot.text = head
+    shot.duration = None
+    project.shots.insert(project.shots.index(shot) + 1, second)
+    return second

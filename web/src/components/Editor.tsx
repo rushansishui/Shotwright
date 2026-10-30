@@ -368,6 +368,11 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
                 onMove={(delta) => moveShot(index, delta)}
                 onInsert={() => run(() => api.addShot(id, shot.id))}
                 onSplit={(at) => run(() => api.splitShot(id, shot.id, at), shot.id)}
+                onSplitText={() => {
+                  if (window.confirm(t("editor.splitText", { n: index + 1 }))) {
+                    run(() => api.splitText(id, shot.id), shot.id);
+                  }
+                }}
                 onMerge={() => {
                   if (window.confirm(t("editor.mergeShot", { n: index + 1, m: index + 2 }))) {
                     run(() => api.mergeShot(id, shot.id));

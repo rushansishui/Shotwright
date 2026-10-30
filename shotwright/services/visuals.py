@@ -784,6 +784,18 @@ MAX_EXTEND_PARTS = 4
 """末帧续生成最多分几段，避免配音特别长时花太多钱；剩下的时长仍按补足方式处理。"""
 
 
+def shot_max_duration(settings: Settings, shot: Shot) -> float | None:
+    """这个镜头用的 AI 视频服务一段最长能生成多少秒；服务没配置时用声明的上限。不发请求。"""
+    provider_id = _provider_id(settings, "video_gen", shot)
+    if not provider_id:
+        return None
+    try:
+        provider = registry.create("video_gen", provider_id, settings)
+    except ProviderError:
+        provider = None
+    return _max_duration(provider, provider_id)
+
+
 def _max_duration(provider: object, provider_id: str | None) -> float | None:
     """生成服务一段最长能生成多少秒：优先用 Provider 实例的配置，其次用声明的上限。"""
     configured = getattr(provider, "max_duration", None)

@@ -180,6 +180,11 @@ class SplitShot(_Body):
     """拆分点：从镜头片段开头算起的秒数。"""
 
 
+class Precheck(_Body):
+    prompt: str | None = Field(None, max_length=4000)
+    """还没保存的画面描述；为空时检查镜头里已保存的。"""
+
+
 class ReorderShots(_Body):
     order: list[str]
 

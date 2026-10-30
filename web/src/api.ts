@@ -11,6 +11,7 @@ import type {
   LanguageInfo,
   MaterialNote,
   Project,
+  PrecheckRisk,
   ProjectSummary,
   Providers,
   SettingsData,
@@ -197,6 +198,11 @@ export const api = {
   addShot: (id: string, after?: string) => request<Project>(`/projects/${id}/shots`, json("POST", { text: "", after })),
   splitShot: (id: string, shotId: string, at: number) =>
     request<Project>(`/projects/${id}/shots/${shotId}/split`, json("POST", { at })),
+  /** 把配音文案从中间最近的句子处拆成两个镜头。 */
+  splitText: (id: string, shotId: string) => request<Project>(`/projects/${id}/shots/${shotId}/split-text`, json("POST", {})),
+  /** 生成前检查：画面描述的高风险内容、配音是否超过模型单次上限。不花钱。 */
+  precheck: (id: string, shotId: string, prompt?: string) =>
+    request<{ risks: PrecheckRisk[] }>(`/projects/${id}/shots/${shotId}/precheck`, json("POST", prompt === undefined ? {} : { prompt })),
   mergeShot: (id: string, shotId: string) => request<Project>(`/projects/${id}/shots/${shotId}/merge`, json("POST", {})),
   reorder: (id: string, order: string[]) => request<Project>(`/projects/${id}/shots/order`, json("PUT", { order })),
   updateShot: (
