@@ -431,6 +431,14 @@ export interface PlatformInfo {
 }
 
 /** 渲染前体检发现的一个问题。 */
+/** 生成前检查发现的风险（见后端 services/precheck.py）。 */
+export interface PrecheckRisk {
+  code: "hands" | "text" | "people" | "motion" | "camera" | "sequence" | "duplicate" | "too_long";
+  params: Record<string, string | number>;
+  message: string;
+  advice: string;
+}
+
 export interface CheckIssue {
   code: string;
   message: string;

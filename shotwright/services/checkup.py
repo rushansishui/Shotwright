@@ -3,7 +3,7 @@
 只读项目、不改任何东西，也不调用外部服务。检查项：
 缺画面、AI 镜头没有画面描述、素材明显比配音短（会大段定格或循环）、素材分辨率
 不足、叠加文字与字幕或彼此重叠、按当前设置渲染会超出费用上限、AI 镜头多但没有
-全片设定。
+全片设定、还没生成的 AI 镜头画面描述里有容易翻车的内容或配音超过模型单次上限（见 precheck）。
 """
 
 from __future__ import annotations
@@ -57,6 +57,8 @@ def check_project(project: Project, settings: Settings, *, quality: str = "final
                     {"n": index},
                 )
             )
+            if visual.mode in ("ai", "image"):
+                issues.extend(_risk_issues(project, shot, settings, index))
             continue
         chosen = shot_assets(project, shot)
         low = next(
@@ -218,6 +220,23 @@ def _overlay_issues(project: Project) -> list[CheckIssue]:
 
 
 _POSITIONS = {"top": "顶部", "middle": "中间", "bottom": "底部"}
+
+
+def _risk_issues(project: Project, shot, settings: Settings, index: int) -> list[CheckIssue]:
+    """还没生成画面的 AI 镜头：画面描述里的高风险内容、配音超过模型单次上限（生成前检查）。"""
+    from shotwright.services import precheck, visuals
+
+    longest = visuals.shot_max_duration(settings, shot) if shot.visual.mode == "ai" else None
+    return [
+        CheckIssue(
+            f"risk_{risk.code}",
+            f"镜头 {index}：{risk.message}。建议：{risk.advice}",
+            index,
+            {"n": index, **risk.params},
+            level="info",
+        )
+        for risk in precheck.shot_risks(project, shot, longest=longest)
+    ]
 
 
 def to_dicts(issues: list[CheckIssue]) -> list[dict]:

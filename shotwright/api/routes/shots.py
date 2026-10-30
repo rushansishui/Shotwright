@@ -6,10 +6,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import ValidationError
 
 from shotwright.api.context import ApiContext
-from shotwright.api.schemas import AddShot, ReorderShots, SplitShot, UpdateShot
+from shotwright.api.schemas import AddShot, Precheck, ReorderShots, SplitShot, UpdateShot
 from shotwright.core.models import Project, Shot, ShotVisual
 from shotwright.pipeline.shots import MAX_SEQUENCE
-from shotwright.services import editing, visuals
+from shotwright.services import editing, precheck, visuals
 
 
 def register(api: APIRouter, ctx: ApiContext) -> None:
@@ -47,6 +47,27 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
             editing.split_shot(project, _id(shot_id), body.at, store)
 
         return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/shots/{shot_id}/split-text")
+    def split_text(project_id: str, shot_id: str):
+        """把配音文案从中间最近的句子处拆成两个镜头（配音超过 AI 视频单次上限时用）。"""
+
+        def change(project: Project) -> None:
+            editing.split_text(project, _id(shot_id))
+
+        return _mutate(project_id, change)
+
+    @api.post("/projects/{project_id}/shots/{shot_id}/precheck")
+    def precheck_shot(project_id: str, shot_id: str, body: Precheck | None = None):
+        """生成前检查：画面描述里容易翻车的内容、配音是否超过模型单次上限。只读，不花钱。"""
+        project = store.load(_id(project_id))
+        try:
+            shot = project.shot(_id(shot_id))
+        except KeyError:
+            raise HTTPException(404, "镜头不存在") from None
+        longest = visuals.shot_max_duration(ctx.settings, shot) if shot.visual.mode == "ai" else None
+        risks = precheck.shot_risks(project, shot, prompt=body.prompt if body else None, longest=longest)
+        return {"risks": precheck.to_dicts(risks)}
 
     @api.post("/projects/{project_id}/shots/{shot_id}/merge")
     def merge_shot(project_id: str, shot_id: str):

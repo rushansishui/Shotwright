@@ -3370,3 +3370,25 @@ li.missing .readiness-mark {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* 生成前检查：描述里容易翻车的内容和改写建议 */
+.risks {
+  margin-top: 6px;
+}
+.risks .risks-title {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+.risks ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.risks li + li {
+  margin-top: 4px;
+}
+.risks .linkish {
+  margin-left: 6px;
+}
+.risks > .btn {
+  margin-top: 8px;
+}
