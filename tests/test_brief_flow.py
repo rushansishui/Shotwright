@@ -215,3 +215,41 @@ def test_creation_record_is_editable(client):
     )
     assert data["shots"][0]["text"] == text  # 只改记录，不动镜头
     assert client.patch(f"/api/v2/projects/{pid}", json={"script": ["x"] * 61}).status_code == 422
+
+
+def test_storyboard_without_llm_uses_own_script(client, settings, tmp_path):
+    """没配大模型：自己写的脚本一段一个镜头，上传的产品图直接当画面，没有画面的镜头用纯色底，能直接渲染。"""
+    settings.defaults["llm"] = ""
+    settings.defaults["stock"] = ""
+    project = client.post(
+        "/api/v2/projects",
+        json={"mode": "empty", "title": "我的羽绒服", "voice": {"provider": "silent"}},
+    ).json()
+    pid = project["id"]
+    with make_image(tmp_path / "coat.png").open("rb") as handle:
+        image = client.post(f"/api/v2/projects/{pid}/assets", files={"file": ("coat.png", handle)}).json()[
+            "id"
+        ]
+    lines = ["冬天出门怕冷？", "这件羽绒服只有三百克。", "点击购物车。"]
+    result = client.post(
+        f"/api/v2/projects/{pid}/storyboard",
+        json={
+            "subject": "",
+            "script": lines,
+            "materials": [{"kind": "image", "role": "product", "name": "coat.png", "asset_id": image}],
+        },
+    )
+    assert result.status_code == 200, result.text
+    shots = result.json()["shots"]
+    assert [shot["text"] for shot in shots] == lines
+    assert shots[0]["visual"]["mode"] == "upload" and shots[0]["visual"]["selected"] == image
+    assert [shot["visual"]["mode"] for shot in shots[1:]] == ["color", "color"]
+    assert shots[1]["visual"]["color"] != shots[2]["visual"]["color"]
+    assert result.json()["title"] == "我的羽绒服"
+
+    # 没有脚本、只有诉求时仍然需要大模型。
+    refused = client.post(f"/api/v2/projects/{pid}/storyboard", json={"subject": "随便写写"})
+    assert refused.status_code >= 400
+
+    job = client.post(f"/api/v2/projects/{pid}/renders", json={}).json()
+    assert client.get(f"/api/v2/renders/{job['id']}").json()["state"] == "done"

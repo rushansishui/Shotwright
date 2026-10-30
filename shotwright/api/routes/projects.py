@@ -29,7 +29,7 @@ from shotwright.media import ffmpeg
 from shotwright.pipeline import voice as voice_stage
 from shotwright.pipeline.render_types import RenderError
 from shotwright.providers import registry
-from shotwright.providers.base import ProviderError
+from shotwright.providers.base import ProviderError, ProviderNotConfigured
 from shotwright.services import brief as brief_service
 from shotwright.services import checkup, localize, prompting, pronounce, readiness, storyboard, visuals
 from shotwright.services import cost as cost_service
@@ -257,18 +257,27 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
             if item.asset_id is not None and _id(item.asset_id) not in project.assets:
                 raise HTTPException(404, "素材不存在")
         lang = languages.get(project.language)
-        llm = registry.create("llm", None, settings)
-        board = storyboard.write_storyboard(
-            llm,  # type: ignore[arg-type]
-            body.subject.strip(),
-            language=lang.prompt_name,
-            prompt_lang=prompting.prompt_language(project),
-            duration=body.duration,
-            video_type=project.video_type,
-            aspect=project.canvas.aspect,
-            script=body.script,
-            materials=brief_service.describe_materials(materials),
-        )
+        try:
+            llm = registry.create("llm", None, settings)
+        except ProviderNotConfigured:
+            if not body.script:
+                raise
+            llm = None
+        if llm is None:
+            # 没配大模型、但脚本是自己写好的：一段一个镜头，画面先用上传的图片、视频或纯色底，不花钱也能出片。
+            board = storyboard.plain_storyboard(body.script or [], title=project.title)
+        else:
+            board = storyboard.write_storyboard(
+                llm,  # type: ignore[arg-type]
+                body.subject.strip(),
+                language=lang.prompt_name,
+                prompt_lang=prompting.prompt_language(project),
+                duration=body.duration,
+                video_type=project.video_type,
+                aspect=project.canvas.aspect,
+                script=body.script,
+                materials=brief_service.describe_materials(materials),
+            )
 
         def change(latest: Project) -> None:
             latest.subject = body.subject.strip()
@@ -282,9 +291,9 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
             latest.shots = board.shots
             latest.look = board.look
             latest.look.confirmed = False  # 新写的主体要先准备、确认，才能生成 AI 画面
-            if latest.video_type:
+            if latest.video_type and llm is not None:
                 storyboard.suggest_sources(latest.shots, visuals.available_sources(settings), latest.look)
-            brief_service.apply_materials(latest, materials, board.footage)
+            brief_service.apply_materials(latest, materials, board.footage, photos_as_footage=llm is None)
 
         return _mutate(project_id, change)
 

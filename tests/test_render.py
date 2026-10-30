@@ -103,9 +103,12 @@ def test_auto_fetch_fills_missing_visuals_and_skips_locked(store, settings):
     assert not result.warnings
 
 
-def test_missing_provider_config_becomes_a_warning(store, settings):
+def test_missing_provider_config_becomes_a_warning(store, settings, monkeypatch):
+    from shotwright.services import visuals
+
     settings.auto_fetch_visuals = True
     settings.defaults["stock"] = "pexels"  # 没有配置 API Key
+    monkeypatch.setattr(visuals, "FREE_STOCK", "pexels")  # 不改用免 Key 的素材库，测试离线
     project = store.create(
         Project(
             voice=VoiceSettings(provider="silent"),
@@ -234,3 +237,13 @@ def test_short_topic_is_still_a_fallback_query(store, settings):
     )
     Renderer(store, settings).render(project.id)
     assert FakeStock.calls == ["city night"]
+
+
+def test_unconfigured_stock_falls_back_to_free_library(settings):
+    """默认素材库没填 Key 时改用免 Key 的 Coverr，不填任何 Key 也能找到画面。"""
+    from shotwright.services import visuals
+
+    settings.defaults["stock"] = "pexels"
+    assert visuals._provider_id(settings, "stock", Shot(text="hi")) == "coverr"
+    settings.providers["stock"] = {"pexels": {"api_key": "k"}}
+    assert visuals._provider_id(settings, "stock", Shot(text="hi")) == "pexels"

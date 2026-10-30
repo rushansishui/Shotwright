@@ -42,6 +42,7 @@ EN: dict[str, str] = {
     # 校验
     "不支持的语言": "Unsupported language",
     "请填写视频诉求": "Please describe what the video should say",
+    "请填写视频诉求或脚本": "Please describe the video or write its script",
     "请填写视频文案": "Please provide a script",
     "所选素材不存在": "The selected asset does not exist",
     "新顺序必须包含全部镜头且不能重复": "The new order must list every shot exactly once",

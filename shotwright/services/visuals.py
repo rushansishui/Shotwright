@@ -248,6 +248,10 @@ def _download_with_retry(
     raise last or ProviderError("素材下载失败")
 
 
+FREE_STOCK = "coverr"
+"""免 Key 的素材库，默认素材库没配置时用它。"""
+
+
 def _provider_id(settings: Settings, kind: str, shot: Shot) -> str | None:
     """镜头记录的 Provider 属于这个类别时才使用，否则用配置里的默认值。
 
@@ -264,7 +268,15 @@ def _provider_id(settings: Settings, kind: str, shot: Shot) -> str | None:
             chosen == settings.default_provider(kind) or registry.is_configured(spec, settings)
         ):
             return chosen
-    return settings.default_provider(kind)
+    default = settings.default_provider(kind)
+    if kind == "stock" and default != FREE_STOCK:
+        # 默认素材库（例如 Pixabay）还没填 Key 时改用免 Key 的 Coverr，不填任何 Key 也能找到画面。
+        try:
+            if not registry.is_configured(registry.spec("stock", default), settings):
+                return FREE_STOCK
+        except ProviderError:
+            return FREE_STOCK
+    return default
 
 
 def require_charge_confirmation(

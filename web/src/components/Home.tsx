@@ -7,6 +7,7 @@ import type { MessageKey } from "../messages";
 import type { Aspect, LanguageInfo, ProjectSummary, Providers, VideoType } from "../types";
 import { Icon, Segmented } from "./Controls";
 import { MaterialsPicker, type PendingMaterial } from "./MaterialsPicker";
+import { SetupCard } from "./SetupCard";
 import { DRAFT_KEY, loadDraft, saveDraft, type Step } from "../draft";
 
 /** 视频诉求的上限，和后端 schemas.MAX_SUBJECT_BYTES 一致。 */
@@ -167,6 +168,20 @@ export function Home() {
     return uploaded;
   }
 
+  /** 不用大模型：自己写口播脚本。想法里已经写了几句话时，按句拆成初稿。 */
+  function writeOwn() {
+    if (!cleanLines.length) {
+      const drafted = idea
+        .split(/(?<=[。！？!?；;\n])/)
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .slice(0, 60);
+      setLines(drafted.length ? drafted : ["", "", ""]);
+    }
+    setWarned(null);
+    setStep(3);
+  }
+
   function setLine(index: number, value: string) {
     setLines(lines.map((line, i) => (i === index ? value : line)));
   }
@@ -248,6 +263,14 @@ export function Home() {
           <h1>{t("home.newVideo")}</h1>
         </div>
 
+        {providers && !llmReady && (
+          <SetupCard
+            providers={providers}
+            onConfigured={() => api.providers().then(setProviders).catch(() => undefined)}
+            onWriteOwn={writeOwn}
+          />
+        )}
+
         <ol className="flow-steps" aria-label={t("flow.steps")}>
           {steps.map((item) => (
             <li key={item.n} className={step === item.n ? "on" : step > item.n ? "done" : ""}>
@@ -279,16 +302,17 @@ export function Home() {
               />
             </div>
             <MaterialsPicker items={materials} onChange={setMaterials} videoType={videoType} disabled={working} />
-            {providers && !llmReady && (
-            <p className="hint warn">
-              {t("home.llmMissing")} <a href="#/settings">{t("nav.status")} →</a>
-            </p>
-          )}
             {error && <p className="hint error">{error}</p>}
             <div className="flow-actions">
-              <button type="button" className="btn primary big" disabled={!idea.trim() || working} onClick={normalize}>
-                {busy === "normalize" ? t("flow.normalizing") : t("flow.normalize")}
-              </button>
+              {llmReady || !providers ? (
+                <button type="button" className="btn primary big" disabled={!idea.trim() || working} onClick={normalize}>
+                  {busy === "normalize" ? t("flow.normalizing") : t("flow.normalize")}
+                </button>
+              ) : (
+                <button type="button" className="btn primary big" disabled={working} onClick={writeOwn}>
+                  {t("setup.writeOwn")}
+                </button>
+              )}
               <button
                 type="button"
                 className="btn ghost"
@@ -355,11 +379,6 @@ export function Home() {
                 </ul>
               </details>
               {tooLong && <p className="hint error">{t("home.subjectTooLong")}</p>}
-              {providers && !llmReady && (
-            <p className="hint warn">
-              {t("home.llmMissing")} <a href="#/settings">{t("nav.status")} →</a>
-            </p>
-          )}
             </div>
             {materials.length > 0 && <p className="muted small">{t("flow.materialsCount", { n: materials.length })}</p>}
             {error && <p className="hint error">{error}</p>}
@@ -374,22 +393,30 @@ export function Home() {
               </div>
             )}
             <div className="flow-actions">
-              <button
-                type="button"
-                className="btn primary big"
-                disabled={!subject.trim() || tooLong || working}
-                onClick={() => writeScript(warned === "script")}
-              >
-                {busy === "script" ? t("flow.scripting") : warned === "script" && hasIssues(issues) ? t("flow.scriptAnyway") : t("flow.writeScript")}
-              </button>
-              <button
-                type="button"
-                className="btn"
-                disabled={!subject.trim() || tooLong || working}
-                onClick={() => createFromBrief(false, warned === "board")}
-              >
-                {busy === "create" ? progress || t("home.writing") : warned === "board" && hasIssues(issues) ? t("home.submitAnyway") : t("flow.skipScript")}
-              </button>
+              {llmReady || !providers ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn primary big"
+                    disabled={!subject.trim() || tooLong || working}
+                    onClick={() => writeScript(warned === "script")}
+                  >
+                    {busy === "script" ? t("flow.scripting") : warned === "script" && hasIssues(issues) ? t("flow.scriptAnyway") : t("flow.writeScript")}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={!subject.trim() || tooLong || working}
+                    onClick={() => createFromBrief(false, warned === "board")}
+                  >
+                    {busy === "create" ? progress || t("home.writing") : warned === "board" && hasIssues(issues) ? t("home.submitAnyway") : t("flow.skipScript")}
+                  </button>
+                </>
+              ) : (
+                <button type="button" className="btn primary big" disabled={working} onClick={writeOwn}>
+                  {t("setup.writeOwn")}
+                </button>
+              )}
               <button type="button" className="btn ghost" disabled={working} onClick={() => setStep(1)}>
                 {t("flow.back")}
               </button>
@@ -460,9 +487,11 @@ export function Home() {
               <button type="button" className="btn primary big" disabled={!cleanLines.length || working} onClick={() => createFromBrief(true)}>
                 {busy === "create" ? progress || t("home.writing") : t("flow.createFromScript")}
               </button>
-              <button type="button" className="btn" disabled={working} onClick={() => writeScript(true)}>
-                {busy === "script" ? t("flow.scripting") : t("flow.rewriteScript")}
-              </button>
+              {(llmReady || !providers) && (
+                <button type="button" className="btn" disabled={working || !subject.trim()} onClick={() => writeScript(true)}>
+                  {busy === "script" ? t("flow.scripting") : t("flow.rewriteScript")}
+                </button>
+              )}
               <button type="button" className="btn ghost" disabled={working} onClick={() => setStep(2)}>
                 {t("flow.back")}
               </button>

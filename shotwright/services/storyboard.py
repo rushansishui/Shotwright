@@ -52,6 +52,24 @@ def split_script(script: str, *, max_units: int = 28) -> list[Shot]:
     return [Shot(text=chunk, visual=ShotVisual(mode="stock")) for chunk in chunks]
 
 
+PLAIN_COLORS = ("#1F2937", "#7C2D12", "#134E4A", "#1E3A8A", "#4C1D95", "#831843", "#365314")
+"""没有画面来源时轮流用的底色，避免整条视频一个颜色。"""
+
+
+def plain_storyboard(script: list[str], *, title: str = "") -> Storyboard:
+    """没有配置大模型时按定稿脚本直接分镜：一段一个镜头，不写画面描述。
+
+    素材库要英文检索词，没有大模型就写不出来，所以先用纯色底（上传的图片、视频会放进镜头）；
+    之后可以在镜头里填检索词从免费素材库找画面，或换成自己的素材。
+    """
+    lines = [line.strip() for line in script if line.strip()][:60]
+    shots = [
+        Shot(text=line, visual=ShotVisual(mode="color", color=PLAIN_COLORS[i % len(PLAIN_COLORS)]))
+        for i, line in enumerate(lines)
+    ]
+    return Storyboard(title=title or (lines[0][:40] if lines else ""), shots=shots)
+
+
 SYSTEM_PROMPT = """你是短视频编导兼分镜师。根据视频类型和诉求，先定下全片设定，再写口播文案并拆成分镜。
 
 一、全片设定（look）

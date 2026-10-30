@@ -296,6 +296,13 @@ function ProviderCard({
 
       {open && (
         <div className="provider-form">
+          {(lang === "zh" ? provider.setup : provider.setup_en) && (
+            <p className="small provider-guide">
+              <strong>{t("settings.howTo")}：</strong>
+              {lang === "zh" ? provider.setup : provider.setup_en}
+            </p>
+          )}
+
           {provider.required_any && provider.required_any.length > 1 && (
             <p className="muted small">
               {t("settings.anyOf", {
