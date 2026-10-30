@@ -15,6 +15,7 @@ shotwright bench [--render]              跑质量基准集，结果存档并与
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 
@@ -275,6 +276,77 @@ def cmd_bench(args) -> int:
     return 1 if report.summary()["failed"] else 0
 
 
+def _loads(*modules: str) -> tuple[bool, str]:
+    """依次导入这些模块；返回（是否全部成功，说明）。"""
+    import importlib
+    import importlib.util
+
+    for name in modules:
+        if importlib.util.find_spec(name) is None:
+            return False, "未安装"
+        try:
+            importlib.import_module(name)
+        except Exception as e:  # noqa: BLE001 - 打包漏带的库可能抛任何错误
+            return False, f"导入 {name} 失败：{type(e).__name__}: {e}"
+    return True, "可用"
+
+
+def cmd_doctor(args) -> int:
+    """检查运行环境：FFmpeg（含字幕用的 libass）、网页界面、字体、配音和语音识别组件。"""
+    import subprocess
+
+    from shotwright import desktop
+    from shotwright.config import DEFAULT_FONTS_DIR, ROOT_DIR
+
+    settings = load_settings(args.config)
+    results: list[tuple[str, bool, str, bool]] = []  # （项目，是否正常，说明，是否必需）
+
+    def check(name: str, ok: bool, detail: str, required: bool = True) -> None:
+        results.append((name, ok, detail, required))
+
+    check("版本", True, __version__)
+    check("运行方式", True, "安装包" if desktop.frozen() else "源码")
+    check("配置文件", True, str(settings.config_path or "（未使用）"))
+    check("数据目录", True, str(Path(settings.storage_dir).resolve()))
+    for tool, path in (("ffmpeg", settings.ffmpeg), ("ffprobe", settings.ffprobe)):
+        found = shutil.which(path) or (path if Path(path).is_file() else None)
+        check(tool, bool(found), found or "找不到，请安装 FFmpeg 或在 config.toml 里填写路径")
+    try:
+        filters = subprocess.run(
+            [settings.ffmpeg, "-hide_banner", "-filters"], capture_output=True, text=True, timeout=30
+        ).stdout
+        check(
+            "字幕滤镜 libass",
+            " ass " in filters,
+            "可用" if " ass " in filters else "这个 FFmpeg 不带 libass，字幕无法烧录",
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        check("字幕滤镜 libass", False, str(exc))
+    web = ROOT_DIR / "web" / "dist" / "index.html"
+    check(
+        "网页界面",
+        web.is_file(),
+        str(web.parent) if web.is_file() else "没有构建，请在 web 目录运行 npm run build",
+    )
+    fonts = list(DEFAULT_FONTS_DIR.glob("*.[ot]tf")) if DEFAULT_FONTS_DIR.is_dir() else []
+    check("内置字体", bool(fonts), f"{len(fonts)} 个" if fonts else f"找不到 {DEFAULT_FONTS_DIR}")
+    tts_ok, tts_detail = _loads("edge_tts")
+    check("免费配音 edge-tts", tts_ok, tts_detail)
+    # 真正导入一遍：打包后漏带的 DLL / 数据文件只有导入时才会暴露。
+    asr_ok, asr_detail = _loads("faster_whisper", "ctranslate2", "onnxruntime")
+    if not asr_ok and asr_detail == "未安装":
+        asr_detail = '未安装（剪辑页需要：pip install -e ".[asr]"）'
+    check("本地语音识别", asr_ok, asr_detail, args.strict)
+
+    failed = False
+    for name, ok, detail, required in results:
+        mark = "OK  " if ok else ("FAIL" if required else "WARN")
+        failed = failed or (not ok and required)
+        print(f"[{mark}] {name}：{detail}")
+    print("\n环境检查未通过" if failed else "\n环境检查通过")
+    return 1 if failed else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="shotwright", description="Shotwright 镜匠：以分镜为核心的短视频生成工具"
@@ -288,6 +360,10 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=8000, help="首选端口；用不了时自动换后面的端口")
     serve.add_argument("--open", action="store_true", help="启动后用浏览器打开界面")
     serve.set_defaults(func=cmd_serve)
+
+    doctor = sub.add_parser("doctor", help="检查运行环境（FFmpeg、网页界面、字体、语音识别）")
+    doctor.add_argument("--strict", action="store_true", help="可选组件（本地语音识别）缺失也算失败")
+    doctor.set_defaults(func=cmd_doctor)
 
     new = sub.add_parser("new", help="新建项目")
     new.add_argument("--subject", help="视频诉求：想要什么内容（最多 4096 字节）")

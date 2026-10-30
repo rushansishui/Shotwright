@@ -185,7 +185,11 @@ def script_seconds(lines: list[str]) -> float:
 
 
 def apply_materials(
-    project: Project, materials: list[Material], footage: dict[int, str] | None = None
+    project: Project,
+    materials: list[Material],
+    footage: dict[int, str] | None = None,
+    *,
+    photos_as_footage: bool = False,
 ) -> None:
     """把上传的素材放到该放的地方。``footage`` 是大模型建议的「镜头序号 → 素材编号」。
 
@@ -243,10 +247,12 @@ def apply_materials(
         ):
             put(shot_index, asset.id)
 
+    # 没有大模型写画面时，产品图、人物照片也直接当画面用（慢推镜头），免得整条视频都是纯色底。
+    roles = ("footage", "product", "person") if photos_as_footage else ("footage",)
     remaining = [
         item.asset_id
         for item in materials
-        if item.role == "footage"
+        if item.role in roles
         and item.asset_id in project.assets
         and project.assets[item.asset_id].kind in ("image", "video")
         and item.asset_id not in placed

@@ -82,7 +82,15 @@ Most disk space goes to assets: projects using AI video and 1080p stock footage 
 
 ## Quick start
 
-You need Python 3.11+, [FFmpeg](https://ffmpeg.org/download.html) (with libass, which most builds include) and Node.js 20+ (only for building the web UI).
+**Windows installer**: download `Shotwright-<version>-setup.exe` and run it. No admin rights needed, and no separate Python, Node.js or FFmpeg install (they are bundled). Open it from the Start menu or desktop icon: a server window appears and your browser opens; closing the window stops the server. Settings, projects and logs live in `%LOCALAPPDATA%\Shotwright` (“Shotwright Data” in the Start menu) and survive uninstalls and upgrades. If something goes wrong, run `Shotwright.exe doctor` in a terminal to check the environment.
+
+To build it yourself, run `powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1` from the repository root (needs Python 3.11+, Node.js 20+ and [Inno Setup 6](https://jrsoftware.org/isdl.php); FFmpeg is downloaded automatically). The installer lands in `dist\installer\`.
+
+**Windows from source**: install Python 3.11+, FFmpeg and Node.js (`start.bat` prints the `winget` command for anything missing), then double-click `start.bat`. The first run creates a virtual environment, installs dependencies, builds the web UI and opens your browser.
+
+**Works without any key**: the home page shows a “Before you start” guide. Pick any supported text model (Doubao, DeepSeek, Kimi, Qwen or any OpenAI-compatible API) and paste its key, or try it free first: write your own script with free Edge voices, subtitles and your own photos or clips, or cut an existing video (local speech recognition). Without a stock key, footage search falls back to the keyless Coverr.
+
+For a manual install you need Python 3.11+, [FFmpeg](https://ffmpeg.org/download.html) (with libass, which most builds include) and Node.js 20+ (only for building the web UI).
 
 ```bash
 # 1. Install the backend
@@ -142,7 +150,7 @@ Four LLM presets are built in: Doubao Seed, DeepSeek, Kimi and Qwen. Pick one an
 
 Voice-over uses the free, key-less Edge voices by default. For steadier quality or clearer commercial licensing, set `tts` under `[defaults]` to `azure`, `siliconflow`, `minimax` or `elevenlabs` and fill in the API key in that section. These four are paid services and are marked as such in the UI.
 
-Stock footage uses Pixabay by default. Pexels needs your own key; Coverr needs no key and its library is mostly landscape.
+Stock footage uses Pixabay by default (free key); without a key it falls back to the keyless Coverr (mostly landscape). Pexels needs your own key. Every service on the Services page explains how to get it: where to sign up, which key to copy, what to enable and how it is billed.
 
 Speech recognition for the Cut page uses local `faster_whisper` by default: it needs no network, costs nothing and the footage never leaves the machine. The first run downloads a model (about 480 MB for `small`); if Hugging Face is unreachable it switches to the hf-mirror.com mirror automatically. To use a cloud service instead, set `asr` under `[defaults]` to `openai` and fill in `[providers.asr.openai]` — any OpenAI-compatible `/audio/transcriptions` endpoint that returns word timestamps works (OpenAI `whisper-1`, Groq `whisper-large-v3-turbo`, …), with a 25 MB limit per file.
 

@@ -467,6 +467,11 @@ export interface ProviderInfo {
   configured: boolean;
   default: boolean;
   docs_url: string;
+  /** 「怎么开通」：去哪里注册、拿哪个 Key、要开通什么、怎么收费。 */
+  setup?: string;
+  setup_en?: string;
+  /** 自己的 Key 留空时借用的服务（例如 Seedance 借用豆包的方舟 Key）。 */
+  shares_key_with?: { kind: string; id: string }[];
   fields: { key: string; label: string; required: boolean; secret: boolean; default?: string; help?: string }[];
   required_any?: string[][];
   testable?: boolean;

@@ -129,6 +129,13 @@ test.describe("Shotwright 主流程", () => {
   });
 
   test("诉求模板：选类型、填模板，提交前提醒没填的内容", async ({ page }) => {
+    // 这一步的按钮要配了大模型才出现；测试环境没有 Key，把大模型标成已配置（不会真的调用）。
+    await page.route("**/api/v2/providers", async (route) => {
+      const response = await route.fetch();
+      const data = await response.json();
+      for (const item of data.llm) item.configured = item.default;
+      await route.fulfill({ response, json: data });
+    });
     await page.goto("/");
     await page.evaluate(() => localStorage.removeItem("shotwright.newVideoDraft"));
     await page.reload();
@@ -251,4 +258,20 @@ test("服务设置：在页面里填写 Key，保存后只显示后 4 位", asyn
   await card.getByLabel(/清除|Clear/).first().click();
   await card.getByRole("button", { name: /^(保存|Save)$/ }).click();
   await expect(card.getByText(/未配置|Not configured/)).toBeVisible();
+});
+
+test("没配大模型：首页引导，自己写口播脚本直接生成分镜", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => localStorage.removeItem("shotwright.newVideoDraft"));
+  await page.reload();
+  await expect(page.getByText(/开始之前|Before you start/)).toBeVisible();
+  await page.locator("#idea").fill("冬天出门怕冷？这件羽绒服只有三百克。现在下单只要九十九元！");
+  await page.locator(".flow-actions").getByRole("button", { name: /自己写口播脚本|Write my own script/ }).click();
+  const lines = page.locator(".script-line textarea");
+  await expect(lines).toHaveCount(3);
+  await expect(lines.first()).toHaveValue("冬天出门怕冷？");
+  await page.locator("#title").fill(`自己写的脚本${RUN_ID}`);
+  await page.getByRole("button", { name: /按脚本生成分镜|Create storyboard from script/ }).click();
+  await expect(page.locator(".editor")).toBeVisible();
+  await expect(page.locator("article.shot")).toHaveCount(3);
 });

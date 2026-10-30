@@ -13,7 +13,7 @@ from shotwright import __version__
 from shotwright.api.context import ApiContext
 from shotwright.core import languages, platforms
 from shotwright.media import fonts as font_lib
-from shotwright.providers import registry
+from shotwright.providers import registry, setup_guide
 from shotwright.providers.base import ProviderError
 from shotwright.providers.tts.edge import VOICES
 
@@ -39,6 +39,12 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
                     "paid": spec.paid,
                     "offline": spec.offline,
                     "docs_url": spec.docs_url,
+                    "setup": setup_guide.guide(spec.kind, spec.id)[0],
+                    "setup_en": setup_guide.guide(spec.kind, spec.id)[1],
+                    # 自己的 Key 留空时借用的服务（例如 Seedance 借用豆包的方舟 Key）。
+                    "shares_key_with": [
+                        {"kind": kind, "id": provider_id} for kind, provider_id in spec.shared_key_from
+                    ],
                     "configured": registry.is_configured(spec, settings),
                     "default": settings.default_provider(spec.kind) == spec.id,
                     "fields": [

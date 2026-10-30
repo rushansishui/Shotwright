@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from shotwright.core.models import (
     MAX_SUBJECT_IMAGES,
@@ -305,7 +305,8 @@ class ScriptRequest(_Body):
 class StoryboardRequest(_Body):
     """给已建好的（空）项目写分镜：诉求 + 可选的定稿脚本 + 已上传的素材。"""
 
-    subject: str = Field(min_length=1)
+    subject: str = ""
+    """视频诉求；自己写好了脚本时可以留空。"""
     idea: str = Field("", max_length=4000)
     """用户最初随手写的想法，留作创作记录。"""
     script: list[str] | None = Field(None, max_length=60)
@@ -316,7 +317,13 @@ class StoryboardRequest(_Body):
     @field_validator("subject")
     @classmethod
     def _subject_within_limit(cls, value: str) -> str:
-        return check_subject(value)
+        return check_subject(value) if value else value
+
+    @model_validator(mode="after")
+    def _needs_subject_or_script(self) -> StoryboardRequest:
+        if not self.subject.strip() and not any(line.strip() for line in self.script or []):
+            raise ValueError("请填写视频诉求或脚本")
+        return self
 
 
 class ApplyMaterials(_Body):

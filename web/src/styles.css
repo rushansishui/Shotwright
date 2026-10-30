@@ -3301,3 +3301,72 @@ li.missing .readiness-mark {
     gap: 10px;
   }
 }
+
+/* ---- 首次启动向导 ---- */
+
+.setup-card {
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--accent-soft);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent-soft) 35%, var(--card));
+}
+.setup-card h2 {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+.setup-card > p {
+  margin: 0 0 12px;
+}
+.setup-options {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 12px;
+}
+.setup-option {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: var(--card);
+}
+.setup-option h3 {
+  margin: 0;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.setup-option p {
+  margin: 0;
+}
+.setup-guide {
+  color: var(--muted);
+}
+.setup-key {
+  display: flex;
+  gap: 8px;
+}
+.setup-key .input {
+  flex: 1;
+  min-width: 0;
+}
+.setup-free-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: auto;
+}
+.provider-guide {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg);
+}
+@media (max-width: 760px) {
+  .setup-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

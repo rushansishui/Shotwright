@@ -86,3 +86,21 @@ def test_test_connection_reports_missing_key(tmp_path, monkeypatch):
     client, _, _ = _client(tmp_path)
     r = client.post("/api/v2/settings/providers/video_gen/wan/test")
     assert r.status_code == 200 and r.json()["ok"] is False
+
+
+def test_every_builtin_provider_has_setup_guide(client):
+    """服务设置页的「怎么开通」说明：每个内置服务都要写，新加服务时别漏了。"""
+    from shotwright.providers import registry, setup_guide
+
+    registry.specs()
+    builtin = [
+        key
+        for key, entry in registry._ENTRIES.items()
+        if getattr(entry.factory, "__module__", "").startswith("shotwright.")
+    ]
+    assert builtin
+    assert [f"{kind}.{pid}" for kind, pid in builtin if not all(setup_guide.guide(kind, pid))] == []
+    providers = client.get("/api/v2/providers").json()
+    seedance = next(item for item in providers["video_gen"] if item["id"] == "seedance")
+    assert seedance["setup"] and seedance["shares_key_with"] == [{"kind": "llm", "id": "doubao"}]
+    assert setup_guide.guide("nope", "nope") == ("", "")

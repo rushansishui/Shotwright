@@ -82,7 +82,15 @@ AI 写文案、AI 视频 / 图片和配音都在云端完成，本机只负责�
 
 ## 快速开始
 
-需要 Python 3.11+、[FFmpeg](https://ffmpeg.org/download.html)（需带 libass，常见发行版都带）和 Node.js 20+（仅构建网页界面时需要）。
+**Windows 安装包**：下载 `Shotwright-<版本>-setup.exe` 双击安装，不需要管理员权限，也不用另装 Python、Node.js 和 FFmpeg（都已打包在内）。装好后从开始菜单或桌面图标打开，会弹出一个服务窗口并自动打开浏览器，关掉窗口就停止服务。配置、项目和日志放在 `%LOCALAPPDATA%\Shotwright`（开始菜单里的「Shotwright Data」），卸载和升级都不会删掉。遇到问题可以在命令行运行 `Shotwright.exe doctor` 检查环境。
+
+自己打包：在仓库根目录运行 `powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1`（需要 Python 3.11+、Node.js 20+ 和 [Inno Setup 6](https://jrsoftware.org/isdl.php)；FFmpeg 会自动下载），安装包输出到 `dist\installer\`。
+
+**Windows 从源码运行**：装好 Python 3.11+、FFmpeg 和 Node.js（`start.bat` 缺哪个会提示对应的 `winget` 安装命令），双击 `start.bat`。第一次启动会自动建虚拟环境、装依赖、构建网页界面并打开浏览器。
+
+**不填任何 Key 也能用**：首页会出现「开始之前」引导。可以任选一家大模型服务（豆包、DeepSeek、Kimi、通义千问，或任何 OpenAI 兼容接口）填上 Key，也可以先免费试试：自己写口播脚本，配上免费的 Edge 配音、字幕和你上传的图片、视频；或者剪辑已有视频（本地语音识别）。素材库没填 Key 时自动改用免 Key 的 Coverr。
+
+手动安装需要 Python 3.11+、[FFmpeg](https://ffmpeg.org/download.html)（需带 libass，常见发行版都带）和 Node.js 20+（仅构建网页界面时需要）。
 
 ```bash
 # 1. 安装后端
@@ -142,7 +150,7 @@ SHOTWRIGHT_LLM_DEEPSEEK_API_KEY=sk-xxxx
 
 配音默认用免 Key 的 Edge 在线语音。需要更稳定的音质或商用授权时，可以在 `[defaults]` 里把 `tts` 换成 `azure`、`siliconflow`、`minimax` 或 `elevenlabs`，再在对应小节填写 API Key（这几家均为收费服务，界面上会标出"收费"）。
 
-素材库默认用 Pixabay。Pexels 需要自己的 Key；Coverr 免 Key，素材以横屏为主。
+素材库默认用 Pixabay（免费申请 Key）；没填 Key 时自动改用免 Key 的 Coverr（素材以横屏为主）。Pexels 需要自己的 Key。服务设置页里每个服务都写了「怎么开通」：去哪里注册、拿哪个 Key、要开通什么、怎么收费。
 
 剪辑页的语音识别默认用本地 `faster_whisper`：不联网、不收费，原片不出本机。第一次识别时会下载模型（`small` 约 480MB），连不上 Hugging Face 时自动换用 hf-mirror.com 镜像。想改用云端识别，就在 `[defaults]` 里把 `asr` 换成 `openai` 并填好 `[providers.asr.openai]`：任何 OpenAI 兼容、能返回逐词时间戳的 `/audio/transcriptions` 接口都可以（OpenAI 的 `whisper-1`、Groq 的 `whisper-large-v3-turbo` 等），单个文件不超过 25MB。
 
