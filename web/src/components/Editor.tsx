@@ -44,6 +44,17 @@ function loadStep(id: string): EditorStep | null {
   }
 }
 
+const SIMPLE_KEY = "shotwright.simple";
+
+/** 简洁模式默认开：新用户一进来只有三个按钮可用，需要时再展开。 */
+function loadSimple(): boolean {
+  try {
+    return localStorage.getItem(SIMPLE_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
 export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: (origin: "create" | "cut") => void }) {
   const {
     project,
@@ -74,6 +85,8 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
   const [step, setStepState] = useState<EditorStep | null>(() => loadStep(projectId));
   /** 画面一步里切到审片视图。 */
   const [reviewing, setReviewing] = useState(false);
+  /** 简洁模式：每个镜头只留「换一个、重做、改这句」，其余收进「更多」。 */
+  const [simple, setSimple] = useState(() => loadSimple());
   /** 一键生成正在处理的镜头，在镜头卡片上显示"生成中"。 */
   const [batchCurrent, setBatchCurrent] = useState<string | null>(null);
   /** 剪辑里导入的任务：返回剪辑页，顶部导航高亮「剪辑」。 */
@@ -284,6 +297,21 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
               <button type="button" className="btn" onClick={() => run(() => api.addShot(id))}>
                 {t("editor.addShot")}
               </button>
+              <label className="switch" title={t("editor.simpleHint")}>
+                <input
+                  type="checkbox"
+                  checked={simple}
+                  onChange={(e) => {
+                    setSimple(e.target.checked);
+                    try {
+                      localStorage.setItem(SIMPLE_KEY, e.target.checked ? "1" : "0");
+                    } catch {
+                      /* 存不了就只在这次打开时记住 */
+                    }
+                  }}
+                />
+                {t("editor.simple")}
+              </label>
               </>
               )}
             </div>
@@ -352,6 +380,7 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
                 videoProviders={videoProviders}
                 aiImage={aiImage}
                 sourceModes={sourceModes}
+                simple={simple}
                 onFocus={() => setActiveIndex(index)}
                 onUpdate={(body: ShotUpdate) => run(() => api.updateShot(id, shot.id, body))}
                 onCandidates={(confirmCharge, patch, editSelected, options) =>

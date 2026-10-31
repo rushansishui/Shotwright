@@ -1,4 +1,5 @@
 import type {
+  Aspect,
   BgmCandidate,
   CheckIssue,
   PlatformInfo,
@@ -151,6 +152,9 @@ export const api = {
     duration: number;
     materials: MaterialNote[];
   }) => request<{ brief: string }>("/brief/normalize", json("POST", body)),
+  /** 一句话想法 → 建议的视频类型、时长和比例（不建项目、不收费）。 */
+  decideSettings: (body: { idea: string; language: string; video_type?: VideoType; aspect?: Aspect; duration?: number }) =>
+    request<{ video_type: VideoType; duration: number; aspect: Aspect; reason: string }>("/brief/decide", json("POST", body)),
   /** 按诉求写口播脚本，每段一个镜头（不建项目、不收费）。 */
   writeScript: (body: { brief: string; video_type: VideoType; language: string; aspect: string; duration: number; materials: MaterialNote[] }) =>
     request<{ title: string; lines: string[]; seconds: number }>("/brief/script", json("POST", body)),

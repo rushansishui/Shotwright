@@ -92,8 +92,10 @@ export function ShotCard(props: {
   onSplitText?: () => void;
   onMerge: () => void;
   onDelete: () => void;
-  /** 从候选素材里删掉一个。 */
+  /** 从这个镜头的候选素材里删掉一个。 */
   onRemoveCandidate: (assetId: string) => void;
+  /** 简洁模式：只留「换一个、重做、改这句」，其余设置收进「更多」。 */
+  simple?: boolean;
 }) {
   const { project, shot, index } = props;
   const visual = shot.visual;
@@ -108,6 +110,10 @@ export function ShotCard(props: {
   const [instruction, setInstruction] = useState("");
   const [quality, setQuality] = useState<"draft" | "final">("final");
   const fileInput = useRef<HTMLInputElement>(null);
+  const textArea = useRef<HTMLTextAreaElement>(null);
+  /** 简洁模式下点开「更多」就临时展开成完整界面。 */
+  const [expanded, setExpanded] = useState(false);
+  const simpleOn = !!props.simple && !expanded;
   const { t, lang } = useI18n();
 
   useEffect(() => setText(shot.text), [shot.text]);
@@ -294,7 +300,11 @@ export function ShotCard(props: {
   };
 
   return (
-    <article className={`shot ${props.active ? "active" : ""}`} onFocusCapture={props.onFocus} onClick={props.onFocus}>
+    <article
+      className={`shot ${props.active ? "active" : ""} ${simpleOn ? "shot-simple" : ""}`}
+      onFocusCapture={props.onFocus}
+      onClick={props.onFocus}
+    >
       <div className="shot-side">
         <span className="shot-index">{index + 1}</span>
         <div className="shot-thumb-wrap">
@@ -321,6 +331,7 @@ export function ShotCard(props: {
         </label>
         <textarea
           id={`text-${shot.id}`}
+          ref={textArea}
           className="input shot-text"
           rows={2}
           value={text}
@@ -871,6 +882,43 @@ export function ShotCard(props: {
           />
         )}
         {shot.error && <p className="hint error">{shot.error}</p>}
+        {props.simple && (
+          <div className="shot-simple-actions">
+            <button
+              type="button"
+              className="btn"
+              disabled={props.aiLocked || props.busy || visual.locked || !generator}
+              title={t("shot.simple.anotherHint")}
+              onClick={keyframeFirst ? keyframes : generate}
+            >
+              <Icon name="refresh" /> {t("shot.simple.another")}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={props.busy || visual.locked || !generator}
+              title={t("shot.simple.redoHint")}
+              onClick={generate}
+            >
+              <Icon name="refresh" /> {t("shot.simple.redo")}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={visual.locked || props.busy}
+              title={t("shot.simple.editHint")}
+              onClick={() => {
+                textArea.current?.focus();
+                textArea.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+              }}
+            >
+              {t("shot.simple.edit")}
+            </button>
+            <button type="button" className="btn ghost" onClick={() => setExpanded(!expanded)}>
+              {expanded ? t("shot.simple.less") : t("shot.simple.more")}
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="shot-actions">

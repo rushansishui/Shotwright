@@ -14,6 +14,7 @@ from shotwright.api.schemas import (
     ChargeConsent,
     CreateProject,
     CreateVersion,
+    DecideSettings,
     DuplicateProject,
     NormalizeBrief,
     PreviewVoice,
@@ -226,9 +227,28 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
             for item in items
         ]
 
+    @api.post("/brief/decide")
+    def decide_settings(body: DecideSettings):
+        """一句话想法 → 建议的视频类型、时长和比例。不建项目、不收费。"""
+        lang = languages.get(body.language)
+        llm = registry.create("llm", None, settings)
+        decision = brief_service.decide_settings(
+            llm,  # type: ignore[arg-type]
+            body.idea,
+            language=lang.prompt_name,
+            video_type=body.video_type,
+            duration=body.duration,
+            aspect=body.aspect,
+        )
+        return {
+            "video_type": decision.video_type,
+            "duration": decision.duration,
+            "aspect": decision.aspect,
+            "reason": decision.reason,
+        }
+
     @api.post("/brief/normalize")
     def normalize_brief(body: NormalizeBrief):
-        """把用户随手写的想法按视频类型的模板整理成完整诉求。不建项目、不收费。"""
         lang = languages.get(body.language)
         llm = registry.create("llm", None, settings)
         text = brief_service.normalize_brief(

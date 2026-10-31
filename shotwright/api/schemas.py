@@ -298,6 +298,16 @@ class NormalizeBrief(_Body):
     materials: list[MaterialNote] = Field(default_factory=list, max_length=30)
 
 
+class DecideSettings(_Body):
+    """一句话想法 → 建议的视频类型、时长和比例。用户已经选好的项原样沿用。"""
+
+    idea: str = Field(min_length=1, max_length=4000)
+    language: str = Field("zh-CN", max_length=40)
+    video_type: VideoType | None = None
+    aspect: str | None = Field(None, max_length=8)
+    duration: float | None = Field(None, gt=0, le=1800)
+
+
 class ScriptRequest(_Body):
     brief: str = Field(min_length=1, max_length=8000)
     video_type: VideoType | None = None
