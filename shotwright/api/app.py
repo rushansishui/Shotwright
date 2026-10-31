@@ -19,7 +19,16 @@ from shotwright import __version__
 from shotwright.api import errors
 from shotwright.api.context import ApiContext
 from shotwright.api.jobs import JobManager
-from shotwright.api.routes import assets, generation, projects, renders, shots, system, transcripts
+from shotwright.api.routes import (
+    assets,
+    generation,
+    library,
+    projects,
+    renders,
+    shots,
+    system,
+    transcripts,
+)
 from shotwright.api.routes import settings as app_settings
 from shotwright.config import ROOT_DIR, Settings, load_settings
 from shotwright.core import limits
@@ -208,7 +217,17 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
 
     api = APIRouter(prefix="/api/v2")
     ctx = ApiContext(settings=settings, store=store, jobs=jobs)
-    for module in (system, app_settings, projects, shots, transcripts, generation, assets, renders):
+    for module in (
+        system,
+        app_settings,
+        projects,
+        shots,
+        transcripts,
+        generation,
+        assets,
+        library,
+        renders,
+    ):
         module.register(api, ctx)
 
     app.include_router(api)

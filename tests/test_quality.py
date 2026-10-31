@@ -716,6 +716,56 @@ def test_budget_blocks_generation_over_limit(store, settings, client):
     assert client.patch(f"/api/v2/projects/{created['id']}", json={"budget": None}).json()["budget"] is None
 
 
+def test_shot_limits_block_before_the_project_budget(settings):
+    """单镜头的上限比项目上限先生效：卡住一直抽不中的那个镜头，别吃光整个项目的预算。"""
+    import pytest
+
+    from shotwright.core.models import Take
+    from shotwright.providers.base import BudgetExceeded
+    from shotwright.services import visuals
+
+    settings.providers.setdefault("video_gen", {})["seedance"] = {"api_key": "k"}
+    shot = Shot(text="一句话说完。", visual=ShotVisual(mode="ai", prompt="x", provider="seedance"))
+    project = Project(shots=[shot], budget=100.0)  # 项目预算很宽松
+
+    # 这个镜头已经花了 0.3 元，上限 0.4：再来一次（约 0.56 元）会超。
+    shot.visual.takes = [Take(asset_id="a" * 32, kind="video", cost=0.3)]
+    shot.visual.budget = 0.4
+    with pytest.raises(BudgetExceeded, match="超出这个镜头的费用上限"):
+        visuals.check_budget(settings, project, project.shots[0], "video_gen", "seedance")
+
+    # 提高上限后放行。
+    shot.visual.budget = 5.0
+    visuals.check_budget(settings, project, project.shots[0], "video_gen", "seedance")
+
+    # 次数上限：已经生成 2 版，上限 2，不再生成。
+    shot.visual.budget = None
+    shot.visual.takes = [
+        Take(asset_id="a" * 32, kind="video", cost=0.3),
+        Take(asset_id="b" * 32, kind="video", cost=0.3),
+    ]
+    shot.visual.max_takes = 2
+    with pytest.raises(BudgetExceeded, match="到了设定的上限"):
+        visuals.check_budget(settings, project, project.shots[0], "video_gen", "seedance")
+    shot.visual.max_takes = 3
+    visuals.check_budget(settings, project, project.shots[0], "video_gen", "seedance")
+
+
+def test_shot_limits_can_be_cleared_from_the_api(client):
+    created = _create(client)
+    shot_id = created["shots"][0]["id"]
+    url = f"/api/v2/projects/{created['id']}/shots/{shot_id}"
+
+    saved = client.patch(url, json={"visual": {"budget": 2.5, "max_takes": 3}}).json()
+    assert saved["shots"][0]["visual"]["budget"] == 2.5
+    assert saved["shots"][0]["visual"]["max_takes"] == 3
+
+    # -1 清除花费上限，0 表示次数不限。
+    cleared = client.patch(url, json={"visual": {"budget": -1, "max_takes": 0}}).json()
+    assert cleared["shots"][0]["visual"]["budget"] is None
+    assert cleared["shots"][0]["visual"]["max_takes"] is None
+
+
 def test_checkup_lists_render_risks(store, settings, tmp_path, client):
     from conftest import make_clip
 

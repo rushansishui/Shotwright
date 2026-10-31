@@ -534,6 +534,10 @@ class ShotVisual(_Model):
     """审片结论：ok 通过，redo 需要重做；空表示还没审。"""
     review_note: str = ""
     """标记重做时写的一句修改意见；重新生成前按它改写画面描述（配了文字模型时）。"""
+    budget: float | None = Field(None, ge=0.0, le=1_000)
+    """这个镜头最多花多少（元）；为空时只受项目上限约束。"""
+    max_takes: int | None = Field(None, ge=1, le=50)
+    """这个镜头最多生成几版；为空表示不限。到了上限就不再自动生成，建议换个思路。"""
 
     @field_validator("candidates", "sequence", "refs")
     @classmethod

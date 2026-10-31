@@ -274,6 +274,16 @@ export function RenderPanel(props: {
     }
   }
 
+  /** 整片样片：不花钱、草稿档，先把节奏和文案确认下来。 */
+  async function startSample() {
+    setError("");
+    try {
+      setJob(await api.render(project.id, false, "draft", true));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   return (
     <aside className="side">
       <section className="card">
@@ -457,9 +467,21 @@ export function RenderPanel(props: {
             </button>
           </div>
         ) : (
-          <button type="button" className="btn primary big" disabled={project.shots.length === 0} onClick={start}>
-            {result ? t("render.rerender") : t("render.render")}
-          </button>
+          <>
+            <button type="button" className="btn primary big" disabled={project.shots.length === 0} onClick={start}>
+              {result ? t("render.rerender") : t("render.render")}
+            </button>
+            <button
+              type="button"
+              className="btn sample-render"
+              disabled={project.shots.length === 0}
+              title={t("render.sampleHint")}
+              onClick={startSample}
+            >
+              {t("render.sample")}
+            </button>
+            {job?.sample && job?.state === "done" && <p className="hint small">{t("render.sampleDone")}</p>}
+          </>
         )}
         {job?.state === "failed" && <p className="hint error">{job.error}</p>}
         {error && <p className="hint error">{error}</p>}

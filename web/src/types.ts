@@ -163,6 +163,8 @@ export interface Take {
   /** 检查得分（0–1）；没检查时为 null。 */
   score: number | null;
   issue: string;
+  /** 生成这一版花的参考费用（元）；免费来源为 0。 */
+  cost?: number;
   created_at: number;
 }
 
@@ -235,6 +237,10 @@ export interface ShotVisual {
   review?: "" | "ok" | "redo";
   /** 标记重做时的一句修改意见。 */
   review_note?: string;
+  /** 这个镜头最多花多少（元）；为空时只受项目上限约束。 */
+  budget?: number | null;
+  /** 这个镜头最多生成几版；为空表示不限。 */
+  max_takes?: number | null;
 }
 
 export interface Shot {
@@ -534,6 +540,9 @@ export interface Job {
   error: string | null;
   result: RenderResult | null;
   allow_paid: boolean;
+  quality?: "draft" | "final";
+  /** 整片样片：不花钱、草稿档。 */
+  sample?: boolean;
 }
 
 /** 修改镜头画面时可以传的字段；clear_first_frame 取消首帧。 */
@@ -585,6 +594,33 @@ export interface CostEstimate {
   total_visual: number;
   total_tts: number;
   items: CostEstimateItem[];
+}
+
+/** 一个品牌的视觉规范，存在所有项目之外，一键套用到任意项目。 */
+export interface BrandPack {
+  id: string;
+  name: string;
+  /** Logo 图片文件名（存在素材库目录下）。 */
+  logo: string | null;
+  color: string;
+  font: string | null;
+  grade: string;
+  subtitle: Record<string, unknown>;
+  titles: Record<string, Record<string, unknown>>;
+  cta: string;
+  created_at: number;
+}
+
+/** 主体库里的一份主体：外观描述和参考图，新项目里可以直接复用。 */
+export interface SubjectTemplate {
+  id: string;
+  code: string;
+  name: string;
+  kind: string;
+  appearance: string;
+  images: string[];
+  image_labels: Record<string, string>;
+  created_at: number;
 }
 
 /** 花费指标（见后端 services/spend.py）：钱花得值不值。 */

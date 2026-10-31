@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from shotwright.api.context import ApiContext
-from shotwright.api.schemas import ChargeConsent
+from shotwright.api.schemas import RenderRequest
 from shotwright.core.store import ProjectNotFound, read_json
 from shotwright.services import readiness
 
@@ -19,16 +19,21 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
     # ---- 渲染 ---------------------------------------------------------------
 
     @api.post("/projects/{project_id}/renders", status_code=202)
-    def start_render(project_id: str, body: ChargeConsent | None = None):
-        """``confirm_charge: true`` 时，没有画面的 AI 镜头会提交收费生成；否则改用素材检索。"""
+    def start_render(project_id: str, body: RenderRequest | None = None):
+        """``confirm_charge: true`` 时，没有画面的 AI 镜头会提交收费生成；否则改用素材检索。
+
+        ``sample: true`` 是整片样片：一律不收费、用草稿档，先把整片跑一遍确认节奏和文案。
+        """
         if not store.exists(_id(project_id)):
             raise ProjectNotFound(project_id)
-        if body and body.confirm_charge and readiness.generation_locked(store.load(project_id)):
+        body = body or RenderRequest()
+        if body.confirm_charge and not body.sample and readiness.generation_locked(store.load(project_id)):
             raise HTTPException(409, readiness.LOCKED_MESSAGE)
         return jobs.submit(
             project_id,
-            allow_paid=bool(body and body.confirm_charge),
-            quality=body.quality if body else "final",
+            allow_paid=body.confirm_charge and not body.sample,
+            quality=body.quality,
+            sample=body.sample,
         ).to_dict()
 
     @api.get("/projects/{project_id}/renders")

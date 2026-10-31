@@ -287,6 +287,8 @@ export function ShotCard(props: {
   };
 
   const seconds = estimateSeconds({ ...shot, text }, (shot.voice ?? project.voice).rate);
+  /** 这个镜头所有生成版本一共花了多少（元），显示在单镜头上限旁边。 */
+  const takesCost = (visual.takes ?? []).reduce((sum, item) => sum + (item.cost ?? 0), 0);
   // 生成服务的时长上限；超过时提示用户，避免生成被服务端截断。
   const maxDuration = generator?.max_duration ?? null;
   const exceedsMax = !!maxDuration && seconds > maxDuration;
@@ -756,6 +758,50 @@ export function ShotCard(props: {
                 >
                   {t("shot.modifyRun")}
                 </button>
+              </div>
+            )}
+            {(visual.mode === "ai" || visual.mode === "image") && (
+              <div className="inline-field shot-limits">
+                <span className="label" title={t("shot.limitsHint")}>
+                  {t("shot.limits")}
+                </span>
+                <label className="muted small" htmlFor={`shot-budget-${shot.id}`}>
+                  {t("shot.limitBudget")}
+                </label>
+                <input
+                  id={`shot-budget-${shot.id}`}
+                  className="input compact num"
+                  type="number"
+                  min={0}
+                  step={0.5}
+                  value={visual.budget ?? ""}
+                  placeholder={t("shot.limitNone")}
+                  disabled={visual.locked}
+                  onChange={(e) => {
+                    const raw = e.target.value.trim();
+                    props.onUpdate({ visual: { budget: raw === "" ? -1 : Number(raw) } });
+                  }}
+                />
+                <label className="muted small" htmlFor={`shot-takes-${shot.id}`}>
+                  {t("shot.limitTakes")}
+                </label>
+                <input
+                  id={`shot-takes-${shot.id}`}
+                  className="input compact num"
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={visual.max_takes ?? ""}
+                  placeholder={t("shot.limitNone")}
+                  disabled={visual.locked}
+                  onChange={(e) => {
+                    const raw = e.target.value.trim();
+                    props.onUpdate({ visual: { max_takes: raw === "" ? 0 : Number(raw) } });
+                  }}
+                />
+                {visual.takes?.length ? (
+                  <span className="muted small">{t("shot.limitUsed", { n: visual.takes.length, cost: takesCost })}</span>
+                ) : null}
               </div>
             )}
           </div>

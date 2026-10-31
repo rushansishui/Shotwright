@@ -13,6 +13,7 @@ import { SfxSection } from "./editor/SfxSection";
 import { LookSection } from "./editor/LookSection";
 import { projectNeedsExpansion } from "../prompts";
 import { ReferencesSection } from "./editor/ReferencesSection";
+import { LibrarySection } from "./editor/LibrarySection";
 import { OverlaySection } from "./editor/OverlaySection";
 import { TitleSection } from "./editor/TitleSection";
 import { TextStyleEditor } from "./editor/TextStyleEditor";
@@ -264,6 +265,8 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
               <LookSection project={project} run={run} setError={setError} />
               <div className="divider" />
               <ReferencesSection project={project} run={run} setError={setError} />
+              <div className="divider" />
+              <LibrarySection project={project} run={run} setError={setError} />
             </Section>
           </>
         )}

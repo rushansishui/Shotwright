@@ -149,6 +149,13 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
                     patch["candidates"] = [*current, patch["selected"]][-visuals.MAX_CANDIDATES :]
                 if patch.pop("clear_trim_end", False):
                     patch["trim_end"] = None
+                # 单镜头花费上限：-1 表示清除；生成次数上限：0 表示不限。
+                if "budget" in patch:
+                    patch["budget"] = (
+                        None if patch["budget"] is None or patch["budget"] < 0 else patch["budget"]
+                    )
+                if "max_takes" in patch:
+                    patch["max_takes"] = patch["max_takes"] or None
                 mode = patch.pop("mode", None)
                 if mode is not None:
                     # 切换来源时自动选中该来源的素材（显式传了 selected 时以它为准）。
