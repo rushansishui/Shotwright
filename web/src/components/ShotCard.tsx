@@ -463,6 +463,15 @@ export function ShotCard(props: {
                       {t("risk.fixLabel")}
                       {fix}
                     </span>
+                    {risk.remedies && risk.remedies.length > 0 && (
+                      <span className="checkup-remedies">
+                        {risk.remedies.map((item, i) => (
+                          <span key={i} className={`remedy ${item.cost}`}>
+                            {t(`checkup.remedy.${item.cost}` as MessageKey)}：{item.message}
+                          </span>
+                        ))}
+                      </span>
+                    )}
                     {risk.code === "too_long" && props.onSplitText && (
                       <button type="button" className="linkish" disabled={props.busy || visual.locked} onClick={props.onSplitText}>
                         {t("risk.splitText")}

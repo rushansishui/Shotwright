@@ -765,6 +765,7 @@ def generate_ai_candidate(
             store, project, path, source=provider_id or "video_gen", folder="ai-video", meta=meta
         )
     shot.visual.pending = None
+    _attach(shot, [asset.id], select=True, take=kind, batch=batch)
     for seconds in spent:
         record_spend(
             store,
@@ -775,8 +776,8 @@ def generate_ai_candidate(
             provider_id or "",
             resolution=resolution,
             seconds=seconds,
+            asset_id=asset.id,
         )
-    _attach(shot, [asset.id], select=True, take=kind, batch=batch)
     return [asset.id]
 
 
@@ -920,8 +921,8 @@ def generate_image_candidate(
             folder="ai-image",
             meta=meta,
         )
-    record_spend(store, settings, project, shot, "image_gen", provider_id or "")
     _attach(shot, [asset.id], select=not keyframe, take="keyframe" if keyframe else "image", batch=batch)
+    record_spend(store, settings, project, shot, "image_gen", provider_id or "", asset_id=asset.id)
     return [asset.id]
 
 
@@ -1102,22 +1103,32 @@ def record_spend(
     *,
     resolution: str = "",
     seconds: float | None = None,
-) -> None:
-    """收费生成成功后，把参考费用累加到项目（直接写盘，调用方之后的合并不会覆盖它）。"""
+    asset_id: str | None = None,
+) -> float:
+    """收费生成成功后，把参考费用累加到项目（直接写盘，调用方之后的合并不会覆盖它）。
+
+    ``asset_id`` 给了就同时记到那一版的版本记录上，用来区分哪些钱花在了没人用的版本上。
+    返回这次记的金额（元）。
+    """
     from shotwright.services import cost
 
     amount = cost.generation_cost(
         settings, project, shot, kind, provider_id, resolution=resolution, seconds=seconds
     )
     if amount <= 0:
-        return
+        return 0.0
     with store.lock(project.id):
         latest = store.load(project.id)
         latest.cost_credits = round(latest.cost_credits + amount, 4)
         store.save(latest)
         project.cost_credits = latest.cost_credits
         project.revision = latest.revision
+    if asset_id:
+        take = shot.visual.take(asset_id)
+        if take is not None:
+            take.cost = round(take.cost + amount, 4)
     log.info("项目 %s：本次生成参考费用 %.2f 元，累计 %.2f 元", project.id, amount, project.cost_credits)
+    return amount
 
 
 def _attach(

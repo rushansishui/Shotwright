@@ -31,7 +31,17 @@ from shotwright.pipeline.render_types import RenderError
 from shotwright.providers import registry
 from shotwright.providers.base import ProviderError, ProviderNotConfigured
 from shotwright.services import brief as brief_service
-from shotwright.services import checkup, localize, prompting, pronounce, readiness, storyboard, visuals
+from shotwright.services import (
+    checkup,
+    localize,
+    prompting,
+    pronounce,
+    readiness,
+    remedy,
+    spend,
+    storyboard,
+    visuals,
+)
 from shotwright.services import cost as cost_service
 from shotwright.services import inspect as inspect_service
 from shotwright.services import titles as titles_service
@@ -535,6 +545,14 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
 
     @api.get("/projects/{project_id}/checkup")
     def get_checkup(project_id: str, quality: Literal["draft", "final"] = "final"):
-        """渲染前体检：列出缺画面、素材太短、分辨率不足、文字重叠、超出费用上限等问题。只读。"""
+        """渲染前体检：列出缺画面、素材太短、分辨率不足、文字重叠、超出费用上限等问题。
+        只读。每条问题附带最省钱的补救方式（``remedies``），免费的在前面。"""
         project = store.load(_id(project_id))
-        return {"issues": checkup.to_dicts(checkup.check_project(project, settings, quality=quality))}
+        issues = checkup.check_project(project, settings, quality=quality)
+        return {"issues": remedy.to_dicts(issues)}
+
+    @api.get("/projects/{project_id}/spend")
+    def get_spend(project_id: str):
+        """花费指标：每秒成片花费、首次可用率、平均重做次数、浪费金额。只读。"""
+        project = store.load(_id(project_id))
+        return spend.measure(store, project).to_dict()

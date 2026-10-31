@@ -437,6 +437,16 @@ export interface PrecheckRisk {
   params: Record<string, string | number>;
   message: string;
   advice: string;
+  remedies?: Remedy[];
+}
+
+/** 一条补救建议（见后端 services/remedy.py）：优先试不花钱的。 */
+export interface Remedy {
+  action: "trim" | "fill" | "swap" | "rerender" | "edit_prompt" | "split" | "upload" | "move" | "look" | "budget" | "trim_scope" | "paid";
+  /** free 不花钱；cheap 比重做便宜；paid 重新生成。 */
+  cost: "free" | "cheap" | "paid";
+  params: Record<string, string | number>;
+  message: string;
 }
 
 export interface CheckIssue {
@@ -445,6 +455,8 @@ export interface CheckIssue {
   shot: number | null;
   params: Record<string, string | number> | null;
   level: string;
+  /** 最省钱的补救方式，按 free → cheap → paid 排好。 */
+  remedies?: Remedy[];
 }
 
 export interface ProjectSummary {
@@ -573,6 +585,26 @@ export interface CostEstimate {
   total_visual: number;
   total_tts: number;
   items: CostEstimateItem[];
+}
+
+/** 花费指标（见后端 services/spend.py）：钱花得值不值。 */
+export interface SpendMetrics {
+  total: number;
+  /** 生成了但没用上的版本花掉的钱。 */
+  wasted: number;
+  /** 每秒成片花费（元）。 */
+  per_second: number;
+  /** 首次可用率（0–1）；没有生成过的镜头时为空。 */
+  first_pass_rate: number | null;
+  /** 平均每个已生成镜头生成过几版。 */
+  average_takes: number | null;
+  generated_shots: number;
+  takes: number;
+  duration: number;
+  /** render：成片时长来自最近一次渲染；estimate：按配音估算。 */
+  duration_source: "render" | "estimate";
+  currency: string;
+  shots: { shot_index: number; shot_id: string; takes: number; cost: number; wasted: number }[];
 }
 
 export interface GeneratePlanItem {

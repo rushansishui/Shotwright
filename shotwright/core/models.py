@@ -462,6 +462,8 @@ class Take(_Model):
     """检查得分（切题程度和主体一致性，0–1）；没检查时为空。"""
     issue: str = ""
     """检查发现的问题，例如「产品颜色与参考图不一致」。"""
+    cost: float = Field(0.0, ge=0.0, le=1_000_000)
+    """生成这一版花的参考费用（元）；免费来源为 0。用来算浪费金额。"""
     created_at: float = Field(default_factory=time.time)
 
     @field_validator("asset_id")

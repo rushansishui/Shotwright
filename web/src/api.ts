@@ -15,6 +15,7 @@ import type {
   ProjectSummary,
   Providers,
   SettingsData,
+  SpendMetrics,
   TranscriptData,
   CutDraft,
   RenderResult,
@@ -282,6 +283,7 @@ export const api = {
     request<{ issues: CheckIssue[] }>(`/projects/${id}/checkup?quality=${quality}`),
   costEstimate: (id: string, quality: "draft" | "final" = "final") =>
     request<CostEstimate>(`/projects/${id}/cost-estimate?quality=${quality}`),
+  spend: (id: string) => request<SpendMetrics>(`/projects/${id}/spend`),
   job: (jobId: string) => request<Job>(`/renders/${jobId}`),
   cancel: (jobId: string) => request<{ ok: boolean }>(`/renders/${jobId}/cancel`, json("POST")),
   renders: (id: string) =>
