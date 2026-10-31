@@ -1695,6 +1695,9 @@ input[type="color"] {
   flex-wrap: wrap;
   margin-bottom: 16px;
 }
+.project-import {
+  cursor: pointer;
+}
 .projects-head h2 {
   margin: 0;
   display: flex;

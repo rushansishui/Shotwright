@@ -510,6 +510,14 @@ export function RenderPanel(props: {
                 {t("render.downloadSubs")}
               </a>
             )}
+            <a
+              className="btn"
+              href={api.publishUrl(project.id)}
+              download
+              title={t("render.publishHint")}
+            >
+              {t("render.publish")}
+            </a>
           </div>
           <p className="muted small">
             {t("render.reused", { a: result.stages.filter((s) => s.reused).length, b: result.stages.length })}

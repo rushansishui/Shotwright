@@ -18,6 +18,7 @@ import type {
   SettingsData,
   SpendMetrics,
   BrandPack,
+  PublishPack,
   SubjectTemplate,
   TranscriptData,
   CutDraft,
@@ -223,6 +224,18 @@ export const api = {
   suggestKeywords: (id: string) => request<Project>(`/projects/${id}/subtitle/keywords`, json("POST", {})),
   /** 复制成新项目继续编辑（素材、设置、镜头和渲染缓存一起复制）。 */
   duplicateProject: (id: string, title = "") => request<Project>(`/projects/${id}/duplicate`, json("POST", { title })),
+  /** 导出整个项目（设置、镜头、素材）成 zip。 */
+  archiveUrl: (id: string) => `/api/v2/projects/${id}/archive`,
+  /** 发布包：成片、封面、字幕和 publish.json。 */
+  publishUrl: (id: string) => `/api/v2/projects/${id}/publish.zip`,
+  /** 发布包里会用到的文字，先看一眼。 */
+  publishInfo: (id: string) => request<PublishPack>(`/projects/${id}/publish`),
+  /** 导入之前导出的项目包，返回新项目。 */
+  importArchive: (file: File, title = "") => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<Project>(`/projects/import?title=${encodeURIComponent(title)}`, { method: "POST", body: form });
+  },
   deleteProject: (id: string) => request<void>(`/projects/${id}`, json("DELETE")),
   addShot: (id: string, after?: string) => request<Project>(`/projects/${id}/shots`, json("POST", { text: "", after })),
   splitShot: (id: string, shotId: string, at: number) =>

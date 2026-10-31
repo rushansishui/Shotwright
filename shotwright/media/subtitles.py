@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
@@ -28,6 +28,12 @@ class Cue:
     start: float
     end: float
     text: str
+    words: list[tuple[str, float, float]] = field(default_factory=list)
+    """这条字幕里每个词的起止时间（相对整片时间轴，秒）；配音服务给了逐词时间戳时才有。
+
+    逐字高亮（卡拉 OK）按它点亮，而不是按字数平均分配——中文里的数字、英文单词
+    读起来快慢差很多，平均分配会让高亮跟不上声音。
+    """
 
 
 @lru_cache(maxsize=16)
@@ -273,8 +279,48 @@ def split_cues(
             cue_end = end if index == len(pieces) - 1 else cursor + length
             cursor = cue_end
         display = "\n".join(line.rstrip(_TRAILING_PUNCT) or line for line in piece.split("\n"))
-        cues.append(Cue(round(cue_start, 3), round(cue_end, 3), display))
+        cues.append(
+            Cue(
+                round(cue_start, 3),
+                round(cue_end, 3),
+                display,
+                _cue_words(source, display, spans, start, cue_start, cue_end) if spans else [],
+            )
+        )
     return cues
+
+
+def _cue_words(
+    source: str,
+    display: str,
+    spans: list[tuple[int, int, float, float]],
+    offset: float,
+    cue_start: float,
+    cue_end: float,
+) -> list[tuple[str, float, float]]:
+    """一条字幕里的词和它们在整片时间轴上的起止（秒）。
+
+    词按原文顺序对上字幕文字：字幕里的换行和去掉的句末标点不影响对齐。对不上的词丢掉，
+    逐字高亮会自动退回按字数分配，不会错位到别的词上。
+    """
+    wanted = display.replace("\n", "").rstrip(_TRAILING_PUNCT)
+    if not wanted:
+        return []
+    found: list[tuple[str, float, float]] = []
+    cursor = 0
+    for char_start, char_end, t0, t1 in spans:
+        token = source[char_start:char_end]
+        token = token.strip()
+        if not token:
+            continue
+        at = wanted.find(token, cursor)
+        if at < 0:
+            continue
+        cursor = at + len(token)
+        begin = max(cue_start, min(cue_end, offset + t0))
+        finish = max(begin, min(cue_end, offset + t1))
+        found.append((token, round(begin, 3), round(finish, 3)))
+    return found
 
 
 def _ass_time(seconds: float) -> str:
@@ -463,34 +509,131 @@ def _line_ranges(text: str) -> list[tuple[int, int]]:
     return ranges
 
 
-def _reveal_plan(text: str, total: float) -> list[list[tuple[int, str, int]]]:
-    """逐字效果的时间分配：每行一组（字在全文中的位置, 字, 百分之一秒）。按字数（拉丁文按词）平分 ``total``。"""
+def _reveal_plan(
+    text: str,
+    total: float,
+    *,
+    words: list[tuple[str, float, float]] | None = None,
+    offset: float = 0.0,
+) -> list[list[tuple[int, str, int]]]:
+    """逐字效果的时间分配：每行一组（字在全文中的位置, 字, 百分之一秒）。
+
+    给了 ``words``（这条字幕的逐词时间戳，整片时间轴）时按真实读音分配：词里每个字
+    平分这个词的时长，词之间的空白留到下一个词开始。对不上的字退回按字数平分。
+    没有 ``words`` 时全部按字数（拉丁文按词）平分 ``total``。
+    """
     lines: list[list[tuple[int, str, int]]] = []
     pieces: list[tuple[int, int, str, int]] = []
+    starts: list[float | None] = []
     for row, (start, end) in enumerate(_line_ranges(text)):
         at = start
         for token in _tokens(text[start:end]):
+            piece_start = len(pieces)
             pieces.append((row, at, token, _units(token) if token.strip() else 0))
+            starts.append(None)
             at += len(token)
+            if words and token.strip():
+                # 这个词在逐词时间戳里的位置：往前找，避免同一个字出现多次时错位。
+                span = _find_word(words, text, piece_start, token)
+                if span is not None:
+                    starts[piece_start] = span
         lines.append([])
-    units_left = sum(weight for *_, weight in pieces) or 1
-    centis_left = max(1, round(total * 100))
-    for row, at, token, weight in pieces:
-        centis = round(centis_left * weight / units_left) if units_left else 0
-        centis_left -= centis
-        units_left -= weight
+    if words and any(item is not None for item in starts):
+        plan = _timed_plan(pieces, starts, total, offset)
+    else:
+        plan = _even_plan(pieces, total)
+    for row, at, token, centis in plan:
         lines[row].append((at, token, centis))
     return lines
 
 
+def _find_word(words: list[tuple[str, float, float]], text: str, from_piece: int, token: str) -> float | None:
+    """这个字属于哪个词的起点（相对字幕开头，秒）。
+
+    逐词时间戳来自配音服务，字面可能和字幕有细微差别（标点、空格），所以按顺序
+    在词里找包含它的那一个；找不到就退回用最近的词。
+    """
+    stripped = token.strip()
+    if not stripped:
+        return None
+    for word_text, word_start, _word_end in words:
+        if stripped in word_text:
+            return word_start
+    return None
+
+
+def _timed_plan(
+    pieces: list[tuple[int, int, str, int]],
+    starts: list[float | None],
+    total: float,
+    offset: float,
+) -> list[tuple[int, int, str, int]]:
+    """按真实读音排每个字的显示时长（百分之一秒）。
+
+    一个词里的字平分这个词的时长；词最后一个字一直显示到下一个词的开始（含词间停顿），
+    被跳过的字（对不上时间戳的）不占时间。
+    """
+    known = [value for value in starts if value is not None]
+    if not known:
+        return _even_plan(pieces, total)
+    plan: list[tuple[int, int, str, int]] = []
+    for index, (row, at, token, _weight) in enumerate(pieces):
+        if not token.strip():
+            plan.append((row, at, token, 0))
+            continue
+        begin = starts[index]
+        if begin is None:
+            plan.append((row, at, token, 0))
+            continue
+        # 下一个有时间的字：它开始时这个词该点亮完。
+        following = next(
+            (value for value in starts[index + 1 :] if value is not None),
+            total - offset,
+        )
+        share = max(0.0, following - begin) / max(1, len(token.strip()))
+        plan.append((row, at, token, max(1, round(share * 100))))
+    # 总量对不上时（例如服务的时间戳只到最后一个词的中段），按比例缩到这条字幕的长度。
+    spent = sum(centis for *_, centis in plan)
+    wanted = max(1, round(total * 100))
+    if spent <= 0:
+        return _even_plan(pieces, total)
+    delta = wanted - spent
+    if abs(delta) <= 2:
+        return plan
+    scaled = max(0.05, wanted / spent)
+    out = [(row, at, token, max(0, round(centis * scaled))) for row, at, token, centis in plan]
+    return out
+
+
+def _even_plan(pieces: list[tuple[int, int, str, int]], total: float) -> list[tuple[int, int, str, int]]:
+    """没有逐词时间戳时：按字（拉丁文按词）平分 ``total``。"""
+    units_left = sum(weight for *_, weight in pieces) or 1
+    centis_left = max(1, round(total * 100))
+    plan: list[tuple[int, int, str, int]] = []
+    for row, at, token, weight in pieces:
+        centis = round(centis_left * weight / units_left) if units_left else 0
+        centis_left -= centis
+        units_left -= weight
+        plan.append((row, at, token, centis))
+    return plan
+
+
 def _reveal_tags(
-    text: str, tag: str, total: float, *, line: int | None = None, marker: _Marker | None = None
+    text: str,
+    tag: str,
+    total: float,
+    *,
+    line: int | None = None,
+    marker: _Marker | None = None,
+    words: list[tuple[str, float, float]] | None = None,
+    offset: float = 0.0,
 ) -> str:
     """逐字效果：每个字（拉丁文每个词）前面加 ``\\k`` 类标签，总时长 ``total`` 秒。
 
     ``line`` 给出时只输出这一行，前面用一段空的 ``\\k`` 等到前几行显示完。
+    ``words`` 是这条字幕的逐词时间戳（整片时间轴），给了就按真实读音点亮。
     """
-    plan = _reveal_plan(text, total)
+    plan = _reveal_plan(text, total, words=words, offset=offset)
     marker = marker or _Marker(text, None, 0, None)
     rows = range(len(plan)) if line is None else [line]
     out: list[str] = []
@@ -551,6 +694,8 @@ def styled_text(
     line: int | None = None,
     keywords: Keywords | None = None,
     finite: bool = True,
+    words: list[tuple[str, float, float]] | None = None,
+    offset: float = 0.0,
 ) -> str:
     """一条字幕 / 标题事件的正文：发光、入场 / 出场 / 循环效果、逐字标签、关键词高亮。
 
@@ -558,6 +703,8 @@ def styled_text(
     ``pin`` 给出时把文字固定在 ``point``（用这个 \\an 对齐编号）。
     ``line`` 给出时只输出 ``text`` 的这一行（逐字效果的时间仍按全文分配）。
     ``finite`` 为假表示事件一直显示到片尾（常驻标题），不加出场效果。
+    ``words`` 是这条字幕的逐词时间戳（整片时间轴），逐字高亮按它点亮；``offset`` 是
+    这条字幕开始的时间，用来把时间戳换算成相对这条字幕的秒数。
     """
     animation = style.animation
     if animation == "karaoke" and not allow_karaoke:
@@ -653,6 +800,7 @@ def dialogues(
     pin: int | None = None,
     code: int | None = None,
     keywords: Keywords | None = None,
+    words: list[tuple[str, float, float]] | None = None,
 ) -> list[str]:
     """一条文字对应的 Dialogue 行。层号从 ``layer`` 起占用 4 层：阴影、第二层描边、底框、文字。
 
@@ -661,11 +809,13 @@ def dialogues(
     - 逐字效果（打字、卡拉 OK）开了底框时每段各画一个框，叠在一起会出现条纹，
       这时底框单独画一层（只画框、文字透明），上面再叠一层不带框的逐字文字。
     - 设了行间距的多行文字逐行定位，每行一条（需要 ``point`` 和对齐编号 ``code`` / ``pin``）。
+    - ``words`` 是这条字幕的逐词时间戳（整片时间轴），逐字高亮按真实读音点亮。
     """
     begin = start if isinstance(start, str) else _ass_time(start)
     finish = end if isinstance(end, str) else _ass_time(end)
     finite = not isinstance(start, str) and not isinstance(end, str)
     duration = (end - start) if finite else 3.0
+    offset = start if finite else 0.0
     animation = style.animation
     if animation == "karaoke" and not allow_karaoke:
         animation = "typewriter"
@@ -700,6 +850,8 @@ def dialogues(
             line=row,
             keywords=keywords,
             finite=finite,
+            words=words,
+            offset=offset,
         )
 
     def event(level: int, extra: str, content: str) -> str:
@@ -810,6 +962,7 @@ def to_ass(
             point=point,
             code=code,
             keywords=keywords,
+            words=c.words,
         )
     ]
     return (

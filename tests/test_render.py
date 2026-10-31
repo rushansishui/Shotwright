@@ -225,7 +225,9 @@ def test_color_mode_ignores_selected_asset(store, settings, tmp_path):
         ]
     )
     r, g, b = out.read_bytes()[:3]
-    assert r > 200 and g < 60 and b < 60  # 纯红，没有用到选中的视频
+    # 红色仍然占主导，没有用到选中的视频。纯色现在画成带渐变的背景，
+    # 所以红色会比原先的 255 暗一些，两侧通道也不是纯 0。
+    assert r > 120 and r > g * 2 and r > b * 2
 
 
 def test_long_brief_is_not_used_as_stock_query(store, settings):

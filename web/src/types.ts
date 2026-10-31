@@ -623,6 +623,17 @@ export interface SubjectTemplate {
   created_at: number;
 }
 
+/** 发布包里会用到的文字。 */
+export interface PublishPack {
+  title: string;
+  description: string;
+  tags: string[];
+  platform: string;
+  duration: number;
+  aspect: string;
+  language: string;
+}
+
 /** 花费指标（见后端 services/spend.py）：钱花得值不值。 */
 export interface SpendMetrics {
   total: number;

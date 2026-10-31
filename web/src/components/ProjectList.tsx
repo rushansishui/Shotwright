@@ -90,6 +90,20 @@ export function ProjectList({
     }
   }
 
+  /** 导入之前导出的项目包：直接跳到新项目。 */
+  async function importArchive(file: File) {
+    setBusy("import");
+    try {
+      const project = await api.importArchive(file, "");
+      onChanged();
+      window.location.hash = `#/p/${project.id}`;
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function remove(p: ProjectSummary) {
     if (!window.confirm(t("projects.deleteConfirm", { title: p.title }))) return;
     setBusy(p.id);
@@ -122,6 +136,20 @@ export function ProjectList({
             />
           </label>
         )}
+        <label className="btn small ghost project-import" title={t("projects.importHint")}>
+          <Icon name="upload" />
+          {busy === "import" ? t("projects.importing") : t("projects.import")}
+          <input
+            type="file"
+            accept=".zip,application/zip"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) importArchive(file);
+              e.target.value = "";
+            }}
+          />
+        </label>
       </div>
 
       {loading ? (
@@ -184,6 +212,15 @@ export function ProjectList({
                   </div>
                 </a>
                 <div className="project-actions">
+                  <a
+                    className="project-action"
+                    href={api.archiveUrl(p.id)}
+                    download
+                    title={t("projects.exportHint")}
+                    aria-label={`${t("projects.export")}：${p.title}`}
+                  >
+                    <Icon name="download" />
+                  </a>
                   <button
                     type="button"
                     className="project-action"

@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
-from shotwright.api.context import ApiContext
+from shotwright.api.context import MAX_ARCHIVE, ApiContext
 from shotwright.api.schemas import (
     ApplyMaterials,
     ChargeConsent,
@@ -31,6 +34,7 @@ from shotwright.pipeline import voice as voice_stage
 from shotwright.pipeline.render_types import RenderError
 from shotwright.providers import registry
 from shotwright.providers.base import ProviderError, ProviderNotConfigured
+from shotwright.services import archive as archive_service
 from shotwright.services import brief as brief_service
 from shotwright.services import (
     checkup,
@@ -515,6 +519,38 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
                         target.title = title
 
         return _mutate(project_id, change)
+
+    @api.get("/projects/{project_id}/archive")
+    def export_archive(project_id: str):
+        """把整个项目（设置、镜头、素材）导出成 zip，换台机器也能接着做。"""
+        project = store.load(_id(project_id))
+        name = archive_service.safe_name(project.title or project.subject or project.id)
+        # 导出到临时目录再返回：成片和缓存不打包，但包本身不留在项目里占地方。
+        temp = Path(tempfile.mkdtemp(prefix="shotwright-export-"))
+        target = temp / f"{name}.zip"
+        archive_service.export_project(store, project, target)
+        return FileResponse(
+            target,
+            media_type="application/zip",
+            filename=f"{name}.shotwright.zip",
+            background=BackgroundTask(shutil.rmtree, temp, True),
+        )
+
+    @api.post("/projects/import", status_code=201)
+    def import_archive(file: UploadFile = File(...), title: str = ""):
+        """导入之前导出的项目包，返回新项目。"""
+        with tempfile.TemporaryDirectory(prefix="shotwright-import-") as temp:
+            path = Path(temp) / "project.zip"
+            with path.open("wb") as handle:
+                while chunk := file.file.read(1024 * 1024):
+                    if handle.tell() + len(chunk) > MAX_ARCHIVE:
+                        raise HTTPException(413, "项目包超过 2GB")
+                    handle.write(chunk)
+            try:
+                project = archive_service.import_project(store, path, title=title or None)
+            except archive_service.ArchiveError as exc:
+                raise HTTPException(422, str(exc)) from None
+        return project
 
     @api.post("/projects/{project_id}/duplicate", status_code=201)
     def duplicate(project_id: str, body: DuplicateProject | None = None):
