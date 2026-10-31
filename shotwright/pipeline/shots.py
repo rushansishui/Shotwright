@@ -34,11 +34,12 @@ def _mix(hex_color: str, other: tuple[int, int, int], amount: float) -> str:
 def color_background(hex_color: str) -> tuple[str, str]:
     """纯色镜头的背景配色：返回（亮一点的中心色, 暗一点的边缘色）。
 
-    不是一块平涂：从用户选的颜色分出明暗两层做径向渐变，中间偏上一块柔和的光，
-    四周自然压暗，画面有层次，字幕压在上面也更容易看清。
+    不是一块平涂：从用户选的颜色分出明暗两层做渐变，中间偏一块柔和的光，四周自然
+    压暗，画面有层次，字幕压在上面也更容易看清。明暗差控制在一档以内——差太多时
+    中心会变成一块「手电筒」光斑，压在小标题下面很扎眼。横屏尤其明显。
     """
-    light = _mix(hex_color, (255, 255, 255), 0.16)
-    dark = _mix(hex_color, (0, 0, 0), 0.45)
+    light = _mix(hex_color, (255, 255, 255), 0.08)
+    dark = _mix(hex_color, (0, 0, 0), 0.22)
     return light, dark
 
 
@@ -50,7 +51,7 @@ def color_background_graph(hex_color: str, width: int, height: int, fps: int, du
     return (
         f"gradients=s={big_w}x{big_h}:r={fps}:c0={light}:c1={dark}"
         f":type=radial:speed=0.0006:seed=7:d={max(duration, 0.1):.3f},"
-        f"scale={width}:{height},noise=alls=3:allf=t,format=yuv420p"
+        f"scale={width}:{height},noise=alls=2:allf=t,format=yuv420p"
     )
 
 
