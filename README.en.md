@@ -6,7 +6,7 @@
 
 Shotwright is built around the *shot*. The script is split into shots, and each shot picks its own visual source (stock search, AI generation, or your own uploaded image or video). Any shot can be replaced, locked or redone by itself. Change one shot and only that shot is re-rendered, plus the final assembly.
 
-> Current version: v0.4.0. All v0.4 "product ads" and "video quality" features are built and being tested (editing a clip with a prompt needs Seedance 2.5 enabled on Volcengine Ark). In v0.5 "delivery and efficiency", configuring services in the UI, the extra AI video services, the Cut page (cut a video by its text) and the material readiness checklist are done; the rest is in progress. See the [roadmap](docs/ROADMAP.md).
+> Current version: v0.4.0. All v0.4 "product ads" and "video quality" features are built and being tested (editing a clip with a prompt needs Seedance 2.5 enabled on Volcengine Ark). In v0.5 "delivery and efficiency", the first-run wizard, configuring services in the UI, the extra AI video services, the Cut page, the review page, keyframes first by default, the pre-generation check and the Windows installer are done; the rest is in progress. See the [roadmap](docs/ROADMAP.md).
 
 ![Demo: write a brief, edit the storyboard, trim a clip, preview the video](docs/images/demo-en.gif)
 
