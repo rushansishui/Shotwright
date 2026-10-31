@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from shotwright.core.models import LookSubject, Project, Shot
+from shotwright.services import model_rules
 
 log = logging.getLogger("shotwright.prompting")
 
@@ -282,6 +283,7 @@ def compose(
     limit: int = MAX_REFERENCES,
     refs: list[ShotRef] | None = None,
     frame_ref: ShotRef | None = None,
+    provider_id: str | None = None,
 ) -> str:
     """拼出交给生成模型的完整提示词。
 
@@ -294,6 +296,9 @@ def compose(
 
     ``frame_ref`` 是作为首帧发出去的那张主体照片（服务不支持参考图时用它代替），
     提示词里写明第一帧就是它，模型才会照着画。
+
+    ``provider_id`` 给了就按这家模型的写法整理：预算小的模型先丢掉次要段落
+    （见 :mod:`shotwright.services.model_rules`），免得被 Provider 从中间硬截断。
     """
     lang = prompt_language(project)
     words = _PHRASES[lang]
@@ -301,15 +306,17 @@ def compose(
     if prompt is None:
         prompt = (shot.visual.image_prompt or shot.visual.prompt) if target == "image" else shot.visual.prompt
     body = prompt.strip()
-    lines = [body] if body else []
+    sections: list[tuple[str, list[str]]] = []
+    if body:
+        sections.append(("body", [body]))
     if target == "video":
         camera = CAMERA_PHRASES[lang].get(shot.visual.camera)
         if camera:
-            lines.append(words["camera"].format(camera))
+            sections.append(("camera", [words["camera"].format(camera)]))
         if shot.visual.link.strip():
-            lines.append(words["link"].format(shot.visual.link.strip()))
+            sections.append(("link", [words["link"].format(shot.visual.link.strip())]))
     else:
-        lines.append(words["still"])
+        sections.append(("still", [words["still"]]))
     codes = used_codes(project, body) or [s.code for s in look.subjects if s.kind != "place"]
     shot_refs = refs if refs is not None else shot_references(project, shot, target=target, limit=limit)
     # 镜头选定了某一款（颜色 / 款式）时，外观描述后面注明，避免描述里列的几种颜色让模型自己挑。
@@ -325,27 +332,42 @@ def compose(
     }
     subjects = [s for s in look.subjects if s.code in codes and s.appearance.strip()]
     if subjects:
-        lines.append(words["subjects"])
-        lines += [
-            words["subject"].format(code=s.code, name=s.name or s.kind, appearance=s.appearance.strip())
-            + chosen.get(s.code, "")
-            for s in subjects
-        ]
+        sections.append(
+            (
+                "subjects",
+                [
+                    words["subjects"],
+                    *[
+                        words["subject"].format(
+                            code=s.code, name=s.name or s.kind, appearance=s.appearance.strip()
+                        )
+                        + chosen.get(s.code, "")
+                        for s in subjects
+                    ],
+                ],
+            )
+        )
     if look.scene.strip():
-        lines.append(words["scene"].format(look.scene.strip()))
+        sections.append(("scene", [words["scene"].format(look.scene.strip())]))
     if look.style.strip():
-        lines.append(words["style"].format(look.style.strip()))
+        sections.append(("style", [words["style"].format(look.style.strip())]))
     refs = reference_lines(project, lang, shot_refs)
     if refs:
-        lines.append(words["refs"])
-        lines += refs
+        sections.append(("refs", [words["refs"], *refs]))
     if frame_ref is not None:
-        lines.append(frame_reference_line(project, lang, frame_ref))
+        sections.append(("frame", [frame_reference_line(project, lang, frame_ref)]))
     avoid = look.avoid.strip()
-    lines.append(
-        words["avoid"].format(avoid) + words["sep"] + words["no_text"] if avoid else words["no_text"]
+    sections.append(
+        (
+            "avoid",
+            [words["avoid"].format(avoid) + words["sep"] + words["no_text"] if avoid else words["no_text"]],
+        )
     )
-    return "\n".join(lines)
+    style = model_rules.style_for(provider_id)
+    extra = model_rules.hint(style, lang)
+    if extra:
+        sections.insert(1, ("hint", [extra]))
+    return model_rules.fit(sections, budget=style.budget)
 
 
 def needs_translation(project: Project, languages: tuple[str, ...]) -> bool:

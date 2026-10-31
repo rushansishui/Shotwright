@@ -62,6 +62,18 @@ def test_rerender_without_changes_reuses_everything(store, settings):
     assert _executed(result) == set()
 
 
+def test_sample_render_never_spends(store, settings):
+    """整片样片：就算调用方说要收费，也一律按免费草稿档跑。"""
+    from shotwright.api.jobs import JobManager
+
+    project = _project(store)
+    jobs = JobManager(store, settings)
+    job = jobs.submit(project.id, allow_paid=True, quality="final", sample=True)
+    assert job.sample is True
+    assert job.allow_paid is False
+    assert job.quality == "draft"
+
+
 def test_uploaded_clip_and_image_and_bgm(store, settings, tmp_path):
     project = _project(store, canvas={"aspect": "16:9"})
     clip = make_clip(tmp_path / "clip.mp4", seconds=1.0, size="640x360")

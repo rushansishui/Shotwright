@@ -10,6 +10,22 @@ type Filter = "all" | "todo" | "redo";
 type Run = (action: () => Promise<Project>, shotId?: string) => Promise<Project | null>;
 
 /**
+ * 这个镜头最该先看的原因：0 最急。检查出问题的最急，其次是得分低的，
+ * 没看图检查过的排最后。同一档里保持原顺序。
+ */
+function urgency(shot: Shot): number {
+  const visual = shot.visual;
+  const take = (visual.takes ?? []).find((item) => item.asset_id === visual.selected);
+  if (take?.issue) return 0;
+  if (visual.review === "redo") return 1;
+  const score = take?.score;
+  // 得分低于 0.6 的算「不太对」，排在没问题但也没检查过的前面。
+  if (typeof score === "number" && score < 0.6) return 2;
+  if (typeof score === "number") return 4;
+  return 3;
+}
+
+/**
  * 审片：所有镜头的候选画面排在一页里对比。点一下选用某个版本，逐个标记通过或重做，
  * 重做可以写一句修改意见；标记好以后用上方的按钮一次性重新生成。
  */
@@ -32,7 +48,9 @@ export function ReviewBoard({
     .filter(({ shot }) => {
       const mark = shot.visual.review ?? "";
       return filter === "all" || (filter === "todo" ? mark === "" : mark === "redo");
-    });
+    })
+    // 检查出问题和得分低的镜头排在前面，先看最可能有问题的。
+    .sort((a, b) => urgency(a.shot) - urgency(b.shot));
 
   const aspect = project.canvas.aspect.replace(":", " / ");
   const width = project.canvas.aspect === "9:16" ? 108 : project.canvas.aspect === "1:1" ? 140 : 180;

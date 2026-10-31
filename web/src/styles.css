@@ -1278,6 +1278,47 @@ input[type="color"] {
   vertical-align: baseline;
 }
 
+/* ---- 补救建议与花费指标 ---- */
+.checkup-what {
+  display: block;
+}
+
+.checkup-remedies {
+  display: block;
+  margin: 4px 0 2px;
+  color: var(--muted);
+}
+
+.remedy {
+  display: block;
+  margin-top: 2px;
+  padding-left: 8px;
+  border-left: 2px solid var(--line);
+  line-height: 1.45;
+}
+
+.remedy.free {
+  border-left-color: var(--ok, #16a34a);
+}
+
+.remedy.paid {
+  border-left-color: var(--warn, #d97706);
+  opacity: 0.85;
+}
+
+.spend-metrics summary {
+  cursor: pointer;
+}
+
+.spend-metrics ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.spend-metrics li {
+  line-height: 1.5;
+}
+
 .role-select {
   max-width: 100%;
   margin-top: 4px;
@@ -2774,6 +2815,37 @@ li.missing .readiness-mark {
 }
 .look-no-ref {
   margin-top: 6px;
+}
+
+/* ---- 简洁模式：只留「换一个、重做、改这句」 ----
+   结构性的操作（上移、下移、插入、合并、删除）和文案、候选画面始终留着：
+   藏掉删除按钮会让人没法删镜头，那就不是「简单」而是「没法用」了。 */
+.shot-simple .shot-visual-row,
+.shot-simple .shot-more,
+.shot-simple .gen-options,
+.shot-simple .first-frame,
+.shot-simple .shot-refs,
+.shot-simple .elsewhere,
+.shot-simple .risks,
+.shot-simple .inline-field,
+.shot-simple .shot-edit {
+  display: none;
+}
+
+/* 文案和候选画面要留着：这是简洁模式下唯一要改的东西。 */
+.shot-simple .shot-text {
+  font-size: 15px;
+}
+
+.shot-simple-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.shot-simple-actions .btn {
+  flex: 0 1 auto;
 }
 
 /* ---- 服务设置 ---- */

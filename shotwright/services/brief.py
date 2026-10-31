@@ -151,6 +151,73 @@ def _length_rule(duration: float | None) -> str:
     return f"整条视频朗读约 {duration:g} 秒，大约 {low}–{high} 段。"
 
 
+DECIDE_PROMPT = """你是短视频策划。用户只说了一句话，请判断这条视频应该做成哪一类、多长、什么画面比例。
+- video_type 取 product_ad（商品广告）/ brand（品牌宣传）/ explainer（知识科普）/ talking（口播）/ footage（原片改造）之一。
+- duration 是建议时长（秒）：短视频平台多为 15–60 秒；讲清一个观点用 30 秒左右，讲原理或多卖点用 45–60 秒，纯展示用 15–20 秒。
+- aspect 取 9:16（竖屏，抖音 / 视频号 / 小红书最多）/ 16:9（横屏，官网 / B 站 / 发布会）/ 1:1 之一。
+- reason 用一句{language}话说明为什么这么判断，要说人话，让用户一眼能看懂，不超过 30 个字。
+只输出 JSON：{{"video_type": "product_ad", "duration": 30, "aspect": "9:16", "reason": "…"}}"""
+
+ASPECTS = ("9:16", "16:9", "1:1")
+DURATION_MIN, DURATION_MAX = 10, 180
+
+
+@dataclass
+class Decision:
+    """一句话想法 → 建议的视频类型、时长和比例。"""
+
+    video_type: str
+    duration: float
+    aspect: str
+    reason: str = ""
+
+
+def decide_settings(
+    llm: LLMProvider,
+    idea: str,
+    *,
+    language: str = "简体中文",
+    video_type: str | None = None,
+    duration: float | None = None,
+    aspect: str | None = None,
+) -> Decision:
+    """判断这条视频该用哪一类、多长、什么比例。
+
+    用户已经选过的项（``video_type`` / ``duration`` / ``aspect``）原样沿用，只补没选的，
+    这样「AI 替我决定」和手动改过设置的情况可以共存，不会把用户的选择冲掉。
+    """
+    if not idea.strip():
+        raise ProviderError("请先说说想做什么视频")
+    if video_type and duration and aspect:
+        return Decision(video_type, duration, aspect, "")
+    reply = llm.complete(
+        [
+            {"role": "system", "content": DECIDE_PROMPT.format(language=language)},
+            {"role": "user", "content": idea.strip()[:4000]},
+        ],
+        json_mode=True,
+    )
+    data = _extract_json(reply)
+    guessed = str(data.get("video_type") or "").strip()
+    if guessed not in VIDEO_TYPE_NAMES:
+        guessed = "product_ad"
+    try:
+        seconds = float(data.get("duration") or 0)
+    except (TypeError, ValueError):
+        seconds = 0.0
+    if not (DURATION_MIN <= seconds <= DURATION_MAX):
+        seconds = 30.0
+    ratio = str(data.get("aspect") or "").strip()
+    if ratio not in ASPECTS:
+        ratio = "9:16"
+    return Decision(
+        video_type=video_type or guessed,
+        duration=duration if duration else seconds,
+        aspect=aspect or ratio,
+        reason=str(data.get("reason") or "").strip()[:120],
+    )
+
+
 def write_script(
     llm: LLMProvider,
     brief: str,

@@ -8,7 +8,7 @@ import { subtitleMargin } from "../types";
 import { textCss, useFontReady, useFonts, weightFile } from "../textStyle";
 import { highlightKeywords } from "./editor/KeywordField";
 import type { TextStyle } from "../types";
-import type { CheckIssue, CostEstimate, Job, PlatformInfo, PrecheckRisk, Project, RenderResult } from "../types";
+import type { CheckIssue, CostEstimate, Job, PlatformInfo, PrecheckRisk, Project, RenderResult, SpendMetrics } from "../types";
 import { riskText } from "../risks";
 
 const alignFlex = (align: string | undefined) =>
@@ -256,12 +256,29 @@ export function RenderPanel(props: {
     api.costEstimate(project.id, quality).then(setCostEstimate).catch(() => setCostEstimate(null));
   }, [project.id, project.revision, pendingAi, running, quality]);
 
+  // 花费指标：只在花过钱、且不在渲染时拉取。
+  const [spend, setSpend] = useState<SpendMetrics | null>(null);
+  useEffect(() => {
+    if (running || project.cost_credits <= 0) { setSpend(null); return; }
+    api.spend(project.id).then(setSpend).catch(() => setSpend(null));
+  }, [project.id, project.revision, project.cost_credits, running]);
+
   async function start() {
     setError("");
     const paid = allowPaid && pendingAi > 0 && props.paidAvailable;
     if (paid && !window.confirm(t("render.confirmPaid", { n: pendingAi }))) return;
     try {
       setJob(await api.render(project.id, paid, quality));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  /** 整片样片：不花钱、草稿档，先把节奏和文案确认下来。 */
+  async function startSample() {
+    setError("");
+    try {
+      setJob(await api.render(project.id, false, "draft", true));
     } catch (e) {
       setError((e as Error).message);
     }
@@ -313,12 +330,24 @@ export function RenderPanel(props: {
             <ul>
               {issues.map((issue, index) => (
                 <li key={index}>
-                  {issue.shot ? (
-                    <button type="button" className="linkish" onClick={() => props.onShotIndex(issue.shot! - 1)}>
-                      {checkupText(issue)}
-                    </button>
-                  ) : (
-                    checkupText(issue)
+                  <span className="checkup-what">
+                    {issue.shot ? (
+                      <button type="button" className="linkish" onClick={() => props.onShotIndex(issue.shot! - 1)}>
+                        {checkupText(issue)}
+                      </button>
+                    ) : (
+                      checkupText(issue)
+                    )}
+                  </span>
+                  {issue.remedies && issue.remedies.length > 0 && (
+                    <span className="checkup-remedies">
+                      {t("checkup.remedies")}
+                      {issue.remedies.map((item, i) => (
+                        <span key={i} className={`remedy ${item.cost}`}>
+                          {t(`checkup.remedy.${item.cost}` as MessageKey)}：{item.message}
+                        </span>
+                      ))}
+                    </span>
                   )}
                 </li>
               ))}
@@ -378,6 +407,31 @@ export function RenderPanel(props: {
         {project.cost_credits > 0 && (
           <p className="muted small">{t("render.spent", { total: project.cost_credits.toFixed(2) })}</p>
         )}
+        {spend && spend.generated_shots > 0 && (
+          <details className="spend-metrics">
+            <summary>{t("spend.title")}</summary>
+            <ul>
+              <li>
+                {t("spend.perSecond", {
+                  value: spend.per_second.toFixed(3),
+                  duration: spend.duration.toFixed(1),
+                })}
+              </li>
+              {spend.first_pass_rate != null && (
+                <li>{t("spend.firstPass", { rate: Math.round(spend.first_pass_rate * 100) })}</li>
+              )}
+              {spend.average_takes != null && (
+                <li>{t("spend.takes", { value: spend.average_takes.toFixed(2) })}</li>
+              )}
+              <li className={spend.wasted > 0 ? "hint warn" : undefined}>
+                {spend.wasted > 0
+                  ? t("spend.wasted", { value: spend.wasted.toFixed(2), total: spend.total.toFixed(2) })
+                  : t("spend.noWaste")}
+              </li>
+            </ul>
+            {spend.duration_source === "estimate" && <p className="muted small">{t("spend.estimated")}</p>}
+          </details>
+        )}
         {!running && (
           <div className="inline-field budget">
             <label htmlFor="budget">{t("render.budget")}</label>
@@ -413,9 +467,21 @@ export function RenderPanel(props: {
             </button>
           </div>
         ) : (
-          <button type="button" className="btn primary big" disabled={project.shots.length === 0} onClick={start}>
-            {result ? t("render.rerender") : t("render.render")}
-          </button>
+          <>
+            <button type="button" className="btn primary big" disabled={project.shots.length === 0} onClick={start}>
+              {result ? t("render.rerender") : t("render.render")}
+            </button>
+            <button
+              type="button"
+              className="btn sample-render"
+              disabled={project.shots.length === 0}
+              title={t("render.sampleHint")}
+              onClick={startSample}
+            >
+              {t("render.sample")}
+            </button>
+            {job?.sample && job?.state === "done" && <p className="hint small">{t("render.sampleDone")}</p>}
+          </>
         )}
         {job?.state === "failed" && <p className="hint error">{job.error}</p>}
         {error && <p className="hint error">{error}</p>}
