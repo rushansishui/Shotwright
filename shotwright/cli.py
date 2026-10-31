@@ -268,6 +268,7 @@ def cmd_bench(args) -> int:
         allow_paid=args.allow_paid,
         aspects=args.aspect or None,
         only=args.brief or None,
+        tier=args.tier,
     )
     text = bench.format_report(report.to_dict(), previous)
     (out_dir / "report.md").write_text(text, encoding="utf-8")
@@ -428,6 +429,11 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--offline", action="store_true", help="渲染时不检索素材，缺画面的镜头用纯色")
     bench.add_argument("--aspect", action="append", choices=["9:16", "16:9", "1:1"], help="只跑这些画面比例")
     bench.add_argument("--brief", action="append", help="只跑这些诉求（briefs.json 里的 id）")
+    bench.add_argument(
+        "--tier",
+        choices=["core", "extra"],
+        help="只跑某一组：core 是最早的 5 条（指标口径固定，日常改动跑它），extra 是后补的难度用例",
+    )
     bench.add_argument("--out", help="结果目录（默认 storage/bench）")
     bench.add_argument("--compare", help="与这次结果对比（默认与最近一次对比）")
     bench.set_defaults(func=cmd_bench)

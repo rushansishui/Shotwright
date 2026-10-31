@@ -201,6 +201,7 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
                 duration=body.duration,
                 video_type=body.video_type,
                 aspect=project.canvas.aspect,
+                provider_id=settings.default_provider("video_gen"),
             )
             project.title = project.title or board.title
             project.shots = board.shots
@@ -287,6 +288,7 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
                 aspect=project.canvas.aspect,
                 script=body.script,
                 materials=brief_service.describe_materials(materials),
+                provider_id=settings.default_provider("video_gen"),
             )
 
         def change(latest: Project) -> None:

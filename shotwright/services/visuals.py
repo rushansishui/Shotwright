@@ -504,7 +504,15 @@ def build_prompt(
     ``frame_ref`` 是用作首帧的那张主体照片（服务不支持参考图时），写进提示词让模型照着画。
     """
     target = "image" if kind == "image_gen" else "video"
-    text = prompting.compose(project, shot, target=target, limit=ref_limit, refs=refs, frame_ref=frame_ref)
+    text = prompting.compose(
+        project,
+        shot,
+        target=target,
+        limit=ref_limit,
+        refs=refs,
+        frame_ref=frame_ref,
+        provider_id=provider_id,
+    )
     spec = _spec(kind, provider_id)
     languages = spec.prompt_languages if spec is not None else ("en",)
     return prompting.for_provider(settings, project, text, languages)

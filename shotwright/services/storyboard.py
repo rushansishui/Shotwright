@@ -19,6 +19,7 @@ from shotwright.core.models import VIDEO_TYPE_NAMES, Look, LookSubject, Shot, Sh
 from shotwright.media.grades import GRADES
 from shotwright.providers.base import LLMProvider, ProviderError
 from shotwright.providers.tts.silent import estimate_seconds
+from shotwright.services import model_rules
 
 log = logging.getLogger("shotwright.storyboard")
 
@@ -101,6 +102,17 @@ _PROMPT_LANG = {"zh": "中文", "en": "英文"}
 _PROMPT_LEN = {"zh": "约 120–200 字", "en": "60–120 个英文单词"}
 _STILL_LEN = {"zh": "约 60–100 字", "en": "40–70 个英文单词"}
 _MIN_PROMPT = {"zh": 90, "en": 45}
+
+
+def _prompt_len(lang: str, style: model_rules.ModelStyle | None) -> str:
+    """画面描述的长度要求：选定的模型预算小时按它的上限收窄，免得写长了被截断。"""
+    if style is None or style.id == model_rules.DEFAULT.id:
+        return _PROMPT_LEN[lang]
+    if lang == "zh":
+        return f"约 {style.max_shot_prompt // 2} 字以内（{style.label} 的提示词预算较小，写太长会被截断）"
+    return f"up to {style.max_shot_prompt // 4} English words ({style.label} has a small prompt budget)"
+
+
 """自检时画面描述的最低长度（中文按字，英文按词），略低于要求，给模型留余地。"""
 _ASPECT_NAMES = {"9:16": "竖屏 9:16", "16:9": "横屏 16:9", "1:1": "方形 1:1"}
 _ROLE_NAMES = {"product": "产品", "person": "人物", "logo": "Logo", "style": "风格"}
@@ -326,9 +338,18 @@ def _mentions(text: str, codes: set[str]) -> bool:
 
 
 def check_storyboard(
-    board: Storyboard, *, lang: str = "zh", duration: float | None = None, video_type: str | None = None
+    board: Storyboard,
+    *,
+    lang: str = "zh",
+    duration: float | None = None,
+    video_type: str | None = None,
+    provider_id: str | None = None,
 ) -> list[str]:
-    """分镜出稿自检：总时长、画面描述长度、主体代号、衔接说明。返回问题列表（空表示合格）。"""
+    """分镜出稿自检：总时长、画面描述长度、主体代号、衔接说明。返回问题列表（空表示合格）。
+
+    ``provider_id`` 给了就按这家模型的建议长度再查一次（见 :mod:`services.model_rules`）：
+    可灵、海螺的提示词预算小，描述写得和 Seedance 一样长会被截断。
+    """
     issues: list[str] = []
     if duration:
         spoken = sum(estimate_seconds(shot.text) + 0.3 for shot in board.shots)
@@ -339,10 +360,16 @@ def check_storyboard(
     codes = {subject.code for subject in board.look.subjects}
     minimum = _MIN_PROMPT.get(lang, 45)
     unit = "字" if lang == "zh" else "个词"
+    style = model_rules.style_for(provider_id) if provider_id else None
     for index, shot in enumerate(board.shots, start=1):
         size = _prompt_size(shot.visual.prompt, lang)
         if size < minimum:
             issues.append(f"镜头 {index} 的画面描述只有 {size} {unit}，要求{_PROMPT_LEN.get(lang, '')}")
+        if style is not None and model_rules.too_long(style, shot.visual.prompt):
+            issues.append(
+                f"镜头 {index} 的画面描述 {len(shot.visual.prompt)} 字，超过 {style.label} 的建议上限 "
+                f"{style.max_shot_prompt} 字，请压缩到主体、动作和景别"
+            )
         if not shot.visual.link:
             issues.append(f"镜头 {index} 缺少衔接说明")
         unknown = sorted(
@@ -366,21 +393,25 @@ def write_storyboard(
     references: list[tuple[str, str]] | None = None,
     script: list[str] | None = None,
     materials: list[str] | None = None,
+    provider_id: str | None = None,
 ) -> Storyboard:
     """根据诉求写分镜：全片设定 + 文案 + 每个镜头的画面描述、运镜和衔接。
 
     给了 ``script``（用户确认过的脚本，每段一个镜头）时文案不再由大模型写，只配画面。
     ``materials`` 是用户上传素材的说明（每条以 M1、M2… 编号开头）。
+    ``provider_id`` 是打算用来生成画面的模型：自带小预算提示词的模型（可灵、海螺）
+    会按它的建议长度检查画面描述，写得过长时要求重写一次。
     出稿后自检一次，不合格时带着问题让大模型重写一次；重写后仍有问题就保留
     问题列表返回，不再重试（避免无限花钱）。
     """
     script = [line.strip() for line in script or [] if line.strip()] or None
     lang = prompt_lang if prompt_lang in _PROMPT_LANG else "en"
+    style = model_rules.style_for(provider_id) if provider_id else None
     system = SYSTEM_PROMPT.format(
         language=language,
         length_rule=SCRIPT_RULE if script else _length_rule(shots, duration),
         plang=_PROMPT_LANG[lang],
-        prompt_len=_PROMPT_LEN[lang],
+        prompt_len=_prompt_len(lang, style),
         still_len=_STILL_LEN[lang],
         structure=STRUCTURES.get(video_type or "", ""),
     )
@@ -405,7 +436,9 @@ def write_storyboard(
     board = _parse(_extract_json(reply), subject)
     if script:
         _apply_script(board, script)
-    board.issues = check_storyboard(board, lang=lang, duration=target, video_type=video_type)
+    board.issues = check_storyboard(
+        board, lang=lang, duration=target, video_type=video_type, provider_id=provider_id
+    )
     if not board.issues:
         return board
     log.info("分镜自检发现 %d 个问题，让大模型重写一次", len(board.issues))
@@ -425,7 +458,9 @@ def write_storyboard(
         return board
     if script:
         _apply_script(second, script)
-    second.issues = check_storyboard(second, lang=lang, duration=target, video_type=video_type)
+    second.issues = check_storyboard(
+        second, lang=lang, duration=target, video_type=video_type, provider_id=provider_id
+    )
     return second if len(second.issues) <= len(board.issues) else board
 
 
