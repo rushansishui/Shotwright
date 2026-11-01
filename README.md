@@ -170,6 +170,17 @@ AI 视频（Seedance）和 AI 图片（Seedream）与豆包同属火山方舟，
 - [参考 MoneyPrinterTurbo 的移植清单](docs/PORTING.md)
 - [如何新增一个 Provider](docs/PROVIDERS.md)
 
+## 开发脚本
+
+`scripts/` 下是开发时用的辅助脚本，不随安装包分发：
+
+- `scripts/promo/`：一条命令做宣传片。复制一个做好的演示项目，建一个 16:9 的项目放口播，
+  用 Playwright 自动操作界面并录屏（会花钱的按钮只把鼠标移上去、不点），录完按配音时长
+  对齐、剪掉等待、放回镜头，最后渲染成片。分镜和口播在 `storyboard.py` 里改。
+  先装依赖：`pip install -e ".[promo]" && python -m playwright install chromium`，
+  然后 `python scripts/promo/make_promo.py --demo <项目id> --lang zh`。
+- `scripts/build-installer.ps1`：在 Windows 上打安装包（见「快速开始」）。
+
 ## 致谢
 
 Shotwright 是一个全新编写的项目，部分设计和实现参考了 [MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo)（MIT License，© 2024 Harry），具体见 [NOTICE.md](NOTICE.md)。

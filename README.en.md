@@ -172,6 +172,13 @@ These documents are currently in Chinese.
 - [Porting notes from MoneyPrinterTurbo](docs/PORTING.md)
 - [Adding a provider](docs/PROVIDERS.md)
 
+## Development scripts
+
+Everything under `scripts/` is a helper for working on Shotwright, not shipped with the installer:
+
+- `scripts/promo/`: builds the promo video in one command. It copies a finished demo project, creates a 16:9 project holding the voice-over, then drives the UI with Playwright and records it (buttons that cost money are only hovered, never clicked). Each recording is trimmed to the narration length, long waits are cut, and the clips go back into the shots before the final render. Edit the storyboard and script in `storyboard.py`. Install the extras first: `pip install -e ".[promo]" && python -m playwright install chromium`, then run `python scripts/promo/make_promo.py --demo <project id> --lang en`.
+- `scripts/build-installer.ps1`: builds the Windows installer (see Quick start).
+
 ## Acknowledgements
 
 Shotwright is written from scratch. Some of its design and implementation draw on [MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo) (MIT License, © 2024 Harry); see [NOTICE.md](NOTICE.md) for details.
