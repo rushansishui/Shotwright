@@ -308,15 +308,33 @@ def check_budget(
     resolution: str = "",
     seconds: float | None = None,
 ) -> None:
-    """项目设了费用上限时，估算本次生成的参考费用，累计会超过上限就拒绝提交。"""
-    if project.budget is None:
-        return
+    """收费生成前检查花费：单镜头上限、单镜头次数上限、项目上限，任意一个会超就拒绝提交。
+
+    单镜头的上限比项目的更早生效：某个镜头一直抽不中，就先卡住这个镜头，别让它把
+    整个项目的预算吃光；提示里也说清楚「建议换个思路」。
+    """
     from shotwright.services import cost
 
     amount = cost.generation_cost(
         settings, project, shot, kind, provider_id or "", resolution=resolution, seconds=seconds
     )
-    if amount > 0 and project.cost_credits + amount > project.budget + 1e-9:
+    if amount <= 0:
+        return
+    visual = shot.visual
+    spent = round(sum(take.cost for take in visual.takes), 4)
+    if visual.max_takes is not None and len(visual.takes) >= visual.max_takes:
+        raise BudgetExceeded(
+            f"这个镜头已经生成 {len(visual.takes)} 版，到了设定的上限 {visual.max_takes} 版。"
+            "与其继续重抽，不如先改画面描述、换个角度或换成素材库画面"
+        )
+    if visual.budget is not None and spent + amount > visual.budget + 1e-9:
+        raise BudgetExceeded(
+            f"超出这个镜头的费用上限：已花约 {spent:.2f} 元，本次约 {amount:.2f} 元，"
+            f"上限 {visual.budget:.2f} 元。建议先换思路：改描述、换角度，或改用素材库"
+        )
+    if project.budget is None:
+        return
+    if project.cost_credits + amount > project.budget + 1e-9:
         raise BudgetExceeded(
             f"超出项目费用上限：已花约 {project.cost_credits:.2f} 元，本次约 {amount:.2f} 元，"
             f"上限 {project.budget:.2f} 元。可以在渲染面板提高上限"
@@ -504,7 +522,15 @@ def build_prompt(
     ``frame_ref`` 是用作首帧的那张主体照片（服务不支持参考图时），写进提示词让模型照着画。
     """
     target = "image" if kind == "image_gen" else "video"
-    text = prompting.compose(project, shot, target=target, limit=ref_limit, refs=refs, frame_ref=frame_ref)
+    text = prompting.compose(
+        project,
+        shot,
+        target=target,
+        limit=ref_limit,
+        refs=refs,
+        frame_ref=frame_ref,
+        provider_id=provider_id,
+    )
     spec = _spec(kind, provider_id)
     languages = spec.prompt_languages if spec is not None else ("en",)
     return prompting.for_provider(settings, project, text, languages)
@@ -765,6 +791,7 @@ def generate_ai_candidate(
             store, project, path, source=provider_id or "video_gen", folder="ai-video", meta=meta
         )
     shot.visual.pending = None
+    _attach(shot, [asset.id], select=True, take=kind, batch=batch)
     for seconds in spent:
         record_spend(
             store,
@@ -775,8 +802,8 @@ def generate_ai_candidate(
             provider_id or "",
             resolution=resolution,
             seconds=seconds,
+            asset_id=asset.id,
         )
-    _attach(shot, [asset.id], select=True, take=kind, batch=batch)
     return [asset.id]
 
 
@@ -920,8 +947,8 @@ def generate_image_candidate(
             folder="ai-image",
             meta=meta,
         )
-    record_spend(store, settings, project, shot, "image_gen", provider_id or "")
     _attach(shot, [asset.id], select=not keyframe, take="keyframe" if keyframe else "image", batch=batch)
+    record_spend(store, settings, project, shot, "image_gen", provider_id or "", asset_id=asset.id)
     return [asset.id]
 
 
@@ -1102,22 +1129,32 @@ def record_spend(
     *,
     resolution: str = "",
     seconds: float | None = None,
-) -> None:
-    """收费生成成功后，把参考费用累加到项目（直接写盘，调用方之后的合并不会覆盖它）。"""
+    asset_id: str | None = None,
+) -> float:
+    """收费生成成功后，把参考费用累加到项目（直接写盘，调用方之后的合并不会覆盖它）。
+
+    ``asset_id`` 给了就同时记到那一版的版本记录上，用来区分哪些钱花在了没人用的版本上。
+    返回这次记的金额（元）。
+    """
     from shotwright.services import cost
 
     amount = cost.generation_cost(
         settings, project, shot, kind, provider_id, resolution=resolution, seconds=seconds
     )
     if amount <= 0:
-        return
+        return 0.0
     with store.lock(project.id):
         latest = store.load(project.id)
         latest.cost_credits = round(latest.cost_credits + amount, 4)
         store.save(latest)
         project.cost_credits = latest.cost_credits
         project.revision = latest.revision
+    if asset_id:
+        take = shot.visual.take(asset_id)
+        if take is not None:
+            take.cost = round(take.cost + amount, 4)
     log.info("项目 %s：本次生成参考费用 %.2f 元，累计 %.2f 元", project.id, amount, project.cost_credits)
+    return amount
 
 
 def _attach(

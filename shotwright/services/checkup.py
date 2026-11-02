@@ -21,6 +21,23 @@ LOW_RESOLUTION = 0.6
 SHORT_FOOTAGE = 1.0
 """慢放到最慢之后仍差这么多秒以上，才算「素材明显比配音短」。"""
 
+REMEDIABLE = frozenset(
+    {
+        "no_prompt",
+        "no_visual",
+        "low_resolution",
+        "short_footage",
+        "overlay_subtitle",
+        "overlay_overlap",
+        "platform_aspect",
+        "no_look",
+        "subject_in_stock",
+        "subject_no_image",
+        "over_budget",
+    }
+)
+"""会报出来的问题 code。每一条都要在 ``services/remedy.py`` 里有对应的补救建议。"""
+
 
 @dataclass
 class CheckIssue:

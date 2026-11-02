@@ -38,6 +38,12 @@ export function Home() {
   const [warned, setWarned] = useState<"script" | "board" | null>(null);
   const [aspect, setAspect] = useState<Aspect>(initial.aspect ?? "9:16");
   const [duration, setDuration] = useState(initial.duration ?? 30);
+  /** 用户自己改过类型 / 比例 / 时长；没改过时交给 AI 按想法判断。 */
+  const [customized, setCustomized] = useState(initial.customized ?? false);
+  /** AI 为什么这么定，显示在输入框下面。 */
+  const [decision, setDecision] = useState("");
+  /** 视频设置默认收起，只留一个输入框。 */
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [busy, setBusy] = useState<"normalize" | "script" | "create" | null>(null);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
@@ -55,8 +61,8 @@ export function Home() {
   }, []);
 
   useEffect(
-    () => saveDraft({ step, idea, subject, title, lines, videoType, aspect, duration, language }),
-    [step, idea, subject, title, lines, videoType, aspect, duration, language],
+    () => saveDraft({ step, idea, subject, title, lines, videoType, aspect, duration, language, customized }),
+    [step, idea, subject, title, lines, videoType, aspect, duration, language, customized],
   );
 
   const llmReady = providers?.llm?.some((p) => p.default && p.configured) ?? false;
@@ -78,13 +84,37 @@ export function Home() {
     setBusy("normalize");
     setError("");
     try {
+      // 用户没自己改过设置时，先让 AI 判断类型、时长和比例，再按对应的模板整理诉求。
+      let kind = videoType;
+      let seconds = duration;
+      let ratio = aspect;
+      if (!customized) {
+        try {
+          const decided = await api.decideSettings({
+            idea: idea.trim(),
+            language,
+            video_type: videoType,
+            aspect,
+            duration,
+          });
+          kind = decided.video_type;
+          seconds = decided.duration;
+          ratio = decided.aspect;
+          setVideoType(kind);
+          setDuration(seconds);
+          setAspect(ratio);
+          setDecision(decided.reason);
+        } catch {
+          // 判断失败就用当前的设置继续，不打断流程。
+        }
+      }
       const result = await api.normalizeBrief({
         idea: idea.trim(),
-        template: templates[videoType].template,
-        video_type: videoType,
+        template: BRIEF_TEMPLATES[lang === "zh" ? "zh" : "en"][kind].template,
+        video_type: kind,
         language,
-        aspect,
-        duration,
+        aspect: ratio,
+        duration: seconds,
         materials: notes,
       });
       if (subject.trim() && subject.trim() !== result.brief.trim() && !window.confirm(t("flow.replaceBrief"))) return;
@@ -201,58 +231,94 @@ export function Home() {
   const reachable = (n: Step) => n === 1 || (n === 2 && (subject.trim() || step >= 2)) || (n === 3 && lines.length > 0);
   const working = busy !== null;
 
-  /** 视频设置：类型、语言、比例、时长。只出现一次，任何一步都能改。 */
+  /** 视频设置：类型、语言、比例、时长。默认收起，用户开箱只有一个输入框；改过就按用户选的来。 */
   const settings = (
     <div className="video-settings">
-      <div className="field">
-        <span className="label">{t("home.videoType")}</span>
-        <Segmented
-          label={t("home.videoType")}
-          value={videoType}
-          onChange={(value) => {
-            setVideoType(value);
-            setWarned(null);
-          }}
-          options={VIDEO_TYPES.map((value) => ({ value, label: t(`videoType.${value}` as MessageKey) }))}
-        />
-        {videoType === "footage" && <p className="hint small">{t("home.footageHint")}</p>}
+      <div className="settings-summary">
+        <span className="muted small">
+          {customized
+            ? t("home.settingsCustom", {
+                type: t(`videoType.${videoType}` as MessageKey),
+                aspect: t(`home.aspect.${aspect === "9:16" ? "portraitShort" : aspect === "16:9" ? "landscapeShort" : "squareShort"}` as MessageKey),
+                n: duration,
+              })
+            : decision || t("home.settingsAuto")}
+        </span>
+        <button type="button" className="btn small ghost" onClick={() => setSettingsOpen(!settingsOpen)} aria-expanded={settingsOpen}>
+          {settingsOpen ? t("home.settingsHide") : t("home.settingsShow")}
+        </button>
       </div>
-      <div className="settings-row three">
-        <div className="field">
-          <label htmlFor="language" title={t("home.languageHint")}>
-            {t("home.language")}
-          </label>
-          <select id="language" className="input" value={language} onChange={(e) => setLanguage(e.target.value)}>
-            {languages.map((l) => (
-              <option key={l.code} value={l.code}>
-                {lang === "zh" && l.name_zh !== l.name ? `${l.name}（${l.name_zh}）` : l.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <span className="label">{t("home.aspect")}</span>
-          <Segmented
-            label={t("home.aspect")}
-            value={aspect}
-            onChange={setAspect}
-            options={[
-              { value: "9:16", label: t("home.aspect.portraitShort") },
-              { value: "16:9", label: t("home.aspect.landscapeShort") },
-              { value: "1:1", label: t("home.aspect.squareShort") },
-            ]}
-          />
-        </div>
-        <div className="field">
-          <div className="field-row">
-            <label htmlFor="duration" title={t("home.durationHint")}>
-              {t("home.duration")}
-            </label>
-            <span className="muted small">{t("home.durationValue", { n: duration })}</span>
+      {settingsOpen && (
+        <>
+          <div className="field">
+            <span className="label">{t("home.videoType")}</span>
+            <Segmented
+              label={t("home.videoType")}
+              value={videoType}
+              onChange={(value) => {
+                setVideoType(value);
+                setCustomized(true);
+                setDecision("");
+                setWarned(null);
+              }}
+              options={VIDEO_TYPES.map((value) => ({ value, label: t(`videoType.${value}` as MessageKey) }))}
+            />
+            {videoType === "footage" && <p className="hint small">{t("home.footageHint")}</p>}
           </div>
-          <input id="duration" type="range" min={10} max={180} step={5} value={duration} onChange={(e) => setDuration(Number(e.target.value))} />
-        </div>
-      </div>
+          <div className="settings-row three">
+            <div className="field">
+              <label htmlFor="language" title={t("home.languageHint")}>
+                {t("home.language")}
+              </label>
+              <select id="language" className="input" value={language} onChange={(e) => setLanguage(e.target.value)}>
+                {languages.map((l) => (
+                  <option key={l.code} value={l.code}>
+                    {lang === "zh" && l.name_zh !== l.name ? `${l.name}（${l.name_zh}）` : l.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <span className="label">{t("home.aspect")}</span>
+              <Segmented
+                label={t("home.aspect")}
+                value={aspect}
+                onChange={(value) => {
+                  setAspect(value);
+                  setCustomized(true);
+                  setDecision("");
+                }}
+                options={[
+                  { value: "9:16", label: t("home.aspect.portraitShort") },
+                  { value: "16:9", label: t("home.aspect.landscapeShort") },
+                  { value: "1:1", label: t("home.aspect.squareShort") },
+                ]}
+              />
+            </div>
+            <div className="field">
+              <div className="field-row">
+                <label htmlFor="duration" title={t("home.durationHint")}>
+                  {t("home.duration")}
+                </label>
+                <span className="muted small">{t("home.durationValue", { n: duration })}</span>
+              </div>
+              <input
+                id="duration"
+                type="range"
+                min={10}
+                max={180}
+                step={5}
+                value={duration}
+                onChange={(e) => {
+                  setDuration(Number(e.target.value));
+                  setCustomized(true);
+                  setDecision("");
+                }}
+              />
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 

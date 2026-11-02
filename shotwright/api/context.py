@@ -22,6 +22,8 @@ log = logging.getLogger("shotwright.api")
 
 MAX_UPLOAD = 500 * 1024 * 1024
 """上传文件的大小上限。"""
+MAX_ARCHIVE = 2 * 1024 * 1024 * 1024
+"""导入项目包的大小上限：素材多的项目会比较大。"""
 BGM_KEY = "__bgm__"
 """in_progress 里用这个伪镜头 id 表示「背景音乐检索中」。"""
 

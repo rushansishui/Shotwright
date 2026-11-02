@@ -40,6 +40,8 @@ class Job:
     allow_paid: bool = False
     quality: str = "final"
     """draft：低分辨率快速预览；final：正常成片。"""
+    sample: bool = False
+    """整片样片：先用免费方式把整片跑一遍，确认节奏和文案后再正式出片。"""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -54,8 +56,13 @@ class JobManager:
         self._cancel: dict[str, threading.Event] = {}
         self._lock = threading.Lock()
 
-    def submit(self, project_id: str, *, allow_paid: bool = False, quality: str = "final") -> Job:
-        job = Job(id=new_id(), project_id=project_id, allow_paid=allow_paid, quality=quality)
+    def submit(
+        self, project_id: str, *, allow_paid: bool = False, quality: str = "final", sample: bool = False
+    ) -> Job:
+        if sample:
+            # 样片永远不花钱：AI 镜头改用素材检索或纯色，先把节奏和文案确认下来。
+            allow_paid, quality = False, "draft"
+        job = Job(id=new_id(), project_id=project_id, allow_paid=allow_paid, quality=quality, sample=sample)
         with self._lock:
             self._jobs[job.id] = job
             self._cancel[job.id] = threading.Event()

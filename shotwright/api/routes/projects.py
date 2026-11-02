@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
-from shotwright.api.context import ApiContext
+from shotwright.api.context import MAX_ARCHIVE, ApiContext
 from shotwright.api.schemas import (
     ApplyMaterials,
     ChargeConsent,
     CreateProject,
     CreateVersion,
+    DecideSettings,
     DuplicateProject,
     NormalizeBrief,
     PreviewVoice,
@@ -30,8 +34,19 @@ from shotwright.pipeline import voice as voice_stage
 from shotwright.pipeline.render_types import RenderError
 from shotwright.providers import registry
 from shotwright.providers.base import ProviderError, ProviderNotConfigured
+from shotwright.services import archive as archive_service
 from shotwright.services import brief as brief_service
-from shotwright.services import checkup, localize, prompting, pronounce, readiness, storyboard, visuals
+from shotwright.services import (
+    checkup,
+    localize,
+    prompting,
+    pronounce,
+    readiness,
+    remedy,
+    spend,
+    storyboard,
+    visuals,
+)
 from shotwright.services import cost as cost_service
 from shotwright.services import inspect as inspect_service
 from shotwright.services import titles as titles_service
@@ -191,6 +206,7 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
                 duration=body.duration,
                 video_type=body.video_type,
                 aspect=project.canvas.aspect,
+                provider_id=settings.default_provider("video_gen"),
             )
             project.title = project.title or board.title
             project.shots = board.shots
@@ -215,9 +231,28 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
             for item in items
         ]
 
+    @api.post("/brief/decide")
+    def decide_settings(body: DecideSettings):
+        """一句话想法 → 建议的视频类型、时长和比例。不建项目、不收费。"""
+        lang = languages.get(body.language)
+        llm = registry.create("llm", None, settings)
+        decision = brief_service.decide_settings(
+            llm,  # type: ignore[arg-type]
+            body.idea,
+            language=lang.prompt_name,
+            video_type=body.video_type,
+            duration=body.duration,
+            aspect=body.aspect,
+        )
+        return {
+            "video_type": decision.video_type,
+            "duration": decision.duration,
+            "aspect": decision.aspect,
+            "reason": decision.reason,
+        }
+
     @api.post("/brief/normalize")
     def normalize_brief(body: NormalizeBrief):
-        """把用户随手写的想法按视频类型的模板整理成完整诉求。不建项目、不收费。"""
         lang = languages.get(body.language)
         llm = registry.create("llm", None, settings)
         text = brief_service.normalize_brief(
@@ -277,6 +312,7 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
                 aspect=project.canvas.aspect,
                 script=body.script,
                 materials=brief_service.describe_materials(materials),
+                provider_id=settings.default_provider("video_gen"),
             )
 
         def change(latest: Project) -> None:
@@ -484,6 +520,38 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
 
         return _mutate(project_id, change)
 
+    @api.get("/projects/{project_id}/archive")
+    def export_archive(project_id: str):
+        """把整个项目（设置、镜头、素材）导出成 zip，换台机器也能接着做。"""
+        project = store.load(_id(project_id))
+        name = archive_service.safe_name(project.title or project.subject or project.id)
+        # 导出到临时目录再返回：成片和缓存不打包，但包本身不留在项目里占地方。
+        temp = Path(tempfile.mkdtemp(prefix="shotwright-export-"))
+        target = temp / f"{name}.zip"
+        archive_service.export_project(store, project, target)
+        return FileResponse(
+            target,
+            media_type="application/zip",
+            filename=f"{name}.shotwright.zip",
+            background=BackgroundTask(shutil.rmtree, temp, True),
+        )
+
+    @api.post("/projects/import", status_code=201)
+    def import_archive(file: UploadFile = File(...), title: str = ""):
+        """导入之前导出的项目包，返回新项目。"""
+        with tempfile.TemporaryDirectory(prefix="shotwright-import-") as temp:
+            path = Path(temp) / "project.zip"
+            with path.open("wb") as handle:
+                while chunk := file.file.read(1024 * 1024):
+                    if handle.tell() + len(chunk) > MAX_ARCHIVE:
+                        raise HTTPException(413, "项目包超过 2GB")
+                    handle.write(chunk)
+            try:
+                project = archive_service.import_project(store, path, title=title or None)
+            except archive_service.ArchiveError as exc:
+                raise HTTPException(422, str(exc)) from None
+        return project
+
     @api.post("/projects/{project_id}/duplicate", status_code=201)
     def duplicate(project_id: str, body: DuplicateProject | None = None):
         """把已有项目复制成新项目（素材、设置、镜头和渲染缓存一起复制），返回新项目。"""
@@ -535,6 +603,14 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
 
     @api.get("/projects/{project_id}/checkup")
     def get_checkup(project_id: str, quality: Literal["draft", "final"] = "final"):
-        """渲染前体检：列出缺画面、素材太短、分辨率不足、文字重叠、超出费用上限等问题。只读。"""
+        """渲染前体检：列出缺画面、素材太短、分辨率不足、文字重叠、超出费用上限等问题。
+        只读。每条问题附带最省钱的补救方式（``remedies``），免费的在前面。"""
         project = store.load(_id(project_id))
-        return {"issues": checkup.to_dicts(checkup.check_project(project, settings, quality=quality))}
+        issues = checkup.check_project(project, settings, quality=quality)
+        return {"issues": remedy.to_dicts(issues)}
+
+    @api.get("/projects/{project_id}/spend")
+    def get_spend(project_id: str):
+        """花费指标：每秒成片花费、首次可用率、平均重做次数、浪费金额。只读。"""
+        project = store.load(_id(project_id))
+        return spend.measure(store, project).to_dict()

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 /**
  * 主流程端到端测试。用真实浏览器跑，不模拟网络。
@@ -28,6 +28,15 @@ async function createProject(page: Page, script: string) {
 /** 编辑页分步：素材 → 画面 → 配音与字幕 → 音乐与音效 → 标题与文字。 */
 async function gotoStep(page: Page, name: RegExp) {
   await page.locator(".editor-steps").getByRole("button", { name }).click();
+}
+
+/**
+ * 简洁模式默认开着（每个镜头只显示「换一个、重做、改这句」）。
+ * 要改画面来源、提示词或剪辑时，先点这个镜头上的「更多」展开成完整界面。
+ */
+async function expandShot(shot: Locator) {
+  const more = shot.locator(".shot-simple-actions").getByRole("button", { name: /^更多$|^More$/ });
+  if (await more.count()) await more.click();
 }
 
 test.describe("Shotwright 主流程", () => {
@@ -66,6 +75,7 @@ test.describe("Shotwright 主流程", () => {
     await expect(shots).toHaveCount(2);
 
     page.once("dialog", (dialog) => dialog.accept());
+    await expandShot(shots.first());
     await shots.first().getByRole("button", { name: /删除镜头|Delete shot/ }).click();
     await expect(shots).toHaveCount(1);
   });
@@ -110,6 +120,7 @@ test.describe("Shotwright 主流程", () => {
 
     // 打开第一个镜头的剪辑面板，播放位置跳到 1 秒，在这里拆分。
     const first = shots.first();
+    await expandShot(first);
     await first.locator("details.shot-edit summary").click();
     const video = first.locator("video.edit-video");
     await expect(video).toBeVisible();
@@ -139,6 +150,10 @@ test.describe("Shotwright 主流程", () => {
     await page.goto("/");
     await page.evaluate(() => localStorage.removeItem("shotwright.newVideoDraft"));
     await page.reload();
+    // 视频设置默认收起，只留一个输入框；要点类型得先展开。
+    await expect(page.getByRole("radio", { name: /口播|Talking head/ })).toHaveCount(0);
+    await expect(page.getByText(/类型、时长和画面比例由 AI|AI picks the type/)).toBeVisible();
+    await page.getByRole("button", { name: /自己选|Choose myself/ }).click();
     await page.getByRole("radio", { name: /口播|Talking head/ }).click();
     await expect(page.locator("#idea")).toHaveAttribute("placeholder", /视频号|talking-head/);
     // 自己写诉求：直接进入第 2 步，按所选类型填好模板。
@@ -189,6 +204,8 @@ test.describe("Shotwright 主流程", () => {
     });
     await createProject(page, `多选${RUN_ID}。${TWO_SHOTS}`);
     const first = page.locator("article.shot").first();
+    // 简洁模式下画面来源收在「更多」里。
+    await expandShot(first);
     await first.getByRole("radio", { name: /上传|Upload/ }).click();
     const input = first.locator('input[type="file"][accept="video/*,image/*"]');
     for (const clip of clips) {

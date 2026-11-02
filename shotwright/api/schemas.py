@@ -153,6 +153,10 @@ class VisualPatch(_Body):
     review: ReviewMark | None = None
     """审片结论：ok 通过、redo 重做、空字符串清除。"""
     review_note: str | None = Field(None, max_length=300)
+    budget: float | None = Field(None, ge=-1.0, le=1_000)
+    """这个镜头最多花多少（元）；传 -1 表示清除，跟随项目上限。"""
+    max_takes: int | None = Field(None, ge=0, le=50)
+    """这个镜头最多生成几版；传 0 表示不限。"""
 
 
 class UpdateShot(_Body):
@@ -194,6 +198,12 @@ class ChargeConsent(_Body):
     """用户已确认这次操作可以调用收费服务（AI 视频、AI 图片）。"""
     quality: Literal["draft", "final"] = "final"
     """draft：快速低质量预览；final：正常成片。"""
+
+
+class RenderRequest(ChargeConsent):
+    sample: bool = False
+    """整片样片：先用免费方式把整片跑一遍（草稿档、AI 镜头改用素材检索或纯色），
+    确认节奏和文案后再正式出片。为真时忽略 ``confirm_charge``，不会花钱。"""
 
 
 class CandidatesRequest(ChargeConsent):
@@ -296,6 +306,16 @@ class NormalizeBrief(_Body):
     aspect: str | None = Field(None, max_length=8)
     duration: float | None = Field(None, gt=0, le=1800)
     materials: list[MaterialNote] = Field(default_factory=list, max_length=30)
+
+
+class DecideSettings(_Body):
+    """一句话想法 → 建议的视频类型、时长和比例。用户已经选好的项原样沿用。"""
+
+    idea: str = Field(min_length=1, max_length=4000)
+    language: str = Field("zh-CN", max_length=40)
+    video_type: VideoType | None = None
+    aspect: str | None = Field(None, max_length=8)
+    duration: float | None = Field(None, gt=0, le=1800)
 
 
 class ScriptRequest(_Body):

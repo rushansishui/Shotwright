@@ -19,6 +19,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6"]
 asr = ["faster-whisper>=1.0"]  # 剪辑页的本地语音识别
+promo = ["playwright>=1.45"]  # scripts/promo：自动录屏做宣传片
 
 [project.scripts]
 shotwright = "shotwright.cli:main"

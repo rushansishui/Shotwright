@@ -41,6 +41,7 @@ class CaseResult:
 
     brief: str
     aspect: str
+    tier: str = "core"
     project_id: str = ""
     error: str = ""
     shots: int = 0
@@ -152,9 +153,14 @@ def run_bench(
     allow_paid: bool = False,
     aspects: list[str] | None = None,
     only: list[str] | None = None,
+    tier: str | None = None,
     progress=print,
 ) -> BenchReport:
-    """跑一遍基准集，结果写到 ``out_dir``（report.json、report.md、成片）。"""
+    """跑一遍基准集，结果写到 ``out_dir``（report.json、report.md、成片）。
+
+    ``tier`` 限定跑哪一类用例：``core`` 是最早的 5 条（指标口径固定，日常改动跑这一组就够），
+    ``extra`` 是后补的难度用例，为空时全跑。
+    """
     from shotwright.pipeline.render import Renderer
 
     data = load_briefs()
@@ -166,8 +172,15 @@ def run_bench(
     for brief in data["briefs"]:
         if only and brief["id"] not in only:
             continue
+        if tier and (brief.get("tier") or "core") != tier:
+            continue
         for aspect in aspects or data.get("aspects") or ["9:16"]:
-            case = CaseResult(brief=brief["id"], aspect=aspect, target_seconds=brief.get("target_seconds"))
+            case = CaseResult(
+                brief=brief["id"],
+                aspect=aspect,
+                tier=brief.get("tier") or "core",
+                target_seconds=brief.get("target_seconds"),
+            )
             report.cases.append(case)
             progress(f"{brief['id']} {aspect}：写分镜")
             try:
@@ -252,12 +265,12 @@ def format_report(data: dict, previous: dict | None = None) -> str:
             delta = value - old if isinstance(value, int | float) and isinstance(old, int | float) else None
             row += f" {_fmt(old)} | {_fmt(delta, signed=True)} |"
         lines.append(row)
-    lines += ["", "## 每个用例", "", "| 诉求 | 比例 | 镜头 | 描述均长 | 衔接 | 响度 | 补足占比 | 备注 |"]
-    lines.append("|---|---|---|---|---|---|---|---|")
+    lines += ["", "## 每个用例", "", "| 诉求 | 组 | 比例 | 镜头 | 描述均长 | 衔接 | 响度 | 补足占比 | 备注 |"]
+    lines.append("|---|---|---|---|---|---|---|---|---|")
     for case in data["cases"]:
         lines.append(
-            f"| {case['brief']} | {case['aspect']} | {case['shots']} | {case['prompt_avg']} | "
-            f"{case['link_coverage']} | {_fmt(case['loudness'])} | "
+            f"| {case['brief']} | {case.get('tier', 'core')} | {case['aspect']} | {case['shots']} | "
+            f"{case['prompt_avg']} | {case['link_coverage']} | {_fmt(case['loudness'])} | "
             f"{_fmt(case['fill_ratio']) if case['rendered'] else '—'} | {case['error'] or case['video']} |"
         )
     return "\n".join(lines) + "\n"

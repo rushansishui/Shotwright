@@ -19,6 +19,41 @@ from .render_types import AUDIO_ARGS, KEN_BURNS, RenderCancelled, StageRecord
 CLIP_VERSION = "clip-2"
 """视频片段处理方式（入出点、慢放定格、原声）的版本；改动处理逻辑时更新，旧缓存随之失效。"""
 
+COLOR_VERSION = "color-3"
+"""纯色背景的画法版本：改成渐变背景时更新，旧缓存随之失效。"""
+
+
+def _mix(hex_color: str, other: tuple[int, int, int], amount: float) -> str:
+    """把颜色朝 ``other`` 混过去 ``amount``（0–1），返回 ``0xRRGGBB``。"""
+    raw = hex_color.lstrip("#")
+    rgb = tuple(int(raw[index : index + 2], 16) for index in (0, 2, 4))
+    mixed = tuple(round(value + (target - value) * amount) for value, target in zip(rgb, other, strict=True))
+    return "0x" + "".join(f"{max(0, min(255, value)):02X}" for value in mixed)
+
+
+def color_background(hex_color: str) -> tuple[str, str]:
+    """纯色镜头的背景配色：返回（亮一点的中心色, 暗一点的边缘色）。
+
+    不是一块平涂：从用户选的颜色分出明暗两层做渐变，中间偏一块柔和的光，四周自然
+    压暗，画面有层次，字幕压在上面也更容易看清。明暗差控制在一档以内——差太多时
+    中心会变成一块「手电筒」光斑，压在小标题下面很扎眼。横屏尤其明显。
+    """
+    light = _mix(hex_color, (255, 255, 255), 0.08)
+    dark = _mix(hex_color, (0, 0, 0), 0.22)
+    return light, dark
+
+
+def color_background_graph(hex_color: str, width: int, height: int, fps: int, duration: float) -> str:
+    """纯色镜头的背景：柔和径向渐变 + 极轻的颗粒 + 很慢的流动。"""
+    light, dark = color_background(hex_color)
+    # 渐变在 2 倍画布上生成再缩放，放大后更平滑，颗粒也不会随分辨率变粗。
+    big_w, big_h = width * 2, height * 2
+    return (
+        f"gradients=s={big_w}x{big_h}:r={fps}:c0={light}:c1={dark}"
+        f":type=radial:speed=0.0006:seed=7:d={max(duration, 0.1):.3f},"
+        f"scale={width}:{height},noise=alls=2:allf=t,format=yuv420p"
+    )
+
 
 def fit_graph(
     source: str, target: str, width: int, height: int, fit: str, fx: float = 0.5, fy: float = 0.5
@@ -274,6 +309,7 @@ def render_shot(
         clip.key() if clip else None,
         round(visual.source_volume, 3) if clip and clip.audio else None,
         CLIP_VERSION if clip else None,
+        COLOR_VERSION if asset is None else None,
         canvas.model_dump(),
         project.voice_for(shot).volume,
         quality,
@@ -286,11 +322,12 @@ def render_shot(
         scratch: Path | None = None
         try:
             if asset is None:
+                # 纯色镜头不用一块平涂：柔和渐变 + 很轻的颗粒，有层次，字幕压得住。
                 video_input = [
                     "-f",
                     "lavfi",
                     "-i",
-                    f"color=c=0x{visual.color[1:]}:s={width}x{height}:r={fps}",
+                    color_background_graph(visual.color, width, height, fps, duration + 1.0),
                 ]
             elif asset.kind == "image":
                 video_input = ["-protocol_whitelist", LOCAL_PROTOCOLS, "-i", str(source)]
