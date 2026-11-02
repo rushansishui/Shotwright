@@ -2,13 +2,35 @@
 
 [简体中文](README.md) | English
 
-**From a video brief to a finished video: AI writes the script, each shot gets generated or stock footage, voice-over, subtitles and background music are added automatically, and every shot can be adjusted on its own.**
+**One script, a set of ads ready to run.**
+
+An open-source AI short-video tool that runs on your own machine: the script is split into shots, each shot picks its own visuals (stock, AI video, AI images or your own footage), and voice-over, subtitles and music are added automatically. Change a shot and only that shot is redone; risky prompts are flagged before you pay, every cost is visible, and language versions take one click.
 
 Shotwright is built around the *shot*. The script is split into shots, and each shot picks its own visual source (stock search, AI generation, or your own uploaded image or video). Any shot can be replaced, locked or redone by itself. Change one shot and only that shot is re-rendered, plus the final assembly.
 
-> Current version: v0.4.0. All v0.4 "product ads" and "video quality" features are built and being tested (editing a clip with a prompt needs Seedance 2.5 enabled on Volcengine Ark). In v0.5 "delivery and efficiency", the first-run wizard, configuring services in the UI, the extra AI video services, the Cut page, the review page, keyframes first by default, the pre-generation check, the free whole-cut preview, per-shot spend limits, brand packs and the subject library, and the Windows installer are done; the rest is in progress. See the [roadmap](docs/ROADMAP.md).
+> Current version: v0.4.0. All v0.4 "product ads" and "video quality" features are built and being tested (editing a clip with a prompt needs a model that supports video-to-video, such as Seedance 2.5). In v0.5 "delivery and efficiency", the first-run wizard, configuring services in the UI, the extra AI video services, the Cut page, the review page, keyframes first by default, the pre-generation check, the free whole-cut preview, per-shot spend limits, brand packs and the subject library, and the Windows installer are done; the rest is in progress. See the [roadmap](docs/ROADMAP.md).
 
 ![Demo: write a brief, edit the storyboard, trim a clip, preview the video](docs/images/demo-en.gif)
+
+<!-- Sample videos: put 2–3 finished videos made with Shotwright here (15–30 s, portrait, one Chinese and one English).
+     Edit this file on GitHub, drag the mp4 into the editor to get a https://github.com/user-attachments/assets/... link,
+     and put the link on its own line here; GitHub shows it as a player. -->
+
+## How it compares
+
+| | Shotwright | [MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo) | [NarratoAI](https://github.com/linyqh/NarratoAI) | [Xiaoyunque](https://apps.apple.com/cn/app/id6746231056) | [Jianying / CapCut](https://www.capcut.cn/) |
+|---|---|---|---|---|---|
+| What it is | Open source, runs locally | Open source (MIT), runs locally | Open source (MIT), runs locally | Online app / web | App / desktop editor |
+| Best at | Product ads and promo shorts from a script; can also cut existing footage | Topic in, stock-footage montage out | AI commentary and editing for existing videos (film, short drama) | 15–60 s videos from one sentence, digital humans, short drama | Manual editing plus text-to-video, AI captions and voice, digital humans |
+| Visuals | Stock, AI video, AI images or your own footage, chosen per shot | Stock (Pexels, Pixabay, …) or local clips | Existing videos | The platform's own models, can mix in real footage | Your own footage |
+| Models | Swap vendors for text, image, video and voice | Many LLMs, including local Ollama | Many LLMs | The platform's own models | Built in |
+| Changing one shot | Only that shot is redone, the rest reused | — | Export a Jianying draft and edit there | — | Edit on the timeline by hand |
+| Cost | Your own API keys; checked before you pay, every charge logged | Your own API keys | Your own API keys | Credits, with memberships | Free basics, some features need membership |
+| Projects and assets | On your machine | On your machine | On your machine | On the platform | Local or cloud space |
+
+Which to pick: for a finished video from one sentence with no setup, Xiaoyunque or Jianying are easier; for batch stock montages by topic, look at MoneyPrinterTurbo; for commentary over existing videos, NarratoAI fits better; to control every shot, mix vendors' models and keep projects in your own hands, use Shotwright.
+
+<sub>Compiled from each project's home page, app store listings and public coverage as of November 2026; "—" means no public information was found. These products change quickly; if something is wrong, please open an issue.</sub>
 
 ## Features
 
