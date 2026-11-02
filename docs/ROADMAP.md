@@ -154,7 +154,7 @@ Shotwright 是开源、本地运行的分镜式 AI 短视频工作台：默认�
 
 先把第 1 阶段（上手门槛）做好再集中推广，免得来的人试了跑不通。目前第 1 阶段已完成，可以准备推广。
 
-- [ ] README 首屏：一句话定位，最前面放 2–3 条成片，和 MoneyPrinterTurbo、NarratoAI、小云雀、剪映的对比表，英文版同步。**部分有**：首屏演示动图和对比信息已在，缺成片视频
+- [ ] README 首屏：一句话定位，最前面放 2–3 条成片，和 MoneyPrinterTurbo、NarratoAI、小云雀、剪映的对比表，英文版同步。**部分有**：一句话定位、对比表（中英文）和首屏演示动图已在，缺 2–3 条成片视频（README 里已留好位置和上传说明）
 - [ ] 降低试用门槛：一条命令启动、无 Key 出片、定期发 Release 并配演示视频
 - [ ] 社区参与：CONTRIBUTING、good first issue（接新模型、加模板、翻译）、Discussions 作品展示
 - [ ] 集中发布：国内 HelloGitHub、阮一峰周刊、V2EX、掘金、少数派、B 站和小红书；海外 Show HN、Reddit、Product Hunt、X；awesome 列表
