@@ -16,6 +16,7 @@ Shotwright 以"镜头"为核心：文案被拆成一个个镜头，每个镜头�
      做法：在 GitHub 网页上编辑本文件，把 mp4 拖进编辑框，会生成一行 https://github.com/user-attachments/assets/... 链接，
      把链接放在下面这一行的位置，GitHub 会直接显示成播放器。 -->
 https://github.com/user-attachments/assets/d5c31019-7dd6-4d9d-b19d-2018426eb109
+
 https://github.com/user-attachments/assets/ca6040ec-a1a7-4bac-be09-4c2d36f1069c
 
 
