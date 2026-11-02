@@ -15,7 +15,7 @@ Shotwright is built around the *shot*. The script is split into shots, and each 
 <!-- Sample videos: put 2–3 finished videos made with Shotwright here (15–30 s, portrait, one Chinese and one English).
      Edit this file on GitHub, drag the mp4 into the editor to get a https://github.com/user-attachments/assets/... link,
      and put the link on its own line here; GitHub shows it as a player. -->
-
+https://github.com/user-attachments/assets/d8ef5fab-29ec-41f6-8684-13e0af681cc6
 
 https://github.com/user-attachments/assets/1cb4bd63-2a9d-4d7f-a122-a353b45b6013
 
