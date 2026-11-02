@@ -16,6 +16,10 @@ Shotwright is built around the *shot*. The script is split into shots, and each 
      Edit this file on GitHub, drag the mp4 into the editor to get a https://github.com/user-attachments/assets/... link,
      and put the link on its own line here; GitHub shows it as a player. -->
 
+
+https://github.com/user-attachments/assets/1cb4bd63-2a9d-4d7f-a122-a353b45b6013
+
+
 ## How it compares
 
 | | Shotwright | [MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo) | [NarratoAI](https://github.com/linyqh/NarratoAI) | [Xiaoyunque](https://apps.apple.com/cn/app/id6746231056) | [Jianying / CapCut](https://www.capcut.cn/) |
