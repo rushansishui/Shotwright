@@ -287,7 +287,7 @@ def main() -> int:
             api.call(
                 "PATCH",
                 f"/projects/{pid}/shots/{shot_id}",
-                {"title": item.title[:60], "visual": {"mode": "color", "color": item.color}},
+                {"title": item.title[:60], "visual": {"mode": "color", "color": "#0B1020"}},
             )
         titles = project["titles"]
         # 小标题和字幕都加半透明底：叠在界面录屏上也看得清。
@@ -321,9 +321,13 @@ def main() -> int:
         for index, (item, shot_id) in enumerate(zip(shots, ids, strict=True), start=1):
             length = seconds[shot_id]
             out = clips / f"{index:02d}-{item.action or item.kind}.mp4"
-            if item.kind == "card":
-                continue
-            if item.kind == "grid":
+            if item.kind == "scene":
+                if recorder is None:
+                    recorder = Recorder(demo, work / "raw", headless=not options.headed)
+                log(f"动画 {index}/{len(shots)}：{item.action}（{length:.1f} 秒）")
+                clip = recorder.record_scene(item.action, length, ROOT / font)
+                finish(clip, length, out, font=font)
+            elif item.kind == "grid":
                 names = ("中文", "English") if options.lang == "zh" else ("Chinese", "English")
                 left, right = (demo_id, other_id) if options.lang == "zh" else (other_id, demo_id)
                 grid_clip(latest_video(storage, left), latest_video(storage, right), names, length, out, font)

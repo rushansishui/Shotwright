@@ -342,6 +342,27 @@ class Recorder:
         self.browser.close()
         self._pw.stop()
 
+    def record_scene(self, name: str, seconds: float, font: Path) -> Clip:
+        """录一段网页动画（scenes.py），时长按配音来。"""
+        from scenes import SCENES
+
+        html = SCENES[name](self.demo.lang, seconds, font)
+        page_file = self.work / f"scene-{name}.html"
+        page_file.write_text(html, encoding="utf-8")
+        context = self.browser.new_context(
+            viewport=VIEWPORT, record_video_dir=str(self.work / f"raw-{name}"), record_video_size=VIEWPORT
+        )
+        page = context.new_page()
+        started = time.monotonic()
+        page.goto(page_file.resolve().as_uri())
+        page.evaluate("document.fonts.ready")
+        ready = time.monotonic() - started
+        page.wait_for_timeout(int((seconds + 1.0) * 1000))
+        end = time.monotonic() - started
+        video = page.video
+        context.close()
+        return Clip(Path(video.path()), ready, end)
+
     def record(self, name: str, seconds: float) -> Clip:
         """录一段动作，录像至少比配音长一点；返回原始录像和要保留的范围。"""
         start_page, action = ACTIONS[name]

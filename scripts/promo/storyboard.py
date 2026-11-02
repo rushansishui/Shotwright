@@ -3,7 +3,7 @@
 画面类型（``kind``）：
 
 * ``grid``：把演示项目中英文两个版本的成片并排拼成一屏；
-* ``card``：纯色底 + 小标题，不录屏（痛点、片尾）；
+* ``scene``：网页动画做的动态画面（痛点、片尾），``action`` 是 scenes.py 里的场景名；
 * ``record``：自动操作界面并录屏，``action`` 是 recorder.py 里的动作名。
 
 改口播只改这里，录屏会按新的配音时长重新对齐。口播里只写界面上真实存在的功能。
@@ -17,25 +17,22 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class PromoShot:
     kind: str
-    """grid / card / record。"""
+    """grid / scene / record。"""
     text: str
     """口播（也是字幕）。"""
     title: str = ""
     """镜头期间显示在画面上的小标题。"""
     action: str = ""
-    """kind 为 record 时的录屏动作。"""
-    color: str = "#111827"
-    """kind 为 card 时的底色。"""
+    """kind 为 record 时是录屏动作，为 scene 时是场景名（pain / outro）。"""
 
 
 SHOTS: dict[str, list[PromoShot]] = {
     "zh": [
         PromoShot("grid", "这条广告的中文版和英文版，来自同一份脚本。", "一份脚本 → 两种语言"),
         PromoShot(
-            "card",
+            "scene",
             "做 AI 广告，常常要在好几个工具之间来回切，生成翻车就重来，钱花了也不知道花在哪。",
-            "工具来回切 · 生成翻车 · 费用不明",
-            color="#3F1D1D",
+            action="pain",
         ),
         PromoShot("record", "在 Shotwright 里，贴上脚本，它会自动拆成一个个镜头。", "脚本 → 分镜", "script"),
         PromoShot(
@@ -60,12 +57,7 @@ SHOTS: dict[str, list[PromoShot]] = {
             "费用透明 · 模型任选 · 本地运行",
             "settings",
         ),
-        PromoShot(
-            "card",
-            "Shotwright 镜匠，开源免费，在 GitHub 上下载。",
-            "Shotwright 镜匠 · github.com/rushansishui/Shotwright",
-            color="#0F172A",
-        ),
+        PromoShot("scene", "Shotwright 镜匠，开源免费，在 GitHub 上下载。", action="outro"),
     ],
     "en": [
         PromoShot(
@@ -74,10 +66,9 @@ SHOTS: dict[str, list[PromoShot]] = {
             "One script, two languages",
         ),
         PromoShot(
-            "card",
+            "scene",
             "Making AI ads usually means juggling tools, re-rolling failed shots, and losing track of what you spent.",
-            "Juggling tools · Failed shots · Unknown costs",
-            color="#3F1D1D",
+            action="pain",
         ),
         PromoShot(
             "record",
@@ -115,12 +106,7 @@ SHOTS: dict[str, list[PromoShot]] = {
             "Clear costs · Any model · Runs locally",
             "settings",
         ),
-        PromoShot(
-            "card",
-            "Shotwright. Open source and free. Get it on GitHub.",
-            "Shotwright · github.com/rushansishui/Shotwright",
-            color="#0F172A",
-        ),
+        PromoShot("scene", "Shotwright. Open source and free. Get it on GitHub.", action="outro"),
     ],
 }
 
