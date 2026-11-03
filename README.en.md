@@ -19,11 +19,6 @@ https://github.com/user-attachments/assets/d8ef5fab-29ec-41f6-8684-13e0af681cc6
 
 https://github.com/user-attachments/assets/1cb4bd63-2a9d-4d7f-a122-a353b45b6013
 
-
-https://github.com/user-attachments/assets/d8ef5fab-29ec-41f6-8684-13e0af681cc6
-
-https://github.com/user-attachments/assets/1cb4bd63-2a9d-4d7f-a122-a353b45b6013
-
 ## How it compares
 
 | | Shotwright | [ClipForge](https://github.com/xixihhhh/clipforge) | [OpenMontage](https://github.com/calesthio/OpenMontage) | [Pixelle-Video](https://github.com/AIDC-AI/Pixelle-Video) | [Creatify](https://creatify.ai/) | [LTX Studio](https://ltx.studio/) |
