@@ -315,18 +315,21 @@ def check_budget(
     """
     from shotwright.services import cost
 
+    visual = shot.visual
+    spent = round(sum(take.cost for take in visual.takes), 4)
+    # 次数上限和钱无关：单价没配（例如 fal 这类要自己填 price 的服务）时金额算出来是 0，
+    # 不能因此把「最多生成几版」一起跳过，否则上限在那类服务上完全不起作用。
+    generations = len(visual.generation_takes())
+    if visual.max_takes is not None and generations >= visual.max_takes:
+        raise BudgetExceeded(
+            f"这个镜头已经生成 {generations} 版，到了设定的上限 {visual.max_takes} 版。"
+            "与其继续重抽，不如先改画面描述、换个角度或换成素材库画面"
+        )
     amount = cost.generation_cost(
         settings, project, shot, kind, provider_id or "", resolution=resolution, seconds=seconds
     )
     if amount <= 0:
         return
-    visual = shot.visual
-    spent = round(sum(take.cost for take in visual.takes), 4)
-    if visual.max_takes is not None and len(visual.takes) >= visual.max_takes:
-        raise BudgetExceeded(
-            f"这个镜头已经生成 {len(visual.takes)} 版，到了设定的上限 {visual.max_takes} 版。"
-            "与其继续重抽，不如先改画面描述、换个角度或换成素材库画面"
-        )
     if visual.budget is not None and spent + amount > visual.budget + 1e-9:
         raise BudgetExceeded(
             f"超出这个镜头的费用上限：已花约 {spent:.2f} 元，本次约 {amount:.2f} 元，"
@@ -1165,13 +1168,18 @@ def _attach(
     take: TakeKind | None = None,
     batch: str = "",
 ) -> None:
-    """把素材加进候选。``take`` 不为空时同时记一条生成版本（同一批共用 ``batch``）。"""
+    """把素材加进候选。``take`` 不为空时同时记一条生成版本（同一批共用 ``batch``）。
+
+    候选列表只保留最近 :data:`MAX_CANDIDATES` 条，但版本记录不跟着裁：一条版本记着这次
+    花了多少钱，是算「已花」「浪费金额」和单镜头次数上限的依据。早先这里跟着候选一起裁，
+    镜头生成满 30 版之后旧记录就开始丢失，花费被少算，次数上限也形同虚设。
+    """
     candidates = list(shot.visual.candidates)
     for asset_id in asset_ids:
         if asset_id not in candidates:
             candidates.append(asset_id)
     shot.visual.candidates = candidates[-MAX_CANDIDATES:]
-    takes = [item for item in shot.visual.takes if item.asset_id in shot.visual.candidates]
+    takes = list(shot.visual.takes)
     if take is not None:
         known = {item.asset_id for item in takes}
         prompt = (

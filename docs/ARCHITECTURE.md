@@ -75,7 +75,15 @@ shotwright/
 │   ├── localize.py      语言版本：翻译文案和叠加文字、共用素材
 │   ├── duplicate.py     复制项目：素材、设置和渲染缓存一起复制，不含历史成片和累计费用
 │   ├── titles.py        标题：生成候选大标题、片头副标题和各镜头小标题；挑选字幕高亮关键词
-│   └── durations.py     时长估算
+│   ├── durations.py     时长估算
+│   ├── brief.py         引导式新建：想法 → 完整诉求 → 逐段脚本；判类型 / 时长 / 比例；归位素材
+│   ├── batch.py         一键生成：要生成哪些镜头、参考费用合计、后台进度（落盘到 cache/batch/）
+│   ├── remedy.py        能修就不重做：检查出问题后按「不花钱 → 比重做便宜 → 再花钱」给建议
+│   ├── spend.py         花钱指标：每秒成片花费、首次可用率、平均重做次数、浪费金额
+│   ├── model_rules.py   各模型的提示词预算和建议描述长度；超预算时按优先级丢内容
+│   ├── publish.py       发布包：成片、封面、字幕和 publish.json（标题、简介、话题标签）打包
+│   ├── archive.py       项目导出 / 导入：整个项目打包成 zip，导入时换新 id、按内容去重
+│   └── library.py       品牌包与主体库：存在 storage/library/，普通 JSON 加图片文件
 ├── media/
 │   ├── ffmpeg.py        FFmpeg / FFprobe 封装（禁止网络协议）、响度测量、取帧、拼接
 │   ├── subtitles.py     字幕切分、像素级换行、ASS / SRT

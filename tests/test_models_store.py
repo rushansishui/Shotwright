@@ -144,3 +144,53 @@ def test_asset_path_finds_file_after_interrupted_move(store):
     moved.parent.mkdir(parents=True)
     (store.assets_dir(project.id) / "eeee.mp4").replace(moved)
     assert store.asset_path(store.load(project.id), "eeee") == moved.resolve()
+
+
+def test_save_retries_when_the_file_is_briefly_locked(tmp_path, monkeypatch):
+    """Windows 上别的线程正在读 project.json 时 os.replace 会抛 WinError 5；短暂锁定要能重试过去。"""
+    from pathlib import Path
+
+    from shotwright.core import store as store_module
+    from shotwright.core.store import ProjectStore
+
+    project_store = ProjectStore(tmp_path)
+    project = project_store.create(Project())
+    calls = {"n": 0}
+    real_replace = store_module.os.replace
+
+    def flaky_replace(src, dst):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise PermissionError(13, "Permission denied", str(dst))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(store_module.os, "replace", flaky_replace)
+    project.title = "重试之后保存成功"
+    project_store.save(project)
+
+    assert calls["n"] == 3
+    assert project_store.load(project.id).title == "重试之后保存成功"
+    # 临时文件不残留。
+    directory = Path(project_store.project_dir(project.id))
+    assert not [p for p in directory.iterdir() if p.name.startswith(".tmp-")]
+
+
+def test_save_gives_up_after_the_last_attempt(tmp_path, monkeypatch):
+    """一直锁着时要把错误抛出来，不能假装保存成功。"""
+    import pytest as _pytest
+
+    from shotwright.core import store as store_module
+    from shotwright.core.store import ATOMIC_REPLACE_ATTEMPTS, ProjectStore
+
+    project_store = ProjectStore(tmp_path)
+    project = project_store.create(Project())
+    calls = {"n": 0}
+
+    def always_locked(src, dst):
+        calls["n"] += 1
+        raise PermissionError(13, "Permission denied", str(dst))
+
+    monkeypatch.setattr(store_module.os, "replace", always_locked)
+    with _pytest.raises(PermissionError):
+        project_store.save(project)
+    assert calls["n"] == ATOMIC_REPLACE_ATTEMPTS

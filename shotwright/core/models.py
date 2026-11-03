@@ -575,6 +575,15 @@ class ShotVisual(_Model):
     def take(self, asset_id: str | None) -> Take | None:
         return next((item for item in self.takes if item.asset_id == asset_id), None)
 
+    def generation_takes(self) -> list[Take]:
+        """计入「最多生成几版」的版本记录。
+
+        关键帧只是首帧的备选，选中之后还要再生成一次视频；把它算进次数上限的话，
+        默认推荐的「先出 3 张关键帧」一出手就把额度用光，后面的视频版本反而生成不了。
+        花费仍按全部版本累加（见 :func:`services.cost`），省钱和限次是两回事。
+        """
+        return [item for item in self.takes if item.kind != "keyframe"]
+
     def effective_edit(self) -> ShotVisual:
         """当前选中素材实际生效的剪辑设置：入出点和取景属于别的素材时恢复默认。"""
         if self.edit_asset is not None and self.edit_asset == self.selected:

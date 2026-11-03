@@ -800,7 +800,13 @@ export function ShotCard(props: {
                   }}
                 />
                 {visual.takes?.length ? (
-                  <span className="muted small">{t("shot.limitUsed", { n: visual.takes.length, cost: takesCost })}</span>
+                  <span className="muted small">
+                    {t("shot.limitUsed", {
+                      // 关键帧不计入次数上限（见后端 generation_takes），这里按同一口径显示。
+                      n: visual.takes.filter((item) => item.kind !== "keyframe").length,
+                      cost: takesCost,
+                    })}
+                  </span>
                 ) : null}
               </div>
             )}

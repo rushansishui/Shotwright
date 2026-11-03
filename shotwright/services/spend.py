@@ -104,23 +104,30 @@ def used_assets(shot: Shot) -> set[str]:
 
 
 def measure(store: ProjectStore, project: Project) -> SpendMetrics:
-    """算出这个项目的四项花费指标。"""
+    """算出这个项目的四项花费指标。
+
+    花费按全部版本累加（关键帧也是真花钱的），但「生成过几版」「首次可用率」只看
+    正式画面：关键帧只是首帧的备选，混进来会让默认的「先出 3 张关键帧」把平均重做
+    次数抬高好几倍，指标就失去了比较的意义。
+    """
     metrics = SpendMetrics(total=round(project.cost_credits, 4))
     for index, shot in enumerate(project.shots, start=1):
         takes = shot.visual.takes
         if not takes:
             continue
+        generations = shot.visual.generation_takes()
         used = used_assets(shot)
-        # 按时间先后，第一次生成的那一版。
-        first = min(takes, key=lambda item: item.created_at)
         cost = sum(item.cost for item in takes)
         wasted = sum(item.cost for item in takes if item.asset_id not in used)
-        metrics.takes += len(takes)
-        metrics.generated_shots += 1
-        if first.asset_id in used:
-            metrics.first_pass_shots += 1
         metrics.wasted += wasted
-        metrics.shots.append(ShotSpend(index, shot.id, len(takes), round(cost, 4), round(wasted, 4)))
+        metrics.takes += len(generations)
+        if generations:
+            # 按时间先后，第一版正式画面。
+            first = min(generations, key=lambda item: item.created_at)
+            metrics.generated_shots += 1
+            if first.asset_id in used:
+                metrics.first_pass_shots += 1
+        metrics.shots.append(ShotSpend(index, shot.id, len(generations), round(cost, 4), round(wasted, 4)))
 
     metrics.wasted = round(metrics.wasted, 4)
     duration = _delivered_duration(store, project)
