@@ -20,11 +20,6 @@ https://github.com/user-attachments/assets/d5c31019-7dd6-4d9d-b19d-2018426eb109
 https://github.com/user-attachments/assets/ca6040ec-a1a7-4bac-be09-4c2d36f1069c
 
 
-
-https://github.com/user-attachments/assets/d5c31019-7dd6-4d9d-b19d-2018426eb109
-
-https://github.com/user-attachments/assets/ca6040ec-a1a7-4bac-be09-4c2d36f1069c
-
 ## 和同类工具比
 
 | | Shotwright | [ClipForge](https://github.com/xixihhhh/clipforge) | [Pixelle-Video](https://github.com/AIDC-AI/Pixelle-Video) | [LibTV](https://liblib.tv/) | [即梦（含小云雀）](https://jimeng.jianying.com/) | [剪映](https://www.capcut.cn/) |
