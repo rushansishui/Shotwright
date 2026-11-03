@@ -138,3 +138,28 @@ def test_keyframe_counts_as_used():
     metrics = _measure(project)
     # 关键帧被当作首帧用了，不算浪费。
     assert metrics.wasted == 0
+
+
+def test_keyframes_do_not_inflate_the_average_takes():
+    """默认的「先出 3 张关键帧」不应该让平均重做次数翻几倍：次数只算正式画面。"""
+
+    base = time.time()
+    project = Project(title="t")
+    shot = Shot(text="镜头")
+    shot.visual = ShotVisual(mode="ai", prompt="p", selected="v0")
+    shot.visual.candidates = ["k0", "k1", "k2", "v0"]
+    shot.visual.first_frame = "k0"
+    shot.visual.takes = [
+        Take(asset_id=f"k{i}", kind="keyframe", cost=0.1, created_at=base + i) for i in range(3)
+    ] + [Take(asset_id="v0", kind="video", cost=1.0, created_at=base + 10)]
+    project.shots.append(shot)
+    project.cost_credits = 1.3
+    metrics = _measure(project)
+    # 只算 1 版正式画面，而不是 4 版。
+    assert metrics.takes == 1
+    assert metrics.average_takes == 1.0
+    # 第一版正式画面就是选中的那版，首次可用。
+    assert metrics.first_pass_rate == 1.0
+    # 花费仍按全部版本累加，关键帧的钱不会漏。
+    assert metrics.total == 1.3
+    assert metrics.shots[0].cost == 1.3

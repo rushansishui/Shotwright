@@ -429,11 +429,73 @@ def test_generation_records_takes_and_prunes_with_candidates(store, settings):
     assert shot.visual.take(second).kind == "video" and shot.visual.take(second).prompt == "a cat"
     assert shot.visual.takes[0].batch != shot.visual.takes[1].batch
 
-    # 候选被挤出时版本记录一起清理。
+    # 候选被挤出时版本记录不跟着清理：版本记着这一版花了多少钱，是算「已花」「浪费金额」
+    # 和单镜头次数上限的依据，丢了就会少算。
     visuals._attach(shot, [], select=False)
     shot.visual.candidates = [second]
     visuals._attach(shot, [])
-    assert [t.asset_id for t in shot.visual.takes] == [second]
+    assert [t.asset_id for t in shot.visual.takes] == [first, second]
+
+
+def test_takes_are_kept_when_candidates_overflow(store, settings):
+    """候选只留最近 30 条，但 30 版之后的生成记录不能丢，否则花费和次数上限都会少算。"""
+    from shotwright.core.models import Asset
+    from shotwright.services import visuals
+
+    shot = Shot(text="一句话。", visual=ShotVisual(mode="ai", prompt="a cat"))
+    project = Project(shots=[shot])
+    for index in range(35):
+        asset_id = f"asset{index:03d}"
+        project.assets[asset_id] = Asset(
+            id=asset_id, kind="video", source="seedance", filename=f"{asset_id}.mp4", sha256=asset_id * 2
+        )
+        visuals._attach(shot, [asset_id], take="video")
+        shot.visual.take(asset_id).cost = 1.0
+
+    assert len(shot.visual.candidates) == visuals.MAX_CANDIDATES
+    assert len(shot.visual.takes) == 35
+    assert sum(item.cost for item in shot.visual.takes) == 35.0
+    assert shot.visual.take("asset000") is not None
+
+
+def test_keyframes_do_not_use_up_the_take_limit(store, settings):
+    """关键帧只是首帧的备选，不算「最多生成几版」；否则默认的「先出 3 张关键帧」一出手就用光额度。"""
+    import pytest
+
+    from shotwright.core.models import Take
+    from shotwright.providers.base import BudgetExceeded
+    from shotwright.services import visuals
+
+    settings.providers.setdefault("video_gen", {})["seedance"] = {"api_key": "k"}
+    shot = Shot(text="一句话说完。", visual=ShotVisual(mode="ai", prompt="x", provider="seedance"))
+    project = Project(shots=[shot])
+    shot.visual.takes = [Take(asset_id=f"k{i}", kind="keyframe", cost=0.1) for i in range(3)]
+    shot.visual.max_takes = 2
+
+    # 三张关键帧不算版本数，还能继续生成视频。
+    visuals.check_budget(settings, project, shot, "video_gen", "seedance")
+    # 后续生成的视频版本才开始计次。
+    shot.visual.takes += [
+        Take(asset_id="v0", kind="video", cost=0.56),
+        Take(asset_id="v1", kind="video", cost=0.56),
+    ]
+    with pytest.raises(BudgetExceeded, match="到了设定的上限"):
+        visuals.check_budget(settings, project, shot, "video_gen", "seedance")
+
+
+def test_take_limit_applies_without_pricing(settings):
+    """没配单价时（例如 fal 要自己填 price）金额算出来是 0，次数上限不能因此失效。"""
+    import pytest
+
+    from shotwright.core.models import Take
+    from shotwright.providers.base import BudgetExceeded
+    from shotwright.services import visuals
+
+    shot = Shot(text="一句话。", visual=ShotVisual(mode="ai", max_takes=2))
+    project = Project(shots=[shot])
+    shot.visual.takes = [Take(asset_id="a0", kind="video"), Take(asset_id="a1", kind="video")]
+    with pytest.raises(BudgetExceeded, match="到了设定的上限"):
+        visuals.check_budget(settings, project, shot, "video_gen", "fal")
 
 
 def test_image_prompt_is_used_for_images_and_falls_back():

@@ -42,6 +42,27 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+ATOMIC_REPLACE_ATTEMPTS = 6
+"""``os.replace`` 的重试次数。
+
+Windows 上只要有别的线程正打开着 ``project.json``（Python 的 ``open`` 不带
+``FILE_SHARE_DELETE``），替换就会抛 ``WinError 5``。读文件的时刻都很短，退避重试
+基本一次就能过；重试完还失败才把错误抛给调用方。
+"""
+
+
+def _replace_with_retry(temp: str, path: Path) -> None:
+    for attempt in range(ATOMIC_REPLACE_ATTEMPTS):
+        try:
+            os.replace(temp, path)
+            return
+        except PermissionError:
+            # 只在 Windows 上会因为别的线程在读而失败；最后一次不再等待，把错误抛出去。
+            if attempt == ATOMIC_REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(0.01 * (attempt + 1))
+
+
 def atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(prefix=".tmp-", dir=path.parent)
@@ -50,7 +71,7 @@ def atomic_write_text(path: Path, text: str) -> None:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temp_name, path)
+        _replace_with_retry(temp_name, path)
     finally:
         Path(temp_name).unlink(missing_ok=True)
 
