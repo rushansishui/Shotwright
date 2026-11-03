@@ -16,21 +16,29 @@ Shotwright is built around the *shot*. The script is split into shots, and each 
      Edit this file on GitHub, drag the mp4 into the editor to get a https://github.com/user-attachments/assets/... link,
      and put the link on its own line here; GitHub shows it as a player. -->
 
+https://github.com/user-attachments/assets/d8ef5fab-29ec-41f6-8684-13e0af681cc6
+
+https://github.com/user-attachments/assets/1cb4bd63-2a9d-4d7f-a122-a353b45b6013
+
 ## How it compares
 
-| | Shotwright | [MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo) | [NarratoAI](https://github.com/linyqh/NarratoAI) | [Xiaoyunque](https://apps.apple.com/cn/app/id6746231056) | [Jianying / CapCut](https://www.capcut.cn/) |
-|---|---|---|---|---|---|
-| What it is | Open source, runs locally | Open source (MIT), runs locally | Open source (MIT), runs locally | Online app / web | App / desktop editor |
-| Best at | Product ads and promo shorts from a script; can also cut existing footage | Topic in, stock-footage montage out | AI commentary and editing for existing videos (film, short drama) | 15–60 s videos from one sentence, digital humans, short drama | Manual editing plus text-to-video, AI captions and voice, digital humans |
-| Visuals | Stock, AI video, AI images or your own footage, chosen per shot | Stock (Pexels, Pixabay, …) or local clips | Existing videos | The platform's own models, can mix in real footage | Your own footage |
-| Models | Swap vendors for text, image, video and voice | Many LLMs, including local Ollama | Many LLMs | The platform's own models | Built in |
-| Changing one shot | Only that shot is redone, the rest reused | — | Export a Jianying draft and edit there | — | Edit on the timeline by hand |
-| Cost | Your own API keys; checked before you pay, every charge logged | Your own API keys | Your own API keys | Credits, with memberships | Free basics, some features need membership |
-| Projects and assets | On your machine | On your machine | On your machine | On the platform | Local or cloud space |
+| | Shotwright | [ClipForge](https://github.com/xixihhhh/clipforge) | [OpenMontage](https://github.com/calesthio/OpenMontage) | [Pixelle-Video](https://github.com/AIDC-AI/Pixelle-Video) | [Creatify](https://creatify.ai/) | [LTX Studio](https://ltx.studio/) |
+|---|---|---|---|---|---|---|
+| What it is | Open source (MIT), runs locally | Open source (AGPL-3.0), runs locally, ~1.1k stars | Open source (AGPL-3.0), runs locally, ~72k stars | Open source (Apache 2.0), runs locally, ~29.5k stars | Online platform | Online platform |
+| Best at | Product ads and promo shorts from a script; can also cut existing footage | Sales videos from a product image, or a video from one sentence | Explainers, documentary montages, talking heads and more, through a dozen pipelines | Topic in, script, images or AI video and a finished video out | Video ads from a product URL, AI actors, ad cloning | Script to storyboard to video, for ads and short films |
+| Visuals | Stock, AI video, AI images or your own footage, chosen per shot | Free stock, a local library, AI images and video, 391 templates | Stock archives, AI video and images (cloud or local models), code-drawn graphics | Mostly AI images and video; you can also upload your own | AI actors and the platform's models | Models hosted on the platform |
+| Models | Swap vendors for text, image, video and voice | 30+ curated models from several vendors | Many vendors plus local models | Many LLMs and voices; ComfyUI and RunningHub workflows | The platform's own and hosted models | The platform's own and hosted models |
+| Changing one shot | Only that shot is redone, the rest reused | Every shot keeps its takes; redo just the bad one | Approve takes, prompts and cost per scene before rendering | — | — | Adjust shot by shot on the storyboard |
+| Voice, subtitles, music to final cut | Automatic, in one flow | Automatic | Automatic | Automatic | Automatic | — |
+| Before you pay | Flags prompts that tend to fail, shows each shot's estimated cost, per-shot spend limits | — | Budget cap and approval for costly steps | — | Cost shown before each generation | — |
+| Language versions | One click, visuals shared | English voice-over versions | — | — | — | — |
+| How you use it | Web UI, REST API, CLI, Windows installer | Web, desktop app, Docker, CLI, MCP | Driven by an AI coding assistant (Claude Code, Cursor, …) | Windows one-click package, Docker | In the browser | In the browser |
+| Cost | Your own API keys, every charge logged | Your own API keys, or free stock and free voices only | Your own API keys or local models | Your own API keys or local ComfyUI | Subscription with monthly credits, free tier with watermark | Subscription |
+| Projects and assets | On your machine | On your machine | On your machine | On your machine | On the platform | On the platform |
 
-Which to pick: for a finished video from one sentence with no setup, Xiaoyunque or Jianying are easier; for batch stock montages by topic, look at MoneyPrinterTurbo; for commentary over existing videos, NarratoAI fits better; to control every shot, mix vendors' models and keep projects in your own hands, use Shotwright.
+Which to pick: with only a product image and a need for many sales videos fast, ClipForge has lots of templates; if you already work in an AI coding assistant and want explainers or documentary-style videos, OpenMontage is powerful; for topic-to-video with AI images, look at Pixelle-Video; for hosted ads with AI actors, Creatify; for storyboarding films in the browser, LTX Studio. Chinese platforms such as [LibTV](https://liblib.tv/), [Jimeng](https://jimeng.jianying.com/) and [Jianying / CapCut](https://www.capcut.cn/), and open-source tools such as [MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo) and [NarratoAI](https://github.com/linyqh/NarratoAI), are compared in the [Chinese README](README.md). To turn a script into ads ready to run, control every shot, know the cost before you pay, ship language versions in one click and keep projects in your own hands, use Shotwright.
 
-<sub>Compiled from each project's home page, app store listings and public coverage as of November 2026; "—" means no public information was found. These products change quickly; if something is wrong, please open an issue.</sub>
+<sub>Compiled from each project's home page, GitHub page and public coverage as of 3 November 2026; star counts are approximate for that day. "—" means no public information was found, not that the feature is missing. These products change quickly; if something is wrong, please open an issue.</sub>
 
 ## Features
 
