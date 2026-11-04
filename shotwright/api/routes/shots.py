@@ -14,6 +14,19 @@ from shotwright.pipeline.shots import MAX_SEQUENCE
 from shotwright.services import editing, precheck, remedy, visuals
 
 
+def _clean_skips(skips: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """剪掉的片段按时间排好、重叠的合并，太短（不到 0.05 秒）的丢掉。"""
+    result: list[list[float]] = []
+    for a, b in sorted((max(0.0, float(a)), float(b)) for a, b in skips):
+        if b - a < 0.05:
+            continue
+        if result and a <= result[-1][1] + 0.001:
+            result[-1][1] = max(result[-1][1], b)
+        else:
+            result.append([a, b])
+    return [(round(a, 3), round(b, 3)) for a, b in result]
+
+
 def register(api: APIRouter, ctx: ApiContext) -> None:
     store = ctx.store
     _id = ctx.id
@@ -149,6 +162,8 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
                     patch["candidates"] = [*current, patch["selected"]][-visuals.MAX_CANDIDATES :]
                 if patch.pop("clear_trim_end", False):
                     patch["trim_end"] = None
+                if "skips" in patch:
+                    patch["skips"] = _clean_skips(patch["skips"] or [])
                 # 单镜头花费上限：-1 表示清除；生成次数上限：0 表示不限。
                 if "budget" in patch:
                     patch["budget"] = (
@@ -160,14 +175,21 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
                 if mode is not None:
                     # 切换来源时自动选中该来源的素材（显式传了 selected 时以它为准）。
                     visuals.switch_mode(project, shot, mode)
-                edit_fields = {"trim_start", "trim_end", "focus_x", "focus_y"} & patch.keys()
+                edit_fields = {"trim_start", "trim_end", "focus_x", "focus_y", "skips"} & patch.keys()
                 if edit_fields:
                     # 入出点和取景记在当前选中的素材名下；之前针对别的素材的设置先清掉。
                     target = patch.get("selected", shot.visual.selected)
                     if target is None:
                         raise ValueError("请先选中素材再设置入出点或取景")
                     if shot.visual.edit_asset != target:
-                        patch = {"trim_start": 0.0, "trim_end": None, "focus_x": 0.5, "focus_y": 0.5, **patch}
+                        patch = {
+                            "trim_start": 0.0,
+                            "trim_end": None,
+                            "focus_x": 0.5,
+                            "focus_y": 0.5,
+                            "skips": [],
+                            **patch,
+                        }
                     patch["edit_asset"] = target
                 merged = {**shot.visual.model_dump(), **patch}
                 # 选中的素材不重复出现在多选列表里；多选最多 MAX_SEQUENCE 段（含选中的那段）。

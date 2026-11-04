@@ -1,8 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, assetUrl } from "../api";
-import { formatClock, groupSentences, guessAspect, needsSpace, planRanges, type WordTuple } from "../cut";
+import {
+  findMatches,
+  formatClock,
+  groupSentences,
+  guessAspect,
+  needsSpace,
+  planRanges,
+  replaceMatches,
+  type WordTuple,
+} from "../cut";
 import { providerName, useI18n } from "../i18n";
 import type { MessageKey } from "../messages";
+import { useFrameLoop } from "../useFrameLoop";
 import type { LanguageInfo, Project, ProjectSummary, ProviderInfo, TranscriptData } from "../types";
 import { ProjectList } from "./ProjectList";
 
@@ -258,11 +268,55 @@ function CutEditor({ projectId, assetId }: { projectId: string; assetId: string 
   const [saveState, setSaveState] = useState<"" | "saving" | "saved" | "failed">("");
   const [skip, setSkip] = useState(true);
   const [selection, setSelection] = useState<[number, number] | null>(null);
-  const [anchor, setAnchor] = useState<number | null>(null);
   const [current, setCurrent] = useState(-1);
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
+  /** 正在原位改字的词。 */
+  const [editing, setEditing] = useState<number | null>(null);
+  const cancelEdit = useRef(false);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findText, setFindText] = useState("");
+  const [replaceText, setReplaceText] = useState("");
+  /** 鼠标按住拖选中。 */
+  const dragging = useRef(false);
+  const anchorRef = useRef<number | null>(null);
+
+  // 撤销 / 重做：每次删词、恢复、改字前记下当时的状态。
+  type Snapshot = { removed: Set<number>; texts: Record<string, string> };
+  const latest = useRef<Snapshot>({ removed, texts });
+  latest.current = { removed, texts };
+  const undoStack = useRef<Snapshot[]>([]);
+  const redoStack = useRef<Snapshot[]>([]);
+  const [, setHistoryVersion] = useState(0);
+  function commit(next: Partial<Snapshot>) {
+    const before = latest.current;
+    undoStack.current.push(before);
+    if (undoStack.current.length > 200) undoStack.current.shift();
+    redoStack.current = [];
+    if (next.removed) setRemoved(next.removed);
+    if (next.texts) setTexts(next.texts);
+    latest.current = { removed: next.removed ?? before.removed, texts: next.texts ?? before.texts };
+    setHistoryVersion((n) => n + 1);
+  }
+  function undo() {
+    const previous = undoStack.current.pop();
+    if (!previous) return;
+    redoStack.current.push(latest.current);
+    setRemoved(previous.removed);
+    setTexts(previous.texts);
+    latest.current = previous;
+    setHistoryVersion((n) => n + 1);
+  }
+  function redo() {
+    const next = redoStack.current.pop();
+    if (!next) return;
+    undoStack.current.push(latest.current);
+    setRemoved(next.removed);
+    setTexts(next.texts);
+    latest.current = next;
+    setHistoryVersion((n) => n + 1);
+  }
 
   useEffect(() => {
     api.getProject(projectId).then(setProject).catch((e) => setError((e as Error).message));
@@ -369,15 +423,16 @@ function CutEditor({ projectId, assetId }: { projectId: string; assetId: string 
     setCurrent(index);
   }
 
+  // 按帧检查要不要跳过剪掉的部分（timeupdate 一秒只有 4 次左右，会漏播出被删的内容）。
+  useFrameLoop(videoRef, onTimeUpdate, data?.state === "done" && !!asset);
+
   function setRange(indexes: number[], value: boolean) {
-    setRemoved((prev) => {
-      const next = new Set(prev);
-      for (const i of indexes) {
-        if (value) next.add(i);
-        else next.delete(i);
-      }
-      return next;
-    });
+    const next = new Set(latest.current.removed);
+    for (const i of indexes) {
+      if (value) next.add(i);
+      else next.delete(i);
+    }
+    commit({ removed: next });
   }
 
   function selectedIndexes(): number[] {
@@ -386,32 +441,106 @@ function CutEditor({ projectId, assetId }: { projectId: string; assetId: string 
     return Array.from({ length: b - a + 1 }, (_, i) => a + i);
   }
 
-  function clickWord(index: number, shift: boolean) {
-    if (shift && anchor !== null) {
-      setSelection([Math.min(anchor, index), Math.max(anchor, index)]);
+  // 点一个词跳到那里；按住鼠标拖过几个词选中一段；按住 Shift 点另一个词也能选中一段。
+  function pressWord(index: number, event: React.MouseEvent) {
+    if (event.button !== 0 || editing !== null) return;
+    event.preventDefault();
+    const from = anchorRef.current;
+    if (event.shiftKey && from !== null) {
+      setSelection([Math.min(from, index), Math.max(from, index)]);
       return;
     }
-    setAnchor(index);
+    dragging.current = true;
+    anchorRef.current = index;
     setSelection([index, index]);
     seek(words[index][1]);
   }
 
-  function editWord(index: number) {
-    const value = window.prompt(t("cut.editWord"), words[index][0]);
-    if (value === null) return;
+  function enterWord(index: number) {
+    const from = anchorRef.current;
+    if (!dragging.current || from === null) return;
+    setSelection([Math.min(from, index), Math.max(from, index)]);
+  }
+
+  useEffect(() => {
+    const stop = () => {
+      dragging.current = false;
+    };
+    window.addEventListener("mouseup", stop);
+    return () => window.removeEventListener("mouseup", stop);
+  }, []);
+
+  function startEdit(index: number) {
+    cancelEdit.current = false;
+    setEditing(index);
+  }
+
+  function finishEdit(index: number, value: string) {
+    setEditing(null);
+    if (cancelEdit.current) return;
     const trimmed = value.trim();
-    setTexts((prev) => {
-      const next = { ...prev };
-      if (!trimmed || trimmed === data?.words?.[index]?.[0]) delete next[index];
-      else next[index] = trimmed;
-      return next;
-    });
+    const original = data?.words?.[index]?.[0];
+    const next = { ...latest.current.texts };
+    if (!trimmed || trimmed === original) delete next[index];
+    else next[index] = trimmed;
+    if ((next[index] ?? null) === (latest.current.texts[index] ?? null)) return;
+    commit({ texts: next });
+  }
+
+  const matches = useMemo(() => (findOpen ? findMatches(words, groups, findText) : []), [findOpen, words, groups, findText]);
+  const found = useMemo(() => new Set(matches.flatMap((m) => m.tokens)), [matches]);
+
+  function replaceAll() {
+    if (!matches.length) return;
+    const changes = replaceMatches(words, matches, replaceText.trim());
+    const next = { ...latest.current.texts };
+    for (const [key, value] of Object.entries(changes)) {
+      const index = Number(key);
+      if (value === data?.words?.[index]?.[0]) delete next[index];
+      else next[index] = value;
+    }
+    commit({ texts: next });
+    setNotice(t("cut.replaced", { n: matches.length }));
   }
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       const target = event.target as HTMLElement;
+      const mod = event.ctrlKey || event.metaKey;
+      if (mod && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        setFindOpen(true);
+        return;
+      }
       if (target.closest("input, textarea, select")) return;
+      if (mod && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (event.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (mod && event.key.toLowerCase() === "y") {
+        event.preventDefault();
+        redo();
+        return;
+      }
+      const video = videoRef.current;
+      if (event.key === " " && video && !target.closest("button, video")) {
+        event.preventDefault();
+        if (video.paused) void video.play();
+        else video.pause();
+        return;
+      }
+      if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && words.length && !target.closest("video")) {
+        event.preventDefault();
+        const step = event.key === "ArrowLeft" ? -1 : 1;
+        const from = current >= 0 ? current : selection ? selection[0] : -1;
+        const index = Math.min(words.length - 1, Math.max(0, from + step));
+        anchorRef.current = index;
+        setSelection([index, index]);
+        seek(words[index][1]);
+        return;
+      }
       if ((event.key === "Delete" || event.key === "Backspace") && selection) {
         event.preventDefault();
         const indexes = selectedIndexes();
@@ -555,12 +684,20 @@ function CutEditor({ projectId, assetId }: { projectId: string; assetId: string 
                 type="button"
                 className="btn small ghost"
                 disabled={!removed.size && !Object.keys(texts).length}
-                onClick={() => {
-                  setRemoved(new Set());
-                  setTexts({});
-                }}
+                onClick={() => commit({ removed: new Set(), texts: {} })}
               >
                 {t("cut.restoreAll")}
+              </button>
+            </div>
+            <div className="cut-tools">
+              <button type="button" className="btn small" disabled={!undoStack.current.length} onClick={undo} title="Ctrl+Z">
+                {t("cut.undo")}
+              </button>
+              <button type="button" className="btn small" disabled={!redoStack.current.length} onClick={redo} title="Ctrl+Shift+Z">
+                {t("cut.redo")}
+              </button>
+              <button type="button" className={`btn small ${findOpen ? "primary" : ""}`} onClick={() => setFindOpen(!findOpen)} title="Ctrl+F">
+                {t("cut.find")}
               </button>
             </div>
             {notice && <p className="hint small">{notice}</p>}
@@ -608,6 +745,39 @@ function CutEditor({ projectId, assetId }: { projectId: string; assetId: string 
                 </button>
               )}
             </div>
+            {findOpen && (
+              <div className="cut-find">
+                <input
+                  className="input"
+                  autoFocus
+                  placeholder={t("cut.findPlaceholder")}
+                  aria-label={t("cut.findPlaceholder")}
+                  value={findText}
+                  onChange={(e) => setFindText(e.target.value)}
+                  onKeyDown={(e) => e.key === "Escape" && setFindOpen(false)}
+                />
+                <input
+                  className="input"
+                  placeholder={t("cut.replacePlaceholder")}
+                  aria-label={t("cut.replacePlaceholder")}
+                  value={replaceText}
+                  onChange={(e) => setReplaceText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") replaceAll();
+                    if (e.key === "Escape") setFindOpen(false);
+                  }}
+                />
+                <button type="button" className="btn small primary" disabled={!matches.length} onClick={replaceAll}>
+                  {t("cut.replaceAll")}
+                </button>
+                <span className="muted small">
+                  {findText.trim() ? t("cut.foundCount", { n: matches.length }) : ""}
+                </span>
+                <button type="button" className="btn small ghost" onClick={() => setFindOpen(false)}>
+                  {t("cut.findClose")}
+                </button>
+              </div>
+            )}
             {data?.requested_language &&
               data.language &&
               data.requested_language.split("-")[0].toLowerCase() !== data.language.split("-")[0].toLowerCase() && (
@@ -629,22 +799,43 @@ function CutEditor({ projectId, assetId }: { projectId: string; assetId: string 
                   {group.map((i, k) => (
                     <span key={i}>
                       {k > 0 && needsSpace(words[group[k - 1]][0], words[i][0]) ? " " : ""}
-                      <span
-                        className={[
-                          "cut-word",
-                          removed.has(i) ? "removed" : "",
-                          selected.has(i) ? "selected" : "",
-                          i === current ? "playing" : "",
-                          texts[i] !== undefined ? "edited" : "",
-                          fillers.includes(i) ? "filler" : "",
-                        ]
-                          .filter(Boolean)
-                          .join(" ")}
-                        onClick={(e) => clickWord(i, e.shiftKey)}
-                        onDoubleClick={() => editWord(i)}
-                      >
-                        {words[i][0]}
-                      </span>
+                      {editing === i ? (
+                        <input
+                          className="cut-word-input"
+                          autoFocus
+                          defaultValue={words[i][0]}
+                          aria-label={t("cut.editWord")}
+                          size={Math.max(2, words[i][0].length + 1)}
+                          onFocus={(e) => e.currentTarget.select()}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                            if (e.key === "Escape") {
+                              cancelEdit.current = true;
+                              e.currentTarget.blur();
+                            }
+                          }}
+                          onBlur={(e) => finishEdit(i, e.currentTarget.value)}
+                        />
+                      ) : (
+                        <span
+                          className={[
+                            "cut-word",
+                            removed.has(i) ? "removed" : "",
+                            selected.has(i) ? "selected" : "",
+                            i === current ? "playing" : "",
+                            texts[i] !== undefined ? "edited" : "",
+                            fillers.includes(i) ? "filler" : "",
+                            found.has(i) ? "found" : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" ")}
+                          onMouseDown={(e) => pressWord(i, e)}
+                          onMouseEnter={() => enterWord(i)}
+                          onDoubleClick={() => startEdit(i)}
+                        >
+                          {words[i][0]}
+                        </span>
+                      )}
                     </span>
                   ))}
                   <button

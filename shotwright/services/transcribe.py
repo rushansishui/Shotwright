@@ -392,8 +392,9 @@ def build_shots(
     if not total:
         total = float(probe(source).duration or 0.0)
     words = words_of(data)
+    # 改字可以改成空：查找替换时一处跨了几个词，多出来的词留空，时间照旧。
     for index, text in (texts or {}).items():
-        if 0 <= index < len(words) and text.strip():
+        if 0 <= index < len(words):
             words[index] = Word(text.strip(), words[index].start, words[index].end)
     sentences = [(float(a), float(b)) for a, b in data.get("sentences") or []]
     ranges = plan_ranges(words, total, removed, max_pause=max_pause)
@@ -445,7 +446,11 @@ def build_shots(
     for group in groups:
         middle = [(w.start + w.end) / 2 for w in kept_words]
         text = join_words(
-            [w.text for w, m in zip(kept_words, middle, strict=True) if any(a <= m <= b for a, b in group)]
+            [
+                w.text
+                for w, m in zip(kept_words, middle, strict=True)
+                if w.text and any(a <= m <= b for a, b in group)
+            ]
         )
         skips = [
             (round(x[1], 3), round(y[0], 3))
@@ -474,7 +479,7 @@ def build_shots(
         # 改过的错字记回识别结果，重新打开剪辑页、渲染字幕都用改后的文字。
         stored = data.get("words") or []
         for index, text in texts.items():
-            if 0 <= index < len(stored) and text.strip():
+            if 0 <= index < len(stored):
                 stored[index][0] = text.strip()
         write_json(transcript_path(store, project.id, asset_id), data)
     kept = sum(b - a for a, b in ranges)
@@ -495,6 +500,8 @@ def shot_words(store: ProjectStore, project: Project, shot: Shot) -> list[tuple[
     end = visual.trim_end if visual.trim_end is not None else begin + (shot.duration or 0.0)
     result = []
     for word in words_of(data):
+        if not word.text.strip():  # 改字时留空的词，字幕里不出现
+            continue
         middle = (word.start + word.end) / 2
         if not begin <= middle < end:
             continue

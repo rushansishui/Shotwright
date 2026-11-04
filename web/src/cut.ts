@@ -107,3 +107,97 @@ export function guessAspect(width: number, height: number): "9:16" | "16:9" | "1
   if (ratio > 1.2) return "16:9";
   return "1:1";
 }
+
+/** 文稿里一处查找结果：涉及哪些词（下标），以及在第一个词里从第几个字开始、在最后一个词里到第几个字结束。 */
+export interface TextMatch {
+  tokens: number[];
+  start: number;
+  end: number;
+}
+
+/**
+ * 在每句话里查找一段文字（不区分大小写）。识别结果里中文常常一个字一个词，
+ * 所以按句子把词拼起来（和页面显示一样，拼音文字之间加空格）再找，一处结果可以跨好几个词。
+ */
+export function findMatches(words: WordTuple[], groups: number[][], query: string): TextMatch[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  const matches: TextMatch[] = [];
+  for (const group of groups) {
+    let text = "";
+    const owner: number[] = [];
+    const offset: number[] = [];
+    group.forEach((index, k) => {
+      if (k > 0 && needsSpace(words[group[k - 1]][0], words[index][0])) {
+        text += " ";
+        owner.push(-1);
+        offset.push(0);
+      }
+      const word = words[index][0];
+      for (let c = 0; c < word.length; c++) {
+        owner.push(index);
+        offset.push(c);
+      }
+      text += word;
+    });
+    const hay = text.toLowerCase();
+    let from = 0;
+    while (from <= hay.length - needle.length) {
+      const at = hay.indexOf(needle, from);
+      if (at < 0) break;
+      const last = at + needle.length - 1;
+      const tokens = [...new Set(owner.slice(at, last + 1).filter((i) => i >= 0))];
+      if (tokens.length) {
+        let first = at;
+        while (owner[first] < 0) first++;
+        let end = last;
+        while (owner[end] < 0) end--;
+        matches.push({ tokens, start: offset[first], end: offset[end] + 1 });
+      }
+      from = at + needle.length;
+    }
+  }
+  return matches;
+}
+
+/**
+ * 把查找结果替换成新文字，返回要改的词（下标 → 新文字）。
+ * 一处结果跨了几个词时，中文替换文字按字平均分给这几个词，字幕逐字高亮时节奏还对得上；
+ * 分不开（字比词少、或者不是中日韩文字）时整段放进第一个词，其余的词留空。
+ */
+export function replaceMatches(words: WordTuple[], matches: TextMatch[], replacement: string): Record<number, string> {
+  const result: Record<number, string> = {};
+  const current = (i: number) => result[i] ?? words[i][0];
+  for (const match of matches) {
+    const firstIndex = match.tokens[0];
+    const lastIndex = match.tokens[match.tokens.length - 1];
+    const prefix = current(firstIndex).slice(0, match.start);
+    const suffix = current(lastIndex).slice(match.end);
+    if (match.tokens.length === 1) {
+      result[firstIndex] = prefix + replacement + suffix;
+      continue;
+    }
+    const chars = [...replacement];
+    const parts: string[] = [];
+    if (chars.length >= match.tokens.length && chars.every((c) => CJK.test(c))) {
+      const base = Math.floor(chars.length / match.tokens.length);
+      let extra = chars.length % match.tokens.length;
+      let cursor = 0;
+      for (let k = 0; k < match.tokens.length; k++) {
+        const size = base + (extra > 0 ? 1 : 0);
+        if (extra > 0) extra--;
+        parts.push(chars.slice(cursor, cursor + size).join(""));
+        cursor += size;
+      }
+    } else {
+      parts.push(replacement, ...match.tokens.slice(1).map(() => ""));
+    }
+    match.tokens.forEach((index, k) => {
+      let text = parts[k];
+      if (k === 0) text = prefix + text;
+      if (k === match.tokens.length - 1) text += suffix;
+      result[index] = text;
+    });
+  }
+  return result;
+}

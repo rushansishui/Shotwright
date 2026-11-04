@@ -31,7 +31,7 @@ RISK_RULES: dict[str, tuple[str, ...]] = {
     ),
     # 画面里要出现可读的文字。
     "text": (
-        r"(?:写着|印着|标语|招牌上|屏幕上(?:显示|写)|文字|字样|标题字|字幕条|价格牌|价签)",
+        r"(?:写着|印着|写有|印有|刻着|刻有|标语|招牌上|屏幕上(?:显示|写)|文字|字样|标题字|字幕条|价格牌|价签|[两三四五六七八九十几]个字)",
         r"\b(?:text|words?|letters|lettering|caption|slogan|sign that (?:says|reads)|reads?\s*[\"“])",
         r"\b(?:written|printed) on\b",
     ),
