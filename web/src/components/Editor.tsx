@@ -23,6 +23,7 @@ import { OriginRecord } from "./editor/OriginRecord";
 import { ReadinessCard } from "./editor/ReadinessCard";
 import { GenerateAll } from "./editor/GenerateAll";
 import { BoardTable } from "./editor/BoardTable";
+import { PromptList } from "./editor/PromptList";
 import { ReviewBoard } from "./editor/Review";
 import { generationLocked, outdatedShots, preparedSubjects } from "../readiness";
 import type { MessageKey } from "../messages";
@@ -85,8 +86,8 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
   const [marginDraft, setMarginDraft] = useState<number | undefined>(undefined);
   const [styleDraft, setStyleDraft] = useState<Partial<SubtitleStyle>>({});
   const [step, setStepState] = useState<EditorStep | null>(() => loadStep(projectId));
-  /** 画面一步的视图：镜头卡片、分镜表、审片。 */
-  const [view, setView] = useState<"cards" | "board" | "review">("cards");
+  /** 画面一步的视图：镜头卡片、分镜表、提示词、审片。 */
+  const [view, setView] = useState<"cards" | "board" | "prompt" | "review">("cards");
   const reviewing = view === "review";
   /** 简洁模式：每个镜头只留「换一个、重做、改这句」，其余收进「更多」。 */
   const [simple, setSimple] = useState(() => loadSimple());
@@ -275,15 +276,25 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
 
         {current === 2 && (
         <Section
-          title={reviewing ? t("review.open") : view === "board" ? t("board.title") : t("editor.shots")}
+          title={reviewing ? t("review.open") : view === "board" ? t("board.title") : view === "prompt" ? t("prompt.title") : t("editor.shots")}
           extra={
             <div className="row">
-              {project.shots.length > 0 && view !== "review" && (
-                <button type="button" className="btn" title={t("board.hint")} onClick={() => setView(view === "board" ? "cards" : "board")}>
-                  {view === "board" ? t("board.close") : t("board.open")}
+              {project.shots.length > 0 && view !== "review" && view !== "board" && (
+                <button type="button" className="btn" title={t("board.hint")} onClick={() => setView("board")}>
+                  {t("board.open")}
                 </button>
               )}
-              {project.shots.length > 0 && view !== "board" && (
+              {project.shots.length > 0 && view !== "review" && view !== "prompt" && (
+                <button type="button" className="btn" title={t("prompt.hint")} onClick={() => setView("prompt")}>
+                  {t("prompt.open")}
+                </button>
+              )}
+              {(view === "board" || view === "prompt") && (
+                <button type="button" className="btn" onClick={() => setView("cards")}>
+                  {t(view === "board" ? "board.close" : "prompt.close")}
+                </button>
+              )}
+              {project.shots.length > 0 && view === "cards" && (
                 <button type="button" className="btn" onClick={() => setView(reviewing ? "cards" : "review")}>
                   {reviewing ? t("review.close") : t("review.open")}
                 </button>
@@ -357,6 +368,18 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
             <BoardTable
               project={project}
               run={run}
+              onOpenShot={(index) => {
+                setView("cards");
+                setActiveIndex(index);
+                window.setTimeout(
+                  () => document.querySelectorAll(".shots > *")[index]?.scrollIntoView({ block: "start", behavior: "smooth" }),
+                  50,
+                );
+              }}
+            />
+          ) : view === "prompt" ? (
+            <PromptList
+              project={project}
               onOpenShot={(index) => {
                 setView("cards");
                 setActiveIndex(index);

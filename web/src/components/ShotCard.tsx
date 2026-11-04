@@ -3,7 +3,7 @@ import { api, assetUrl, estimateSeconds, type GenerateOptions } from "../api";
 import { providerName, useI18n } from "../i18n";
 import type { MessageKey } from "../messages";
 import { riskConfirmText, riskText } from "../risks";
-import type { Asset, CameraMove, PrecheckRisk, Project, ProviderInfo, Shot, ShotRole, ShotUpdate, Take, VisualMode, VisualPatch } from "../types";
+import type { Asset, CameraMove, PrecheckRisk, Project, ProviderInfo, PromptPreview, Shot, ShotRole, ShotUpdate, ShotVisual, Take, VisualMode, VisualPatch } from "../types";
 import { Icon, Segmented } from "./Controls";
 import { ShotEdit } from "./ShotEdit";
 
@@ -406,6 +406,7 @@ export function ShotCard(props: {
                 if (patch) props.onUpdate({ visual: patch });
               }}
             />
+            <FullPrompt projectId={project.id} shotId={shot.id} version={visual} />
             {visual.mode === "ai" && videoProviders.length > 1 && (
               <select
                 className="input video-model"
@@ -998,5 +999,71 @@ export function ShotCard(props: {
         </button>
       </div>
     </article>
+  );
+}
+
+/**
+ * 镜头卡片上的「完整提示词」：点开才拉一次，不占用卡片常驻空间。
+ *
+ * 卡片里写的只是这个镜头自己的画面描述；真正交给模型的是拼上运镜、衔接、主体外观、
+ * 场景风格、参考图要求和禁止项的整段（和全片提示词页用同一个接口）。
+ */
+function FullPrompt({ projectId, shotId, version }: { projectId: string; shotId: string; version: ShotVisual }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const [preview, setPreview] = useState<PromptPreview | null>(null);
+  const [failed, setFailed] = useState(false);
+  // 画面来源、描述、运镜、衔接或参考图改了，展开时重新拉一份，别显示旧的那段。
+  const key = `${version.mode}|${version.provider ?? ""}|${version.prompt}|${version.image_prompt ?? ""}|${version.camera ?? ""}|${version.link ?? ""}|${(version.refs ?? []).join(",")}`;
+
+  useEffect(() => {
+    if (!open) return;
+    let stopped = false;
+    setFailed(false);
+    api
+      .shotPrompt(projectId, shotId)
+      .then((data) => !stopped && setPreview(data))
+      .catch(() => !stopped && setFailed(true));
+    return () => {
+      stopped = true;
+    };
+  }, [open, projectId, shotId, key]);
+
+  return (
+    <div className="full-prompt">
+      <button type="button" className="btn small ghost" onClick={() => setOpen(!open)} title={t("prompt.hint")}>
+        {open ? t("prompt.hideFull") : t("prompt.showFull")}
+      </button>
+      {open && (
+        <div className="full-prompt-body">
+          {failed && <p className="hint small">{t("prompt.loadFailed")}</p>}
+          {!failed && preview === null && <p className="muted small">{t("prompt.loading")}</p>}
+          {preview && (
+            <>
+              {preview.supported && (
+                <p className="prompt-meta">
+                  {preview.provider_name}
+                  {" · "}
+                  <span className={preview.characters > preview.budget ? "warn" : ""}>
+                    {t("prompt.chars", { n: preview.characters, budget: preview.budget })}
+                  </span>
+                  {preview.reference_count > 0 && ` · ${t("prompt.refs", { n: preview.reference_count })}`}
+                </p>
+              )}
+              {preview.empty ? <p className="hint small">{t("prompt.empty")}</p> : <pre className="prompt-text">{preview.text}</pre>}
+              {preview.translated && <p className="muted small">{t("prompt.translated")}</p>}
+              {(preview.dropped.length > 0 || preview.trimmed > 0 || preview.truncated) && (
+                <p className="muted small">
+                  {preview.dropped.length > 0 &&
+                    t("prompt.dropped", { list: preview.dropped.map((k) => t(`prompt.section.${k}` as MessageKey)).join("、") })}
+                  {preview.trimmed > 0 && ` ${t("prompt.trimmed", { n: preview.trimmed })}`}
+                  {preview.truncated && ` ${t("prompt.truncated")}`}
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

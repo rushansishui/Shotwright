@@ -446,6 +446,40 @@ export interface PrecheckRisk {
   remedies?: Remedy[];
 }
 
+/** 一个镜头拼好后真正发给模型的完整提示词（见后端 visuals.prompt_preview）。 */
+export interface PromptPreview {
+  shot_id: string;
+  /** ai 用视频提示词，image 用图片提示词；stock / upload / color 没有提示词。 */
+  mode: VisualMode;
+  /** 这个来源会不会拼提示词：false 时 text 为空。 */
+  supported: boolean;
+  provider: string | null;
+  provider_name: string;
+  /** 拼好的完整提示词。 */
+  text: string;
+  characters: number;
+  /** 这家模型的提示词预算（字数）；超了会丢掉次要段落。 */
+  budget: number;
+  /** 项目语言模型不认识，提交前会先用大模型翻译（预览给的是原文）。 */
+  translated: boolean;
+  /** 这次会附带的参考图，编号就是提示词里的「参考图 1/2」。 */
+  references: { asset_id: string; label: string; subject: string }[];
+  reference_count: number;
+  /** 服务不支持参考图时用主体照片作首帧，提示词里写明了。 */
+  first_frame: boolean;
+  /** 预算是多少字以内，超了就按 DROP_ORDER 丢掉这些段落（style / scene / camera / link）。 */
+  dropped: string[];
+  /** 从次要段落末尾删掉的行数。 */
+  trimmed: number;
+  /** 仍超预算时硬截断了。 */
+  truncated: boolean;
+  /** 镜头没有画面描述，拼出来是空的。 */
+  empty: boolean;
+  /** 上一次真正提交给模型的提示词（生成成功后才有）。 */
+  last_sent: string;
+  last_sent_asset: string | null;
+}
+
 /** 一条补救建议（见后端 services/remedy.py）：优先试不花钱的。 */
 export interface Remedy {
   action: "trim" | "fill" | "swap" | "rerender" | "edit_prompt" | "split" | "upload" | "move" | "look" | "budget" | "trim_scope" | "paid";

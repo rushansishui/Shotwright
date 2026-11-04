@@ -3634,3 +3634,65 @@ li.missing .readiness-mark {
   margin-bottom: 4px;
   cursor: help;
 }
+
+/* 提示词总览：一个镜头一段，整段提示词原样显示（保留换行）。 */
+.prompt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.prompt-block {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--card);
+}
+.prompt-block.is-empty {
+  border-style: dashed;
+}
+.prompt-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.prompt-head .row {
+  margin-left: auto;
+}
+.prompt-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+.prompt-text {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--field);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 420px;
+  overflow: auto;
+}
+.prompt-text.sent {
+  margin-top: 6px;
+  border: 1px dashed var(--line);
+}
+.prompt-notes {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.prompt-notes li {
+  margin-bottom: 2px;
+}
+.prompt-notes .warn {
+  color: var(--warn);
+}
+.prompt-last {
+  margin-top: 6px;
+}

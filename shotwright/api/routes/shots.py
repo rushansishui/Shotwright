@@ -92,6 +92,27 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
             ]
         }
 
+    @api.get("/projects/{project_id}/prompts")
+    def project_prompts(project_id: str):
+        """全片每个镜头拼好的完整提示词：一次看完这条片子到底会跟模型说什么。
+
+        只读、不花钱；和真正生成时用的是同一套拼装（``visuals.prompt_preview``）。
+        """
+        project = store.load(_id(project_id))
+        return {
+            "shots": [visuals.prompt_preview(store, ctx.settings, project, shot) for shot in project.shots]
+        }
+
+    @api.get("/projects/{project_id}/shots/{shot_id}/prompt")
+    def shot_prompt(project_id: str, shot_id: str):
+        """单个镜头的完整提示词，只在镜头卡片展开时用。"""
+        project = store.load(_id(project_id))
+        try:
+            shot = project.shot(_id(shot_id))
+        except KeyError:
+            raise HTTPException(404, "镜头不存在") from None
+        return visuals.prompt_preview(store, ctx.settings, project, shot)
+
     @api.post("/projects/{project_id}/shots/{shot_id}/merge")
     def merge_shot(project_id: str, shot_id: str):
         """把镜头和后一个镜头合并；同一段视频里相邻的片段会连成一段。"""

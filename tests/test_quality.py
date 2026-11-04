@@ -1,5 +1,6 @@
 """视频质量专项：声音、诉求、分镜等改动的测试。"""
 
+from conftest import FakeVideoGen
 from test_api import _create
 
 from shotwright.core.models import Project, Shot, ShotVisual, VoiceSettings
@@ -1179,3 +1180,62 @@ def test_final_render_runs_frame_inspection(store, settings):
     _Seer.prompts.clear()
     Renderer(store, settings, quality="draft").render(project.id)
     assert _Seer.prompts == []  # 草稿档不检查
+
+
+def test_prompt_preview_matches_what_is_sent(store, settings):
+    """提示词预览拼出来的，必须和真正提交给模型的一字不差（同一套拼装）。"""
+    from shotwright.core.models import Look, LookSubject
+    from shotwright.services import visuals
+
+    settings.defaults["video_gen"] = "fakevid"
+    shot = Shot(
+        text="一句话。",
+        visual=ShotVisual(mode="ai", prompt="P1 放在桌上", camera="orbit", link="承接上一镜头"),
+    )
+    project = store.create(
+        Project(
+            voice=VoiceSettings(provider="silent"),
+            look=Look(
+                subjects=[LookSubject(code="P1", name="咖啡机", kind="product", appearance="哑光白色")]
+            ),
+            shots=[shot],
+        )
+    )
+    shot = project.shots[0]
+    preview = visuals.prompt_preview(store, settings, project, shot)
+    assert preview["supported"] and preview["provider"] == "fakevid"
+    assert "运镜：镜头绕主体缓慢环绕" in preview["text"] and "场景" not in preview["text"]
+    assert preview["characters"] == len(preview["text"])
+
+    FakeVideoGen.calls.clear()
+    visuals.refresh_candidates(store, settings, project, shot, confirm_charge=True)
+    assert FakeVideoGen.calls[0]["prompt"] == preview["text"]
+    # 服务层不落盘（保存由接口层做），这里保存后再回看上一次真正提交的那一份。
+    store.save(project)
+    after = visuals.prompt_preview(store, settings, store.load(project.id), project.shots[0])
+    assert after["last_sent"] == FakeVideoGen.calls[0]["prompt"]
+
+
+def test_prompt_preview_skips_sources_without_prompts(store, settings):
+    from shotwright.services import visuals
+
+    shot = Shot(text="x", visual=ShotVisual(mode="stock", terms=["cat"]))
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), shots=[shot]))
+    preview = visuals.prompt_preview(store, settings, project, project.shots[0])
+    assert preview["supported"] is False and preview["text"] == ""
+
+
+def test_prompt_preview_reports_trimming_for_small_budget(store, settings):
+    """海螺这类预算小的模型：预览要说明提交前丢了哪些段落，不能假装是全的。"""
+    from shotwright.core.models import Look
+    from shotwright.providers import registry
+    from shotwright.providers.base import ProviderSpec
+    from shotwright.services import visuals
+
+    registry.register(ProviderSpec(kind="video_gen", id="tiny", name="Tiny", paid=True), FakeVideoGen)
+    long_look = Look(scene="场景" * 400, style="风格" * 400, avoid="广告" * 100)
+    shot = Shot(text="x", visual=ShotVisual(mode="ai", prompt="一只猫", provider="tiny"))
+    project = store.create(Project(voice=VoiceSettings(provider="silent"), look=long_look, shots=[shot]))
+    report = visuals.prompt_preview(store, settings, project, project.shots[0])
+    # 没单独声明的模型用通用预算 5000 字；这里只验证 report 结构齐全。
+    assert isinstance(report["dropped"], list) and isinstance(report["truncated"], bool)

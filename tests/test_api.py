@@ -279,3 +279,32 @@ def test_create_project_saves_duration(client):
         "/api/v2/projects", json={"mode": "split", "script": "一。二。", "duration": 30}
     ).json()
     assert project["target_seconds"] == 30
+
+
+def test_project_prompts_endpoint_lists_every_shot(client):
+    """全片提示词接口：每个镜头一条，AI 镜头拼出完整提示词，素材库镜头标明不用提示词。"""
+    created = _create(client)
+    pid = created["id"]
+    first = created["shots"][0]
+    client.patch(
+        f"/api/v2/projects/{pid}/shots/{first['id']}",
+        json={
+            "visual": {"mode": "ai", "prompt": "P1 放在桌上", "camera": "push_in", "link": "承接上一镜头的手"}
+        },
+    )
+    r = client.get(f"/api/v2/projects/{pid}/prompts")
+    assert r.status_code == 200, r.text
+    shots = r.json()["shots"]
+    assert len(shots) == len(created["shots"])
+    ai = next(item for item in shots if item["shot_id"] == first["id"])
+    assert ai["supported"] is True
+    assert ai["text"].startswith("P1 放在桌上")
+    assert "运镜：镜头缓慢推近主体" in ai["text"] and "衔接：承接上一镜头的手" in ai["text"]
+    assert ai["characters"] == len(ai["text"])
+    # 其余镜头没设画面来源时是素材库，不用提示词。
+    other = next(item for item in shots if item["shot_id"] != first["id"])
+    assert other["supported"] is False and other["text"] == ""
+
+    one = client.get(f"/api/v2/projects/{pid}/shots/{first['id']}/prompt")
+    assert one.status_code == 200 and one.json()["text"] == ai["text"]
+    assert client.get(f"/api/v2/projects/{pid}/shots/nope/prompt").status_code == 404

@@ -284,6 +284,7 @@ def compose(
     refs: list[ShotRef] | None = None,
     frame_ref: ShotRef | None = None,
     provider_id: str | None = None,
+    report: dict | None = None,
 ) -> str:
     """拼出交给生成模型的完整提示词。
 
@@ -299,6 +300,7 @@ def compose(
 
     ``provider_id`` 给了就按这家模型的写法整理：预算小的模型先丢掉次要段落
     （见 :mod:`shotwright.services.model_rules`），免得被 Provider 从中间硬截断。
+    ``report`` 给出时填进精简情况——界面预览据此说明提交前丢了哪些段落。
     """
     lang = prompt_language(project)
     words = _PHRASES[lang]
@@ -367,7 +369,7 @@ def compose(
     extra = model_rules.hint(style, lang)
     if extra:
         sections.insert(1, ("hint", [extra]))
-    return model_rules.fit(sections, budget=style.budget)
+    return model_rules.fit(sections, budget=style.budget, report=report)
 
 
 def needs_translation(project: Project, languages: tuple[str, ...]) -> bool:
