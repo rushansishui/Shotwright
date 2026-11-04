@@ -1072,6 +1072,29 @@ input[type="color"] {
   background: var(--accent);
 }
 
+/* 剪掉的部分：轨道上一段斜纹，在入出点的高亮之上。 */
+.trim-skip {
+  position: absolute;
+  top: 10px;
+  height: 8px;
+  z-index: 1;
+  border-radius: 2px;
+  background: repeating-linear-gradient(45deg, var(--muted) 0 3px, transparent 3px 6px);
+  background-color: var(--card);
+  pointer-events: none;
+}
+
+.trim-skip.pending {
+  background: repeating-linear-gradient(45deg, var(--danger) 0 3px, transparent 3px 6px);
+}
+
+.trim-cuts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
 .trim-track input[type="range"] {
   position: absolute;
   inset: 0;
@@ -2235,13 +2258,13 @@ input[type="color"] {
   gap: 14px;
   min-height: 0;
 }
+/* 只分多出来的高度，不压缩：素材多了时卡片跟着变高，素材列表不会溢出卡片、被底部按钮条挡住。 */
 .new-video .flow-body > .field.grow,
 .new-video .flow-body > .field.materials {
-  flex: 1;
-  min-height: 0;
+  flex: 1 0 auto;
 }
 .new-video .flow-body > .field.materials {
-  flex: 0.55;
+  flex: 0.55 0 auto;
 }
 /* 只针对诉求、想法这类一整块的大文本框；口播脚本每段的小文本框不受影响。 */
 .new-video .flow-body > .field.grow > textarea.input {
@@ -3109,6 +3132,31 @@ li.missing .readiness-mark {
   text-decoration: line-through;
   opacity: 0.55;
 }
+.cut-word {
+  user-select: none;
+}
+.cut-word.found {
+  box-shadow: inset 0 -2px 0 var(--warn);
+}
+.cut-word-input {
+  font: inherit;
+  padding: 0 2px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--card);
+  color: var(--text);
+}
+.cut-find {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+.cut-find .input {
+  flex: 1 1 160px;
+  min-width: 120px;
+}
 .cut-word.selected {
   background: var(--warn-soft);
   outline: 1px solid var(--warn);
@@ -3466,4 +3514,123 @@ li.missing .readiness-mark {
 }
 .risks > .btn {
   margin-top: 8px;
+}
+
+/* 分镜表：所有镜头一张表，窄屏时横向滚动。 */
+.board-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.board-toolbar p {
+  margin: 0;
+  flex: 1 1 320px;
+}
+.board-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+}
+.board-table {
+  width: 100%;
+  min-width: 900px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.board-table th,
+.board-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--line-soft);
+  text-align: left;
+  vertical-align: top;
+}
+.board-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--field);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.board-table tbody tr.has-risk {
+  background: var(--warn-soft);
+}
+.board-table tfoot td {
+  color: var(--muted);
+  border-bottom: 0;
+}
+.board-table textarea.input,
+.board-table input.input,
+.board-table select.input {
+  width: 100%;
+  font-size: 13px;
+}
+.board-table textarea.input {
+  resize: vertical;
+  min-height: 0;
+}
+.board-table .col-index {
+  width: 56px;
+}
+.board-table .col-thumb {
+  width: 84px;
+}
+.board-table .col-text {
+  width: 20%;
+}
+.board-table .col-visual {
+  width: 30%;
+}
+.board-table .col-camera {
+  width: 96px;
+}
+.board-table .col-source {
+  width: 110px;
+}
+.board-table .col-check {
+  min-width: 150px;
+}
+.board-index {
+  font: inherit;
+  font-weight: 700;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  cursor: pointer;
+}
+.board-index:hover {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.board-shot-title {
+  margin-top: 4px;
+  color: var(--accent-ink);
+}
+.board-thumb {
+  display: block;
+  width: 72px;
+  max-height: 128px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--line-soft);
+}
+.board-thumb.empty {
+  border: 1px dashed var(--line);
+  background: transparent;
+}
+.board-link {
+  margin-top: 6px;
+}
+.board-risks {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--warn);
+}
+.board-risks li {
+  margin-bottom: 4px;
+  cursor: help;
 }

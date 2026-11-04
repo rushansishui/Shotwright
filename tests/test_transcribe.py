@@ -451,3 +451,33 @@ def test_cut_draft_is_saved_on_server(client, settings, tmp_path):
     client.post(f"/api/v2/projects/{pid}/cut", json={"asset_id": asset, "removed": [0, 1], "max_pause": None})
     draft = client.get(url).json()["draft"]
     assert draft["removed"] == [0, 1] and draft["pauses"] is False
+
+
+def test_cut_replace_can_leave_a_word_empty(client, settings, tmp_path, monkeypatch):
+    """查找替换跨了几个词时多出来的词留空：文案和字幕里都不出现，时间照旧。"""
+    from shotwright.media import silence
+
+    monkeypatch.setattr(silence, "snap_ranges", lambda samples, ranges, total: ranges)
+    settings.defaults["asr"] = "fakeasr"
+    pid = client.post("/api/v2/projects", json={"mode": "empty", "voice": {"provider": "silent"}}).json()[
+        "id"
+    ]
+    with _clip_with_audio(tmp_path / "talk.mp4").open("rb") as handle:
+        asset = client.post(f"/api/v2/projects/{pid}/assets", files={"file": ("talk.mp4", handle)}).json()[
+            "id"
+        ]
+    client.post(f"/api/v2/projects/{pid}/transcripts/{asset}", json={})
+    assert _wait_done(client, pid, asset)["state"] == "done"
+    r = client.post(
+        f"/api/v2/projects/{pid}/cut",
+        json={
+            "asset_id": asset,
+            "removed": [1],
+            "max_pause": 1.0,
+            "split_scenes": False,
+            "texts": {"5": "轻薄保暖。", "6": ""},
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["shots"][0]["text"] == "大家好，今天介绍羽绒服。轻薄保暖。"
+    assert client.get(f"/api/v2/projects/{pid}/transcripts/{asset}").json()["words"][6][0] == ""

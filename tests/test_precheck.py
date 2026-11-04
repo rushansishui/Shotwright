@@ -19,6 +19,8 @@ def codes(text: str) -> list[str]:
         ("close-up of hands holding a cup", ["hands"]),
         ("招牌上写着欢迎光临", ["text"]),
         ("a neon sign that says OPEN", ["text"]),
+        ("孩子举着写有「冬天」两个字的牌子", ["text"]),
+        ("衣服上印有品牌名", ["text"]),
         ("两个人握手", ["people"]),
         ("a group of friends hugging", ["people"]),
         ("她在雨中奔跑", ["motion"]),

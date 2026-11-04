@@ -245,3 +245,22 @@ def test_api_trim_split_merge(store, settings, tmp_path):
         assert client.post(f"{base}/merge").status_code == 422
         r = client.patch(base, json={"visual": {"clear_trim_end": True}})
         assert r.json()["shots"][0]["visual"]["trim_end"] is None
+
+
+def test_api_skips_cut_middle_and_restore(store, settings, tmp_path):
+    project, asset = _project_with_clip(store, tmp_path, seconds=4.0)
+    project.shots[0].visual.edit_asset = None
+    store.save(project)
+    base = f"/api/v2/projects/{project.id}/shots/{project.shots[0].id}"
+    with _client(settings, store) as client:
+        # 剪掉中间两段：乱序、有重叠、有太短的，存下来时排好、合并、丢掉太短的。
+        r = client.patch(base, json={"visual": {"skips": [[2.5, 3.0], [1.0, 1.6], [1.4, 2.0], [3.5, 3.52]]}})
+        assert r.status_code == 200, r.text
+        visual = r.json()["shots"][0]["visual"]
+        assert visual["edit_asset"] == asset.id
+        assert [tuple(x) for x in visual["skips"]] == [(1.0, 2.0), (2.5, 3.0)]
+
+        r = client.patch(base, json={"visual": {"skips": [[1.0, 2.0]]}})
+        assert [tuple(x) for x in r.json()["shots"][0]["visual"]["skips"]] == [(1.0, 2.0)]
+        r = client.patch(base, json={"visual": {"skips": []}})
+        assert r.json()["shots"][0]["visual"]["skips"] == []

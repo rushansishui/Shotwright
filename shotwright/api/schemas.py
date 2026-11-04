@@ -147,6 +147,8 @@ class VisualPatch(_Body):
     trim_end: float | None = Field(None, gt=0.0, le=36000)
     clear_trim_end: bool = False
     """为真时出点回到素材结尾。"""
+    skips: list[tuple[float, float]] | None = Field(None, max_length=300)
+    """入出点之间要剪掉的片段（素材里的秒数）；传空列表恢复为不剪。"""
     fill: FillMode | None = None
     source_volume: float | None = Field(None, ge=0.0, le=2.0)
     locked: bool | None = None

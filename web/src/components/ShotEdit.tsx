@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { assetUrl } from "../api";
 import { keptSeconds, nextPosition } from "../clip";
 import { useI18n } from "../i18n";
+import { useFrameLoop } from "../useFrameLoop";
 import type { Asset, FillMode, FitMode, Project, Shot, VisualPatch } from "../types";
 import { Segmented } from "./Controls";
 
@@ -11,7 +12,7 @@ const fmt = (seconds: number) => `${seconds.toFixed(1)}s`;
 
 /**
  * 镜头内剪辑：入出点（拖动滑块时预览跟着跳到对应画面）、素材不够长时的补足方式、
- * 原声音量、取景（点画面选取景中心）、在当前位置拆分镜头。
+ * 原声音量、取景（点画面选取景中心）、在当前位置拆分镜头、剪掉中间不要的一段。
  */
 export function ShotEdit(props: {
   project: Project;
@@ -34,6 +35,8 @@ export function ShotEdit(props: {
   const [end, setEnd] = useState(savedEnd);
   const [volume, setVolume] = useState(visual.source_volume);
   const [now, setNow] = useState(savedStart);
+  /** 「剪掉中间一段」的起点；为空表示还没开始标。 */
+  const [cutFrom, setCutFrom] = useState<number | null>(null);
 
   // 视频元数据加载完时跳到入点；用 ref 读最新的入点，避免拿到首次渲染时的旧值。
   const startRef = useRef(start);
@@ -47,7 +50,7 @@ export function ShotEdit(props: {
     setNow(seconds);
   };
   const skips = own ? (visual.skips ?? []) : [];
-  // 播放时跳过剪掉的部分，停在出点，便于反复确认选段。
+  // 播放时跳过剪掉的部分，停在出点，便于反复确认选段。按帧检查，剪掉的部分不会漏播出来。
   const onTime = () => {
     const el = video.current;
     if (!el) return;
@@ -61,6 +64,19 @@ export function ShotEdit(props: {
       el.currentTime = start;
     }
   };
+
+  useFrameLoop(video, onTime, isVideo);
+
+  const cutA = cutFrom === null ? null : Math.min(cutFrom, now);
+  const cutB = cutFrom === null ? null : Math.max(cutFrom, now);
+  const canCut =
+    cutA !== null && cutB !== null && cutB - cutA >= 0.1 && cutA >= start - 0.01 && cutB <= end + 0.01;
+  const applyCut = () => {
+    if (cutA === null || cutB === null) return;
+    props.onUpdate({ skips: [...skips, [Number(cutA.toFixed(3)), Number(cutB.toFixed(3))]] });
+    setCutFrom(null);
+  };
+  const restoreCut = (index: number) => props.onUpdate({ skips: skips.filter((_, i) => i !== index) });
 
   const commitTrim = (nextStart: number, nextEnd: number) => {
     const patch: VisualPatch = {};
@@ -128,6 +144,7 @@ export function ShotEdit(props: {
               preload="metadata"
               onLoadedMetadata={() => seek(startRef.current)}
               onTimeUpdate={onTime}
+              onSeeked={onTime}
             />
           ) : (
             <img className="edit-video" src={assetUrl(project.id, asset.id)} alt="" />
@@ -145,6 +162,21 @@ export function ShotEdit(props: {
                   </span>
                 </div>
                 <div className="trim-track" style={{ ["--a" as string]: `${(start / total) * 100}%`, ["--b" as string]: `${(end / total) * 100}%` }}>
+                  {skips.map(([a, b], i) => (
+                    <span
+                      key={`${a}-${b}`}
+                      className="trim-skip"
+                      title={t("edit.cutPart", { start: fmt(a), end: fmt(b) })}
+                      style={{ left: `${(a / total) * 100}%`, width: `${((b - a) / total) * 100}%` }}
+                      data-index={i}
+                    />
+                  ))}
+                  {cutA !== null && cutB !== null && (
+                    <span
+                      className="trim-skip pending"
+                      style={{ left: `${(cutA / total) * 100}%`, width: `${(Math.max(cutB - cutA, 0.02) / total) * 100}%` }}
+                    />
+                  )}
                   <input
                     type="range"
                     aria-label={t("edit.in")}
@@ -194,17 +226,60 @@ export function ShotEdit(props: {
                   >
                     {t("edit.split", { at: fmt(now) })}
                   </button>
-                  {own && (visual.trim_start > 0 || visual.trim_end !== null) && (
+                  {own && (visual.trim_start > 0 || visual.trim_end !== null || skips.length > 0) && (
                     <button
                       type="button"
                       className="btn small ghost"
                       disabled={props.disabled}
-                      onClick={() => props.onUpdate({ trim_start: 0, clear_trim_end: true })}
+                      onClick={() => {
+                        setCutFrom(null);
+                        props.onUpdate({ trim_start: 0, clear_trim_end: true, skips: [] });
+                      }}
                     >
                       {t("edit.reset")}
                     </button>
                   )}
                 </div>
+                <div className="trim-buttons">
+                  {cutFrom === null ? (
+                    <button
+                      type="button"
+                      className="btn small"
+                      disabled={props.disabled || now < start || now > end - 0.1}
+                      title={t("edit.cutHint")}
+                      onClick={() => setCutFrom(now)}
+                    >
+                      {t("edit.cutFrom", { at: fmt(now) })}
+                    </button>
+                  ) : (
+                    <>
+                      <button type="button" className="btn small primary" disabled={props.disabled || !canCut} onClick={applyCut}>
+                        {t("edit.cutApply", { start: fmt(cutA ?? 0), end: fmt(cutB ?? 0) })}
+                      </button>
+                      <button type="button" className="btn small ghost" onClick={() => setCutFrom(null)}>
+                        {t("edit.cutCancel")}
+                      </button>
+                      <span className="muted small">{t("edit.cutPending")}</span>
+                    </>
+                  )}
+                </div>
+                {skips.length > 0 && (
+                  <div className="trim-cuts">
+                    <span className="muted small">{t("edit.cutList")}</span>
+                    {skips.map(([a, b], i) => (
+                      <button
+                        key={`${a}-${b}`}
+                        type="button"
+                        className="chip small"
+                        disabled={props.disabled}
+                        title={t("edit.restoreCut")}
+                        onClick={() => restoreCut(i)}
+                      >
+                        {t("edit.cutPart", { start: fmt(a), end: fmt(b) })} ↺
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="field">

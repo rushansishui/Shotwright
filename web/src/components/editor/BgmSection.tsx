@@ -75,7 +75,7 @@ export function BgmSection({ project, run, setError, draft, setDraft }: BgmSecti
         <input
           ref={bgmInput}
           type="file"
-          accept="audio/*"
+          accept="audio/*,video/*,.m4a,.mp4,.mov,.mkv,.webm"
           hidden
           onChange={(e) => {
             const file = e.target.files?.[0];
@@ -84,7 +84,12 @@ export function BgmSection({ project, run, setError, draft, setDraft }: BgmSecti
           }}
         />
         <div className="row">
-          <button type="button" className="btn" onClick={() => bgmInput.current?.click()}>
+          <button
+            type="button"
+            className="btn"
+            title={t("editor.bgmUploadHint")}
+            onClick={() => bgmInput.current?.click()}
+          >
             {bgmAsset ? t("editor.bgmReplace") : t("editor.bgmUpload")}
           </button>
           <button type="button" className="btn" disabled={bgmBusy} onClick={searchBgm}>
