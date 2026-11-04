@@ -308,3 +308,27 @@ def test_project_prompts_endpoint_lists_every_shot(client):
     one = client.get(f"/api/v2/projects/{pid}/shots/{first['id']}/prompt")
     assert one.status_code == 200 and one.json()["text"] == ai["text"]
     assert client.get(f"/api/v2/projects/{pid}/shots/nope/prompt").status_code == 404
+
+
+def test_prompt_override_is_sent_as_is_and_can_be_cleared(client):
+    """手动改过的整段提示词原样提交，不再拼装；传空字符串恢复自动拼接。"""
+    created = _create(client)
+    pid = created["id"]
+    shot_id = created["shots"][0]["id"]
+    base = f"/api/v2/projects/{pid}/shots/{shot_id}"
+    client.patch(base, json={"visual": {"mode": "ai", "prompt": "P1 放在桌上", "camera": "push_in"}})
+    auto = client.get(f"{base}/prompt").json()
+    assert auto["manual"] is False and "运镜：" in auto["text"]
+
+    r = client.patch(base, json={"visual": {"prompt_override": "完全手写的一段提示词"}})
+    assert r.status_code == 200, r.text
+    manual = client.get(f"{base}/prompt").json()
+    assert manual["manual"] is True
+    assert manual["text"] == "完全手写的一段提示词" and manual["override"] == "完全手写的一段提示词"
+    # 改画面描述也不再影响它。
+    client.patch(base, json={"visual": {"prompt": "换了描述"}})
+    assert client.get(f"{base}/prompt").json()["text"] == "完全手写的一段提示词"
+
+    client.patch(base, json={"visual": {"prompt_override": ""}})
+    back = client.get(f"{base}/prompt").json()
+    assert back["manual"] is False and "换了描述" in back["text"]

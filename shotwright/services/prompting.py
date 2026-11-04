@@ -274,6 +274,11 @@ def frame_reference_line(project: Project, lang: PromptLang, ref: ShotRef) -> st
     return FRAME_REF[lang].format(name=name, hint=hint)
 
 
+def override_target(shot: Shot) -> Target:
+    """手动改过的整段提示词属于哪种用途：AI 图片镜头是 image，其余按视频处理。"""
+    return "image" if shot.visual.mode == "image" else "video"
+
+
 def compose(
     project: Project,
     shot: Shot,
@@ -305,6 +310,11 @@ def compose(
     lang = prompt_language(project)
     words = _PHRASES[lang]
     look = project.look
+    # 手动改过的整段提示词原样提交：用户已经把这些段落自己调好了，再拼一遍会互相打架。
+    # 只对镜头自己的画面来源生效——AI 视频镜头出关键帧时仍然走自动拼接，免得把视频提示词
+    # 当成静态画面提示词发出去。
+    if shot.visual.prompt_override.strip() and override_target(shot) == target:
+        return shot.visual.prompt_override.strip()
     if prompt is None:
         prompt = (shot.visual.image_prompt or shot.visual.prompt) if target == "image" else shot.visual.prompt
     body = prompt.strip()

@@ -380,6 +380,7 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
           ) : view === "prompt" ? (
             <PromptList
               project={project}
+              run={run}
               onOpenShot={(index) => {
                 setView("cards");
                 setActiveIndex(index);

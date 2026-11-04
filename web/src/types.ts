@@ -203,6 +203,11 @@ export interface ShotVisual {
   prompt: string;
   /** AI 图片和关键帧用的静态画面描述；为空时用 prompt。 */
   image_prompt?: string;
+  /**
+   * 手动改过的完整提示词：非空时原样提交，不再按全片设定自动拼装。
+   * 清空（传空字符串）恢复自动拼接。
+   */
+  prompt_override?: string;
   camera?: CameraMove;
   /** 衔接说明：开头怎样承接上一个镜头，结尾留给下一个镜头什么。 */
   link?: string;
@@ -475,6 +480,10 @@ export interface PromptPreview {
   truncated: boolean;
   /** 镜头没有画面描述，拼出来是空的。 */
   empty: boolean;
+  /** 手动改过的整段提示词；为空表示按全片设定自动拼接。 */
+  override: string;
+  /** 现在提交的是手动改过的那份（而不是自动拼出来的）。 */
+  manual: boolean;
   /** 上一次真正提交给模型的提示词（生成成功后才有）。 */
   last_sent: string;
   last_sent_asset: string | null;

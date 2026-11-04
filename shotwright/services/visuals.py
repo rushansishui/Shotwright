@@ -588,8 +588,12 @@ def prompt_preview(store: ProjectStore, settings: Settings, project: Project, sh
         "references": [],
         "reference_count": 0,
         "first_frame": False,
-        "dropped": "",
+        "dropped": [],
+        "trimmed": 0,
+        "truncated": False,
         "empty": False,
+        "override": "",
+        "manual": False,
         "last_sent": "",
         "last_sent_asset": None,
     }
@@ -649,6 +653,10 @@ def prompt_preview(store: ProjectStore, settings: Settings, project: Project, sh
     )
     result["text"] = text
     result["characters"] = len(text)
+    # 手动改过的整段提示词原样提交，不再拼装；界面据此显示「已手动改过」和「恢复自动拼接」。
+    override = shot.visual.prompt_override.strip()
+    result["override"] = override
+    result["manual"] = bool(override) and prompting.override_target(shot) == target
     style = model_rules.style_for(provider_id)
     result["budget"] = style.budget
     result["translated"] = prompting.needs_translation(project, spec.prompt_languages if spec else ("en",))

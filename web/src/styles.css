@@ -3696,3 +3696,28 @@ li.missing .readiness-mark {
 .prompt-last {
   margin-top: 6px;
 }
+
+/* 手动改过整段提示词的镜头：标出来，并给编辑区留够高度（提示词是多行的）。 */
+.prompt-block.is-manual {
+  border-color: var(--accent);
+}
+.tag.manual {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft, var(--field));
+  color: var(--accent-ink);
+  font-size: 11px;
+}
+.prompt-edit-area {
+  width: 100%;
+  min-height: 220px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  resize: vertical;
+}
+.prompt-edit .row {
+  margin-top: 6px;
+  align-items: center;
+}
