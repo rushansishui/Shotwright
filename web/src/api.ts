@@ -13,6 +13,7 @@ import type {
   MaterialNote,
   Project,
   PrecheckRisk,
+  PromptPreview,
   ProjectSummary,
   Providers,
   SettingsData,
@@ -245,6 +246,10 @@ export const api = {
   /** 生成前检查：画面描述的高风险内容、配音是否超过模型单次上限。不花钱。 */
   precheck: (id: string, shotId: string, prompt?: string) =>
     request<{ risks: PrecheckRisk[] }>(`/projects/${id}/shots/${shotId}/precheck`, json("POST", prompt === undefined ? {} : { prompt })),
+  /** 全片每个镜头拼好的完整提示词（只读、不花钱）：看这条片子到底会跟模型说什么。 */
+  projectPrompts: (id: string) => request<{ shots: PromptPreview[] }>(`/projects/${id}/prompts`),
+  /** 单个镜头的完整提示词，镜头卡片展开时用。 */
+  shotPrompt: (id: string, shotId: string) => request<PromptPreview>(`/projects/${id}/shots/${shotId}/prompt`),
   mergeShot: (id: string, shotId: string) => request<Project>(`/projects/${id}/shots/${shotId}/merge`, json("POST", {})),
   reorder: (id: string, order: string[]) => request<Project>(`/projects/${id}/shots/order`, json("PUT", { order })),
   updateShot: (

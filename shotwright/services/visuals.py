@@ -37,7 +37,7 @@ from shotwright.providers.base import (
     StockProvider,
     VideoGenProvider,
 )
-from shotwright.services import prompting
+from shotwright.services import model_rules, prompting
 from shotwright.services.durations import estimated_shot_seconds
 
 log = logging.getLogger(__name__)
@@ -537,6 +537,135 @@ def build_prompt(
     spec = _spec(kind, provider_id)
     languages = spec.prompt_languages if spec is not None else ("en",)
     return prompting.for_provider(settings, project, text, languages)
+
+
+def _provider_or_none(settings: Settings, kind: str, provider_id: str | None):
+    """尽量实例化 Provider；没配置 Key 时返回 None，预览就按声明的能力来算。"""
+    try:
+        return registry.create(kind, provider_id, settings)
+    except (ProviderError, ValueError):
+        return None
+
+
+def _last_sent(project: Project, shot: Shot) -> tuple[str, str | None]:
+    """这个镜头上一次真正提交给模型的提示词，以及它对应的素材。
+
+    生成时完整提示词会存进素材的 ``meta["prompt"]``（视频前 3000 字、图片前 1500 字）。
+    优先看当前选中的素材，没有时从最近生成的版本往前找。素材库检索和上传没有提示词。
+    """
+    ordered = (
+        [shot.visual.selected, *reversed(shot.visual.candidates)]
+        if shot.visual.selected
+        else list(reversed(shot.visual.candidates))
+    )
+    for asset_id in ordered:
+        asset = project.assets.get(asset_id or "")
+        text = (asset.meta.get("prompt") or "").strip() if asset is not None else ""
+        if text:
+            return text, asset_id
+    return "", None
+
+
+def prompt_preview(store: ProjectStore, settings: Settings, project: Project, shot: Shot) -> dict:
+    """这个镜头拼好的完整提示词：预览不花钱、不调大模型。
+
+    和真正提交时用的是同一套拼装（:func:`prompting.compose`），所以看到的段落、顺序、
+    参考图编号都和发给模型的一致；差别只有一处——模型不支持项目语言时要先用大模型翻译，
+    预览里原样给出并标出「提交前会翻译」。另外附上上次实际提交的那份，便于对照。
+    """
+    mode = shot.visual.mode
+    target = "image" if mode == "image" else "video" if mode == "ai" else ""
+    result: dict = {
+        "shot_id": shot.id,
+        "mode": mode,
+        "supported": bool(target),
+        "provider": None,
+        "provider_name": "",
+        "text": "",
+        "characters": 0,
+        "budget": 0,
+        "translated": False,
+        "references": [],
+        "reference_count": 0,
+        "first_frame": False,
+        "dropped": [],
+        "trimmed": 0,
+        "truncated": False,
+        "empty": False,
+        "override": "",
+        "manual": False,
+        "last_sent": "",
+        "last_sent_asset": None,
+    }
+    last_sent, last_asset = _last_sent(project, shot)
+    result["last_sent"] = last_sent
+    result["last_sent_asset"] = last_asset
+    if not target:
+        return result
+    kind = "image_gen" if target == "image" else "video_gen"
+    provider_id = _provider_id(settings, kind, shot)
+    result["provider"] = provider_id
+    spec = _spec(kind, provider_id)
+    if spec is not None:
+        result["provider_name"] = spec.name
+    provider = _provider_or_none(settings, kind, provider_id)
+    # 参考图：生成服务不收参考图时一张都不发，提示词里也就不写参考图要求。
+    if provider is not None:
+        accepts = _accepts_references(provider, "references" if target == "image" else "reference_images")
+        limit = _reference_limit(provider) if accepts else 0
+    else:
+        limit = spec.max_ref_images if spec is not None else 0
+    refs: list[prompting.ShotRef] = []
+    if limit > 0 and subject_images(project, shot, target=target, limit=limit):
+        # 只算真正读得到的图片：读不出来的那张不会发出去，编号也不能占位。
+        refs = [
+            ref
+            for ref in prompting.shot_references(project, shot, target=target, limit=limit)  # type: ignore[arg-type]
+            if store.asset_path(project, ref.asset_id).is_file()
+        ]
+    result["reference_count"] = len(refs)
+    result["references"] = [
+        {"asset_id": ref.asset_id, "label": ref.label, "subject": ref.subject.code if ref.subject else ""}
+        for ref in refs
+    ]
+    frame_ref: prompting.ShotRef | None = None
+    if target == "video" and not refs and not shot.visual.first_frame:
+        # 服务不支持参考图时用主体照片当首帧，提示词里要写明「第一帧就是它」。
+        frame_ref = next(
+            (
+                ref
+                for ref in prompting.shot_references(project, shot)
+                if store.asset_path(project, ref.asset_id).is_file()
+            ),
+            None,
+        )
+        result["first_frame"] = frame_ref is not None
+    report: dict = {}
+    text = prompting.compose(
+        project,
+        shot,
+        target=target,
+        limit=max(limit, 0),
+        refs=refs,
+        frame_ref=frame_ref,
+        provider_id=provider_id,
+        report=report,
+    )
+    result["text"] = text
+    result["characters"] = len(text)
+    # 手动改过的整段提示词原样提交，不再拼装；界面据此显示「已手动改过」和「恢复自动拼接」。
+    override = shot.visual.prompt_override.strip()
+    result["override"] = override
+    result["manual"] = bool(override) and prompting.override_target(shot) == target
+    style = model_rules.style_for(provider_id)
+    result["budget"] = style.budget
+    result["translated"] = prompting.needs_translation(project, spec.prompt_languages if spec else ("en",))
+    result["empty"] = not text.strip()
+    # 模型预算小时 compose 会先丢掉次要段落、再删行、最后硬截断（见 model_rules.fit）。
+    result["dropped"] = list(report.get("dropped") or [])
+    result["trimmed"] = int(report.get("trimmed") or 0)
+    result["truncated"] = bool(report.get("truncated"))
+    return result
 
 
 def _chained_first_frame(store: ProjectStore, project: Project, shot: Shot) -> tuple[Path | None, str]:

@@ -149,6 +149,8 @@ class VisualPatch(_Body):
     """为真时出点回到素材结尾。"""
     skips: list[tuple[float, float]] | None = Field(None, max_length=300)
     """入出点之间要剪掉的片段（素材里的秒数）；传空列表恢复为不剪。"""
+    prompt_override: str | None = Field(None, max_length=8000)
+    """手动改过的完整提示词；传空字符串恢复为按全片设定自动拼接。"""
     fill: FillMode | None = None
     source_volume: float | None = Field(None, ge=0.0, le=2.0)
     locked: bool | None = None

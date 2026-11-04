@@ -274,6 +274,11 @@ def frame_reference_line(project: Project, lang: PromptLang, ref: ShotRef) -> st
     return FRAME_REF[lang].format(name=name, hint=hint)
 
 
+def override_target(shot: Shot) -> Target:
+    """手动改过的整段提示词属于哪种用途：AI 图片镜头是 image，其余按视频处理。"""
+    return "image" if shot.visual.mode == "image" else "video"
+
+
 def compose(
     project: Project,
     shot: Shot,
@@ -284,6 +289,7 @@ def compose(
     refs: list[ShotRef] | None = None,
     frame_ref: ShotRef | None = None,
     provider_id: str | None = None,
+    report: dict | None = None,
 ) -> str:
     """拼出交给生成模型的完整提示词。
 
@@ -299,10 +305,16 @@ def compose(
 
     ``provider_id`` 给了就按这家模型的写法整理：预算小的模型先丢掉次要段落
     （见 :mod:`shotwright.services.model_rules`），免得被 Provider 从中间硬截断。
+    ``report`` 给出时填进精简情况——界面预览据此说明提交前丢了哪些段落。
     """
     lang = prompt_language(project)
     words = _PHRASES[lang]
     look = project.look
+    # 手动改过的整段提示词原样提交：用户已经把这些段落自己调好了，再拼一遍会互相打架。
+    # 只对镜头自己的画面来源生效——AI 视频镜头出关键帧时仍然走自动拼接，免得把视频提示词
+    # 当成静态画面提示词发出去。
+    if shot.visual.prompt_override.strip() and override_target(shot) == target:
+        return shot.visual.prompt_override.strip()
     if prompt is None:
         prompt = (shot.visual.image_prompt or shot.visual.prompt) if target == "image" else shot.visual.prompt
     body = prompt.strip()
@@ -367,7 +379,7 @@ def compose(
     extra = model_rules.hint(style, lang)
     if extra:
         sections.insert(1, ("hint", [extra]))
-    return model_rules.fit(sections, budget=style.budget)
+    return model_rules.fit(sections, budget=style.budget, report=report)
 
 
 def needs_translation(project: Project, languages: tuple[str, ...]) -> bool:

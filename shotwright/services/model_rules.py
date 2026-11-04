@@ -98,27 +98,38 @@ def style_for(provider_id: str | None) -> ModelStyle:
     return STYLES.get((provider_id or "").strip().lower(), DEFAULT)
 
 
-def fit(sections: list[tuple[str, list[str]]], *, budget: int, sep: str = "\n") -> str:
+def fit(
+    sections: list[tuple[str, list[str]]], *, budget: int, sep: str = "\n", report: dict | None = None
+) -> str:
     """把各段落拼成提示词；超过 ``budget`` 时按 :data:`DROP_ORDER` 丢掉次要段落。
 
     丢完还超时按行从后往前删（最后一行是禁止项，留着），仍超才硬截断。
+    ``report`` 给出时填进 ``{"dropped": [...], "trimmed": int, "truncated": bool}``，
+    界面上据此说明这段提示词在提交前被精简成了什么样。
     """
     kept = list(sections)
     text = _join(kept, sep)
+    dropped: list[str] = []
     for key in DROP_ORDER:
         if len(text) <= budget:
             break
         kept = [item for item in kept if item[0] != key]
+        dropped.append(key)
         text = _join(kept, sep)
+    trimmed = 0
     # 还超：从后往前删次要段落里的行，禁止项（最后一段）不动。
     while len(text) > budget and len(kept) > 1:
         key, lines = kept[-2]
         if len(lines) <= 1:
             break
         kept[-2] = (key, lines[:-1])
+        trimmed += 1
         text = _join(kept, sep)
-    if len(text) > budget:
+    truncated = len(text) > budget
+    if truncated:
         text = _truncate(text, budget)
+    if report is not None:
+        report.update(dropped=dropped, trimmed=trimmed, truncated=truncated)
     return text
 
 

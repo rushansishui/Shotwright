@@ -203,6 +203,11 @@ export interface ShotVisual {
   prompt: string;
   /** AI 图片和关键帧用的静态画面描述；为空时用 prompt。 */
   image_prompt?: string;
+  /**
+   * 手动改过的完整提示词：非空时原样提交，不再按全片设定自动拼装。
+   * 清空（传空字符串）恢复自动拼接。
+   */
+  prompt_override?: string;
   camera?: CameraMove;
   /** 衔接说明：开头怎样承接上一个镜头，结尾留给下一个镜头什么。 */
   link?: string;
@@ -444,6 +449,44 @@ export interface PrecheckRisk {
   message: string;
   advice: string;
   remedies?: Remedy[];
+}
+
+/** 一个镜头拼好后真正发给模型的完整提示词（见后端 visuals.prompt_preview）。 */
+export interface PromptPreview {
+  shot_id: string;
+  /** ai 用视频提示词，image 用图片提示词；stock / upload / color 没有提示词。 */
+  mode: VisualMode;
+  /** 这个来源会不会拼提示词：false 时 text 为空。 */
+  supported: boolean;
+  provider: string | null;
+  provider_name: string;
+  /** 拼好的完整提示词。 */
+  text: string;
+  characters: number;
+  /** 这家模型的提示词预算（字数）；超了会丢掉次要段落。 */
+  budget: number;
+  /** 项目语言模型不认识，提交前会先用大模型翻译（预览给的是原文）。 */
+  translated: boolean;
+  /** 这次会附带的参考图，编号就是提示词里的「参考图 1/2」。 */
+  references: { asset_id: string; label: string; subject: string }[];
+  reference_count: number;
+  /** 服务不支持参考图时用主体照片作首帧，提示词里写明了。 */
+  first_frame: boolean;
+  /** 预算是多少字以内，超了就按 DROP_ORDER 丢掉这些段落（style / scene / camera / link）。 */
+  dropped: string[];
+  /** 从次要段落末尾删掉的行数。 */
+  trimmed: number;
+  /** 仍超预算时硬截断了。 */
+  truncated: boolean;
+  /** 镜头没有画面描述，拼出来是空的。 */
+  empty: boolean;
+  /** 手动改过的整段提示词；为空表示按全片设定自动拼接。 */
+  override: string;
+  /** 现在提交的是手动改过的那份（而不是自动拼出来的）。 */
+  manual: boolean;
+  /** 上一次真正提交给模型的提示词（生成成功后才有）。 */
+  last_sent: string;
+  last_sent_asset: string | null;
 }
 
 /** 一条补救建议（见后端 services/remedy.py）：优先试不花钱的。 */
