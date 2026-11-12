@@ -25,7 +25,7 @@ async function createProject(page: Page, script: string) {
   await expect(page.locator(".editor")).toBeVisible();
 }
 
-/** 编辑页分步：素材 → 画面 → 配音与字幕 → 音乐与音效 → 标题与文字。 */
+/** 编辑页分步：主体与风格 → 画面 → 配音与字幕 → 音乐与音效 → 标题与文字。 */
 async function gotoStep(page: Page, name: RegExp) {
   await page.locator(".editor-steps").getByRole("button", { name }).click();
 }
@@ -80,16 +80,19 @@ test.describe("Shotwright 主流程", () => {
     await expect(shots).toHaveCount(1);
   });
 
-  test("分步：素材、画面、标题与文字各步的区块都在", async ({ page }) => {
+  test("分步：主体与风格、画面、标题与文字各步的区块都在", async ({ page }) => {
     await createProject(page, `区块${RUN_ID}，${TWO_SHOTS}`);
-    await gotoStep(page, /素材|Materials/);
+    await gotoStep(page, /主体与风格|Subjects & style/);
     await expect(page.getByRole("heading", { name: /主体与参考|Subjects and references/ })).toBeVisible();
     await expect(page.locator(".readiness")).toBeVisible();
     await gotoStep(page, /画面|Visuals/);
     await expect(page.locator("article.shot")).toHaveCount(2);
     await gotoStep(page, /标题与文字|Titles & text/);
     await expect(page.getByRole("heading", { name: /文字与转场|Text & transitions/ })).toBeVisible();
-    await expect(page.getByRole("heading", { name: /语言版本|Language versions/ })).toBeVisible();
+    // 语言版本在页面顶部：点开面板能看到翻译入口。
+    await page.getByRole("button", { name: /翻译成其他语言|^Translate$/ }).click();
+    await expect(page.getByRole("dialog", { name: /语言版本|Language versions/ })).toBeVisible();
+    await expect(page.getByLabel(/生成其他语言版本|Make another language version/)).toBeVisible();
   });
 
   test("草稿/成片两档可以切换", async ({ page }) => {
@@ -169,7 +172,7 @@ test.describe("Shotwright 主流程", () => {
 
   test("全片设定：添加主体并保存外观", async ({ page }) => {
     await createProject(page, `全片设定${RUN_ID}。${TWO_SHOTS}`);
-    await gotoStep(page, /素材|Materials/);
+    await gotoStep(page, /主体与风格|Subjects & style/);
     const look = page.locator(".look");
     await look.getByRole("button", { name: /添加主体|Add subject/ }).click();
     const appearance = look.getByRole("textbox", { name: /外观|Appearance/ }).first();
@@ -236,7 +239,7 @@ test.describe("Shotwright 主流程", () => {
     await page.goto("/");
     await expect(page.locator(".project-grid li").first()).toContainText(/（副本）|\(copy\)/);
   });
-  test("素材没确认前不能生成 AI 画面，确认后解锁", async ({ page }) => {
+  test("主体没确认前不能生成 AI 画面，确认后解锁", async ({ page }) => {
     const created = await (await page.request.post("/api/v2/projects", { data: { mode: "split", script: `素材${RUN_ID}。${TWO_SHOTS}` } })).json();
     const look = {
       subjects: [{ code: "P1", name: "咖啡机", kind: "product", appearance: "哑光白色圆柱形机身", images: [] }],
@@ -246,16 +249,16 @@ test.describe("Shotwright 主流程", () => {
     };
     expect((await page.request.patch(`/api/v2/projects/${created.id}`, { data: { look } })).ok()).toBeTruthy();
     await page.goto(`/#/p/${created.id}`);
-    // 还没确认：默认停在「素材」，清单显示缺参考图
-    await expect(page.locator(".editor-steps button.on")).toContainText(/素材|Materials/);
+    // 还没确认：默认停在「主体与风格」，清单显示缺参考图
+    await expect(page.locator(".editor-steps button.on")).toContainText(/主体与风格|Subjects & style/);
     await expect(page.locator(".readiness")).toContainText(/0\/1/);
     await gotoStep(page, /画面|Visuals/);
     await expect(page.locator(".lock-hint")).toBeVisible();
-    // 回到素材，标记不需要参考图后确认
-    await gotoStep(page, /素材|Materials/);
+    // 回到主体与风格，标记不需要参考图后确认
+    await gotoStep(page, /主体与风格|Subjects & style/);
     await page.locator(".readiness-list li").getByRole("checkbox").click();
     await expect(page.locator(".readiness")).toContainText(/1\/1/);
-    await page.getByRole("button", { name: /确认素材|Confirm materials/ }).click();
+    await page.getByRole("button", { name: /确认主体|Confirm subjects/ }).click();
     await expect(page.locator(".editor-steps button.on")).toContainText(/画面|Visuals/);
     await expect(page.locator(".lock-hint")).toHaveCount(0);
   });

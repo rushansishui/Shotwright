@@ -14,6 +14,7 @@ import { providerName, useI18n } from "../i18n";
 import type { MessageKey } from "../messages";
 import { useFrameLoop } from "../useFrameLoop";
 import type { LanguageInfo, Project, ProjectSummary, ProviderInfo, TranscriptData } from "../types";
+import { Icon } from "./Controls";
 import { ProjectList } from "./ProjectList";
 
 interface CutProps {
@@ -157,6 +158,8 @@ function CutUpload() {
             onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
             disabled={!!busy}
           />
+          {/* 和首页的上传区一样带个图标，一眼看出是能点、能拖文件的地方。 */}
+          <Icon name={files.length ? "film" : "upload"} />
           <strong>
             {files.length === 0
               ? mode === "scenes"
@@ -205,7 +208,7 @@ function CutUpload() {
         )}
         {error && <p className="hint error">{error}</p>}
         <div className="cut-foot">
-          <button type="button" className="btn primary" disabled={!ready} onClick={start}>
+          <button type="button" className="btn primary big" disabled={!ready} onClick={start}>
             {busy || (mode === "scenes" ? t("cut.startScenes") : t("cut.start"))}
           </button>
         </div>

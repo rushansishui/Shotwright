@@ -86,6 +86,8 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
   const [marginDraft, setMarginDraft] = useState<number | undefined>(undefined);
   const [styleDraft, setStyleDraft] = useState<Partial<SubtitleStyle>>({});
   const [step, setStepState] = useState<EditorStep | null>(() => loadStep(projectId));
+  /** 剪辑项目里点了「准备主体参考图」：显示平时隐藏的「素材」一步。 */
+  const [materialsOpen, setMaterialsOpen] = useState(false);
   /** 画面一步的视图：镜头卡片、分镜表、提示词、审片。 */
   const [view, setView] = useState<"cards" | "board" | "prompt" | "review">("cards");
   const reviewing = view === "review";
@@ -107,10 +109,21 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
   const locked = generationLocked(project);
   /** 所有镜头都保留原片人声（剪辑页生成），配音设置用不上。 */
   const allOriginal = project.shots.length > 0 && project.shots.every((s) => s.speech === "original");
+  /** 静音配音只用于离线预览：声音、语速、音量和读音纠正都用不上。 */
+  const silent = project.voice.provider === "silent";
   /** 剪辑页生成的项目：可以回到文稿重新剪。 */
   const cutSource = project.shots.find((s) => s.speech === "original" && s.visual.selected)?.visual.selected ?? null;
+  // 剪辑项目用的是原片画面，「素材」一步（主体参考图、全片设定）一般用不上，默认不显示，
+  // 免得它没做任何事却显示成已完成。已经填过设定、加过参考图，或者在「画面」里点了入口时照常显示。
+  const look = project.look;
+  const materialsUsed =
+    preparedSubjects(project).length > 0 ||
+    !!(look && (look.scene || look.style || look.avoid || look.style_ref || look.brand)) ||
+    project.references.length > 0;
+  const showMaterials = !isCut || materialsUsed || materialsOpen;
+  const steps = showMaterials ? STEPS : STEPS.slice(1);
   // 没选过步骤时：素材还没确认就从「素材」开始，否则从「画面」开始。
-  const current: EditorStep = step ?? (locked ? 1 : 2);
+  const current: EditorStep = step === 1 && !showMaterials ? 2 : (step ?? (locked ? 1 : 2));
   const setStep = (next: EditorStep) => {
     setStepState(next);
     try {
@@ -125,7 +138,25 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
   const stepState = (n: EditorStep): string => {
     if (n === 1) return locked ? "todo" : preparedSubjects(project).length && project.look?.revised_at ? "warn" : "done";
     if (n === 2) return project.shots.length && filled === project.shots.length ? (outdated.length ? "warn" : "done") : "todo";
+    // 后三步没有「必须做完」的事：配好了显示 ✓，没配不标（音乐、标题本来就是可选的）。
+    // 只有配音是「静音」时提醒一下：成片里会没有声音，往往是忘了换。
+    if (n === 3) return silent && !allOriginal && project.shots.length ? "warn" : "done";
+    if (n === 4) return project.bgm.asset_id ? "done" : "";
+    if (n === 5) {
+      const titles = project.titles;
+      const used =
+        !!titles?.headline.enabled ||
+        !!titles?.intro.enabled ||
+        project.overlays.length > 0 ||
+        project.shots.some((s) => !!s.title?.trim());
+      return used ? "done" : "";
+    }
     return "";
+  };
+  /** 步骤按钮的悬停说明：解释为什么是 ✓ 或 ⚠。 */
+  const stepTitle = (n: EditorStep): string | undefined => {
+    if (n === 3) return stepState(3) === "warn" ? t("steps.voiceSilent") : undefined;
+    return undefined;
   };
   const next = (n: EditorStep) =>
     n < 5 ? (
@@ -210,6 +241,7 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
               {t("cut.recut")}
             </a>
           )}
+          <Versions project={project} languages={languages} canTranslate={!!llm} />
           <button
             type="button"
             className="btn"
@@ -240,15 +272,16 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
         )}
 
         <nav className="editor-steps" aria-label={t("steps.label")}>
-          {STEPS.map((item) => (
+          {steps.map((item, index) => (
             <button
               key={item.n}
               type="button"
               className={`${current === item.n ? "on" : ""} ${stepState(item.n)}`}
               aria-current={current === item.n ? "step" : undefined}
+              title={stepTitle(item.n) ?? t(item.label)}
               onClick={() => setStep(item.n)}
             >
-              <span className="step-num">{stepState(item.n) === "done" ? "✓" : item.n}</span>
+              <span className="step-num">{stepState(item.n) === "done" ? "✓" : index + 1}</span>
               <span className="step-label">{t(item.label)}</span>
               {item.n === 2 && project.shots.length > 0 && (
                 <span className="step-count">
@@ -278,29 +311,23 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
         <Section
           title={reviewing ? t("review.open") : view === "board" ? t("board.title") : view === "prompt" ? t("prompt.title") : t("editor.shots")}
           extra={
-            <div className="row">
-              {project.shots.length > 0 && view !== "review" && view !== "board" && (
-                <button type="button" className="btn" title={t("board.hint")} onClick={() => setView("board")}>
-                  {t("board.open")}
-                </button>
-              )}
-              {project.shots.length > 0 && view !== "review" && view !== "prompt" && (
-                <button type="button" className="btn" title={t("prompt.hint")} onClick={() => setView("prompt")}>
-                  {t("prompt.open")}
-                </button>
-              )}
-              {(view === "board" || view === "prompt") && (
-                <button type="button" className="btn" onClick={() => setView("cards")}>
-                  {t(view === "board" ? "board.close" : "prompt.close")}
-                </button>
-              )}
-              {project.shots.length > 0 && view === "cards" && (
-                <button type="button" className="btn" onClick={() => setView(reviewing ? "cards" : "review")}>
-                  {reviewing ? t("review.close") : t("review.open")}
-                </button>
+            <div className="row shots-toolbar">
+              {/* 左边一组切换视图，右边一组是操作：以前五个按钮长得一样，分不清哪些是切换、哪些会改动项目。 */}
+              {project.shots.length > 0 && (
+                <Segmented
+                  label={t("editor.view")}
+                  value={view}
+                  onChange={setView}
+                  options={[
+                    { value: "cards", label: t("editor.viewCards") },
+                    { value: "board", label: t("board.open"), title: t("board.hint") },
+                    { value: "prompt", label: t("prompt.open"), title: t("prompt.hint") },
+                    { value: "review", label: t("review.open") },
+                  ]}
+                />
               )}
               {view === "cards" && (
-              <>
+              <div className="row toolbar-actions">
               <input
                 ref={footageInput}
                 type="file"
@@ -333,7 +360,7 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
                 />
                 {t("editor.simple")}
               </label>
-              </>
+              </div>
               )}
             </div>
           }
@@ -345,6 +372,21 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
                 {t("steps.gotoMaterials")}
               </button>
             </div>
+          )}
+          {!showMaterials && (
+            <p className="muted small materials-entry">
+              {t("steps.materialsEntry")}{" "}
+              <button
+                type="button"
+                className="linkish"
+                onClick={() => {
+                  setMaterialsOpen(true);
+                  setStep(1);
+                }}
+              >
+                {t("steps.materialsOpen")}
+              </button>
+            </p>
           )}
           {!locked && outdated.length > 0 && (
             <div className="hint warn lock-hint">
@@ -486,7 +528,7 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
               {!languages.some((l) => l.code === project.language) && <option value={project.language}>{project.language}</option>}
               {languages.map((l) => (
                 <option key={l.code} value={l.code}>
-                  {lang === "zh" && l.name_zh !== l.name ? `${l.name}（${l.name_zh}）` : l.name}
+                  {lang === "zh" && l.name_zh !== l.name ? `${l.name_zh} · ${l.name}` : l.name}
                 </option>
               ))}
             </select>
@@ -506,13 +548,15 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
                 ))}
               </select>
             </div>
+            {silent ? (
+              <p className="muted small voice-silent">{t("voice.silentHint")}</p>
+            ) : (
             <div className="field">
               <label htmlFor="voice">{t("editor.voice")}</label>
               <select
                 id="voice"
                 className="input"
                 value={project.voice.voice}
-                disabled={project.voice.provider === "silent"}
                 onChange={(e) => updateVoice({ voice: e.target.value })}
               >
                 {!voices.some((v) => v.id === project.voice.voice) && <option value={project.voice.voice}>{project.voice.voice}</option>}
@@ -523,6 +567,9 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
                 ))}
               </select>
             </div>
+            )}
+            {!silent && (
+              <>
             <Slider
               id="rate"
               label={t("editor.rate")}
@@ -545,8 +592,12 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
               onInput={(volume) => setDraft({ ...draft, volume })}
               onCommit={(volume) => updateVoice({ volume }).then(() => setDraft({ ...draft, volume: undefined }))}
             />
+              </>
+            )}
           </div>
-          <PronunciationSection project={project} canSuggest={!!llm} run={(action) => run(action)} onError={setError} />
+          {!silent && (
+            <PronunciationSection project={project} canSuggest={!!llm} run={(action) => run(action)} onError={setError} />
+          )}
           </details>
         </Section>
 
@@ -642,7 +693,6 @@ export function Editor({ projectId, onOrigin }: { projectId: string; onOrigin?: 
           <>
             <TitleSection project={project} canSuggest={!!llm} run={run} onError={setError} />
             <OverlaySection project={project} run={run} />
-            <Versions project={project} languages={languages} />
           </>
         )}
       </div>

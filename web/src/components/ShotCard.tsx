@@ -852,7 +852,13 @@ export function ShotCard(props: {
           <p className="muted small">{keyframeFirst ? t("shot.empty.aiKeyframes") : emptyHint[visual.mode]}</p>
         )}
         {shown.length > 0 && (
-          <div className="candidates" role="listbox" aria-label={t("shot.candidates")} aria-multiselectable="true">
+          // 只有一个候选时它就是左边的缩略图：简洁模式下不再重复显示（样式里按 single 隐藏）。
+          <div
+            className={`candidates ${shown.length === 1 ? "single" : ""}`}
+            role="listbox"
+            aria-label={t("shot.candidates")}
+            aria-multiselectable="true"
+          >
             {shown.map((id) => {
               const order = chosen.indexOf(id);
               return (
@@ -937,24 +943,29 @@ export function ShotCard(props: {
         {shot.error && <p className="hint error">{shot.error}</p>}
         {props.simple && (
           <div className="shot-simple-actions">
-            <button
-              type="button"
-              className="btn"
-              disabled={props.aiLocked || props.busy || visual.locked || !generator}
-              title={t("shot.simple.anotherHint")}
-              onClick={keyframeFirst ? keyframes : generate}
-            >
-              <Icon name="refresh" /> {t("shot.simple.another")}
-            </button>
-            <button
-              type="button"
-              className="btn"
-              disabled={props.busy || visual.locked || !generator}
-              title={t("shot.simple.redoHint")}
-              onClick={generate}
-            >
-              <Icon name="refresh" /> {t("shot.simple.redo")}
-            </button>
+            {/* 上传、纯色、素材检索的镜头没有可以重新生成的东西：不显示这两个按钮，免得一直灰着。 */}
+            {generator && (
+              <>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={props.aiLocked || props.busy || visual.locked}
+                  title={t("shot.simple.anotherHint")}
+                  onClick={keyframeFirst ? keyframes : generate}
+                >
+                  <Icon name="refresh" /> {t("shot.simple.another")}
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={props.busy || visual.locked}
+                  title={t("shot.simple.redoHint")}
+                  onClick={generate}
+                >
+                  <Icon name="refresh" /> {t("shot.simple.redo")}
+                </button>
+              </>
+            )}
             <button
               type="button"
               className="btn"
@@ -975,13 +986,13 @@ export function ShotCard(props: {
       </div>
 
       <div className="shot-actions">
-        <button type="button" className="btn icon ghost" aria-label={t("shot.moveUp")} disabled={index === 0} onClick={() => props.onMove(-1)}>
+        <button type="button" className="btn icon ghost" aria-label={t("shot.moveUp")} title={t("shot.moveUp")} disabled={index === 0} onClick={() => props.onMove(-1)}>
           <Icon name="up" />
         </button>
-        <button type="button" className="btn icon ghost" aria-label={t("shot.moveDown")} disabled={isLast} onClick={() => props.onMove(1)}>
+        <button type="button" className="btn icon ghost" aria-label={t("shot.moveDown")} title={t("shot.moveDown")} disabled={isLast} onClick={() => props.onMove(1)}>
           <Icon name="down" />
         </button>
-        <button type="button" className="btn icon ghost" aria-label={t("shot.insert")} onClick={props.onInsert}>
+        <button type="button" className="btn icon ghost" aria-label={t("shot.insert")} title={t("shot.insert")} onClick={props.onInsert}>
           <Icon name="plus" />
         </button>
         <button
@@ -994,7 +1005,7 @@ export function ShotCard(props: {
         >
           <Icon name="merge" />
         </button>
-        <button type="button" className="btn icon ghost danger" aria-label={t("shot.delete")} onClick={props.onDelete}>
+        <button type="button" className="btn icon ghost danger" aria-label={t("shot.delete")} title={t("shot.delete")} onClick={props.onDelete}>
           <Icon name="trash" />
         </button>
       </div>

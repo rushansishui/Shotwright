@@ -244,7 +244,7 @@ export function Home() {
               })
             : decision || t("home.settingsAuto")}
         </span>
-        <button type="button" className="btn small ghost" onClick={() => setSettingsOpen(!settingsOpen)} aria-expanded={settingsOpen}>
+        <button type="button" className="linkish" onClick={() => setSettingsOpen(!settingsOpen)} aria-expanded={settingsOpen}>
           {settingsOpen ? t("home.settingsHide") : t("home.settingsShow")}
         </button>
       </div>
@@ -273,7 +273,7 @@ export function Home() {
               <select id="language" className="input" value={language} onChange={(e) => setLanguage(e.target.value)}>
                 {languages.map((l) => (
                   <option key={l.code} value={l.code}>
-                    {lang === "zh" && l.name_zh !== l.name ? `${l.name}（${l.name_zh}）` : l.name}
+                    {lang === "zh" && l.name_zh !== l.name ? `${l.name_zh} · ${l.name}` : l.name}
                   </option>
                 ))}
               </select>
@@ -333,7 +333,6 @@ export function Home() {
           <SetupCard
             providers={providers}
             onConfigured={() => api.providers().then(setProviders).catch(() => undefined)}
-            onWriteOwn={writeOwn}
           />
         )}
 

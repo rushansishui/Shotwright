@@ -77,6 +77,25 @@ export function Settings() {
           </p>
         )}
         {error && <p className="hint error">{error}</p>}
+        {providers && data && (
+          // 七类服务、二十多张卡片，页面很长：顶部列出各类，点一下跳过去，也能一眼看出哪类还没配好。
+          <nav className="settings-jump" aria-label={t("settings.jump")}>
+            {Object.entries(providers).map(([kind, list]) => {
+              const ready = list.some((p) => p.id === data.defaults[kind] && p.configured);
+              return (
+                <button
+                  type="button"
+                  key={kind}
+                  className={`chip ${ready ? "ok" : "warn"}`}
+                  onClick={() => document.getElementById(`settings-${kind}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                >
+                  {ready ? "✓ " : "⚠ "}
+                  {kindName(kind)}
+                </button>
+              );
+            })}
+          </nav>
+        )}
         {data && (
           <div className="settings-proxy">
             <label className="field">
@@ -113,12 +132,16 @@ export function Settings() {
 
       {providers &&
         data &&
-        Object.entries(providers).map(([kind, list]) => {
+        Object.entries(providers).map(([kind, unsorted]) => {
+          // 已经配好的排在前面：常用的那几家不用在一长串「未配置」里找。
+          const list = [...unsorted].sort((a, b) => Number(b.configured) - Number(a.configured));
           const choosable = list.filter(
             (p) => p.fields.length > 0 || p.offline,
           );
+          const current = list.find((p) => p.id === data.defaults[kind]);
+          const instead = choosable.find((p) => p.configured && p.id !== current?.id);
           return (
-            <section key={kind} className="card provider-group">
+            <section key={kind} id={`settings-${kind}`} className="card provider-group">
               <div className="card-head">
                 <h2>{kindName(kind)}</h2>
                 <label className="settings-default">
@@ -143,6 +166,19 @@ export function Settings() {
                   </select>
                 </label>
               </div>
+              {current && !current.configured && (
+                <p className="hint warn small default-missing">
+                  {t("settings.defaultMissing", { name: providerName(current, lang) })}
+                  {instead && editable && (
+                    <>
+                      {" "}
+                      <button type="button" className="linkish" onClick={() => chooseDefault(kind, instead.id)}>
+                        {t("settings.useInstead", { name: providerName(instead, lang) })}
+                      </button>
+                    </>
+                  )}
+                </p>
+              )}
               <div className="provider-grid">
                 {list.map((p) => (
                   <ProviderCard

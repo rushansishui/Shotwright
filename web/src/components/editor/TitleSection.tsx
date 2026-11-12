@@ -78,15 +78,18 @@ export function TitleSection({ project, step, canSuggest, run, onError }: TitleS
           <input type="checkbox" checked={headline.enabled} onChange={(e) => setHeadline({ enabled: e.target.checked }, true)} />
           {t("titles.headline")}
         </label>
-        <textarea
-          className="input"
-          rows={2}
-          aria-label={t("titles.headlineText")}
-          placeholder={t("titles.headlinePlaceholder")}
-          value={headline.text}
-          onChange={(e) => setHeadline({ text: e.target.value })}
-          onBlur={() => save()}
-        />
+        {/* 没勾选时不显示输入框：以前在这里打了字，没勾选就不会出现在画面上，容易以为坏了。 */}
+        {headline.enabled && (
+          <textarea
+            className="input"
+            rows={2}
+            aria-label={t("titles.headlineText")}
+            placeholder={t("titles.headlinePlaceholder")}
+            value={headline.text}
+            onChange={(e) => setHeadline({ text: e.target.value })}
+            onBlur={() => save()}
+          />
+        )}
         {draft.candidates.length > 0 && (
           <div className="title-candidates">
             <span className="muted small">{t("titles.candidates")}</span>

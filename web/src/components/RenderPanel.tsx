@@ -167,6 +167,40 @@ function Preview({ project, shotIndex, platform }: { project: Project; shotIndex
   );
 }
 
+/**
+ * 侧栏高度跟着它在窗口里的实际位置走：刚打开页面时侧栏上面还有导航栏，
+ * 按「贴在顶部」算的固定高度会让侧栏底部（生成按钮）超出窗口。窄屏时侧栏不固定，不处理。
+ */
+function useSideHeight() {
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const el = ref.current;
+      if (!el) return;
+      if (window.innerWidth <= 1000) {
+        el.style.maxHeight = "";
+        return;
+      }
+      const top = Math.max(el.getBoundingClientRect().top, 16);
+      el.style.maxHeight = `${window.innerHeight - top - 16}px`;
+    };
+    const schedule = () => {
+      if (!frame) frame = window.requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    return () => {
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, []);
+  return ref;
+}
+
 export function RenderPanel(props: {
   project: Project;
   paidAvailable: boolean;
@@ -178,6 +212,7 @@ export function RenderPanel(props: {
 }) {
   const { project } = props;
   const { t, lang } = useI18n();
+  const side = useSideHeight();
   /** 体检问题按 code 本地化；没有对应文案时用后端的中文说明。 */
   const checkupText = (issue: CheckIssue) => {
     if (issue.code.startsWith("risk_")) {
@@ -285,7 +320,7 @@ export function RenderPanel(props: {
   }
 
   return (
-    <aside className="side">
+    <aside className="side" ref={side}>
       <section className="card">
         <div className="card-head">
           <h2>{t("render.preview")}</h2>
@@ -453,39 +488,6 @@ export function RenderPanel(props: {
             />
           </div>
         )}
-        {running ? (
-          <div className="progress-block">
-            <div className="field-row">
-              <span>{job?.message}</span>
-              <span className="muted">{Math.round((job?.progress ?? 0) * 100)}%</span>
-            </div>
-            <div className="progress" role="progressbar" aria-valuenow={Math.round((job?.progress ?? 0) * 100)} aria-valuemin={0} aria-valuemax={100}>
-              <div style={{ width: `${(job?.progress ?? 0) * 100}%` }} />
-            </div>
-            <button type="button" className="btn" onClick={() => job && api.cancel(job.id).catch(() => undefined)}>
-              {t("render.cancel")}
-            </button>
-          </div>
-        ) : (
-          <>
-            <button type="button" className="btn primary big" disabled={project.shots.length === 0} onClick={start}>
-              {result ? t("render.rerender") : t("render.render")}
-            </button>
-            <button
-              type="button"
-              className="btn sample-render"
-              disabled={project.shots.length === 0}
-              title={t("render.sampleHint")}
-              onClick={startSample}
-            >
-              {t("render.sample")}
-            </button>
-            {job?.sample && job?.state === "done" && <p className="hint small">{t("render.sampleDone")}</p>}
-          </>
-        )}
-        {job?.state === "failed" && <p className="hint error">{job.error}</p>}
-        {error && <p className="hint error">{error}</p>}
-        <p className="muted small center">{t("render.incremental")}</p>
       </section>
 
       {result && !running && (
@@ -529,6 +531,44 @@ export function RenderPanel(props: {
           ))}
         </section>
       )}
+
+      {/* 生成按钮和进度固定在侧栏底部：笔记本屏幕上侧栏放不下全部设置，
+          放在设置卡片里时要在侧栏里再往下滚才看得到。 */}
+      <div className="side-actions">
+        {running ? (
+          <div className="progress-block">
+            <div className="field-row">
+              <span>{job?.message}</span>
+              <span className="muted">{Math.round((job?.progress ?? 0) * 100)}%</span>
+            </div>
+            <div className="progress" role="progressbar" aria-valuenow={Math.round((job?.progress ?? 0) * 100)} aria-valuemin={0} aria-valuemax={100}>
+              <div style={{ width: `${(job?.progress ?? 0) * 100}%` }} />
+            </div>
+            <button type="button" className="btn" onClick={() => job && api.cancel(job.id).catch(() => undefined)}>
+              {t("render.cancel")}
+            </button>
+          </div>
+        ) : (
+          <>
+            <button type="button" className="btn primary big" disabled={project.shots.length === 0} onClick={start}>
+              {result ? t("render.rerender") : t("render.render")}
+            </button>
+            <button
+              type="button"
+              className="btn sample-render"
+              disabled={project.shots.length === 0}
+              title={t("render.sampleHint")}
+              onClick={startSample}
+            >
+              {t("render.sample")}
+            </button>
+            {job?.sample && job?.state === "done" && <p className="hint small">{t("render.sampleDone")}</p>}
+          </>
+        )}
+        {job?.state === "failed" && <p className="hint error">{job.error}</p>}
+        {error && <p className="hint error">{error}</p>}
+        <p className="muted small center">{t("render.incremental")}</p>
+      </div>
     </aside>
   );
 }

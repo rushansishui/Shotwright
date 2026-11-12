@@ -180,6 +180,9 @@ export function BgmSection({ project, run, setError, draft, setDraft }: BgmSecti
           );
         })()}
       </div>
+      {/* 这三项只对已选的背景音乐有用：没选音乐时不显示。 */}
+      {project.bgm.asset_id && (
+        <>
       <Slider
         id="bgm-volume"
         label={t("editor.bgmVolume")}
@@ -212,15 +215,20 @@ export function BgmSection({ project, run, setError, draft, setDraft }: BgmSecti
         />
         {t("editor.bgmBeatSync")}
       </label>
-      <label className="check">
-        <input
-          type="checkbox"
-          checked={project.loudness !== null}
-          onChange={(e) => run(() => api.updateProject(id, { loudness: e.target.checked ? -14 : null }))}
-        />
-        {t("editor.loudness")}
-      </label>
-      <p className="muted small">{t("editor.loudnessHint")}</p>
+        </>
+      )}
+      {/* 勾选框和说明包在一起，占两列网格里的同一格；分开放时说明会跑到右边那一栏。 */}
+      <div>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={project.loudness !== null}
+            onChange={(e) => run(() => api.updateProject(id, { loudness: e.target.checked ? -14 : null }))}
+          />
+          {t("editor.loudness")}
+        </label>
+        <p className="muted small">{t("editor.loudnessHint")}</p>
+      </div>
     </div>
   );
 }

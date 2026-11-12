@@ -11,11 +11,9 @@ import type { Providers } from "../types";
 export function SetupCard({
   providers,
   onConfigured,
-  onWriteOwn,
 }: {
   providers: Providers;
   onConfigured: () => void;
-  onWriteOwn: () => void;
 }) {
   const { t, lang } = useI18n();
   const llms = providers.llm ?? [];
@@ -128,9 +126,6 @@ export function SetupCard({
           <h3>{t("setup.free")}</h3>
           <p className="muted small">{t("setup.freeWhy")}</p>
           <div className="setup-free-actions">
-            <button type="button" className="btn" onClick={onWriteOwn}>
-              {t("setup.writeOwn")}
-            </button>
             <a className="btn" href="#/cut">
               {t("setup.cut")}
             </a>

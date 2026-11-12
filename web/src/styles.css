@@ -188,6 +188,37 @@ h2 {
   overscroll-behavior: contain;
 }
 
+/* 生成按钮条：侧栏里最后一块，滚动侧栏时固定在可见区域底部。 */
+.side-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: -6px;
+  padding: 14px 20px 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 -8px 16px -12px rgba(0, 0, 0, 0.25);
+}
+.side-actions > p {
+  margin: 0;
+}
+.materials-entry {
+  margin: 0;
+}
+
+/* 分镜工具栏：左边切换视图，右边操作（导入原片、添加镜头、简洁模式），中间用竖线隔开。 */
+.shots-toolbar {
+  justify-content: flex-end;
+}
+.shots-toolbar .segmented + .toolbar-actions {
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+}
+
 @media (max-width: 1000px) {
   .side {
     position: static;
@@ -211,6 +242,11 @@ h2 {
   display: flex;
   align-items: center;
   gap: 12px;
+  /* 右边按钮多时整组换到下一行，标题不会被挤成一个字一行。 */
+  flex-wrap: wrap;
+}
+.card-head h2 {
+  white-space: nowrap;
 }
 
 .card-extra {
@@ -660,6 +696,13 @@ input[type="color"] {
   max-width: 320px;
 }
 
+/* 矮屏幕（笔记本）上竖屏预览按窗口高度缩小，让预览和底部的生成按钮能同时看到。 */
+@media (min-width: 1001px) {
+  .side .preview.a9-16 {
+    max-width: min(260px, calc((100vh - 380px) * 9 / 16));
+  }
+}
+
 .preview video,
 .preview img {
   position: absolute;
@@ -885,6 +928,13 @@ input[type="color"] {
   accent-color: var(--accent);
 }
 
+/* 勾选框下面紧跟的说明：贴着勾选框，和勾选框后面的文字左对齐，一眼看出是这一项的说明。 */
+.check + p.muted.small {
+  margin: -8px 0 12px;
+  /* 勾选框 18px + 浏览器默认左右边距 4px、3px + 间距 8px */
+  padding-left: 33px;
+}
+
 /* 镜头生成中 */
 .shot-thumb-wrap {
   position: relative;
@@ -985,6 +1035,47 @@ input[type="color"] {
 
 .version.current {
   font-weight: 600;
+}
+
+/* 编辑页顶部的「翻译成其他语言」：按钮 + 下拉面板 */
+.versions-menu {
+  position: relative;
+}
+.versions-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  width: min(420px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.14);
+}
+.versions-panel p {
+  margin: 0;
+}
+.versions-current {
+  font-weight: 600;
+}
+.versions-panel .versions {
+  margin: 0;
+}
+.versions-panel .version {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  text-decoration: none;
+}
+.versions-panel .version:hover {
+  background: var(--field);
 }
 
 .row > select.input {
@@ -2322,6 +2413,13 @@ input[type="color"] {
   border-radius: var(--radius);
   background: var(--field);
 }
+/* 「AI 决定」说明和「自己选」之间留出间距 */
+.settings-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
 .video-settings .field {
   margin-bottom: 10px;
 }
@@ -2444,7 +2542,8 @@ input[type="color"] {
 .project-meta-aspect {
   margin-right: 6px;
 }
-.project-meta-aspect::after {
+.project-meta-aspect::after,
+.project-meta .status-dot::after {
   content: " ·";
 }
 .projects.compact .projects-head {
@@ -2641,7 +2740,9 @@ input[type="color"] {
 /* ---- 编辑页分步：素材 → 画面 → 配音与字幕 → 音乐与音效 → 标题与文字 ---- */
 .editor-steps {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  /* 按实际步骤数平分：剪辑项目隐藏「主体与风格」后是四步，不留空格。 */
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   gap: 6px;
   margin: 4px 0 14px;
   position: sticky;
@@ -2813,9 +2914,24 @@ li.missing .readiness-mark {
   margin-top: 12px;
 }
 @media (max-width: 760px) {
+  /* 窄屏放不下五个步骤名：只显示编号，当前这一步显示名字，其余悬停看名字。 */
   .editor-steps {
-    grid-template-columns: repeat(5, auto);
-    overflow-x: auto;
+    display: flex;
+  }
+  .editor-steps button {
+    flex: none;
+  }
+  .editor-steps button.on {
+    flex: 1 1 auto;
+  }
+  .editor-steps button:not(.on) .step-label,
+  .editor-steps button:not(.on) .step-count {
+    display: none;
+  }
+  /* 窄屏上工具栏会换行，分隔竖线会留在第二行开头，去掉 */
+  .shots-toolbar .segmented + .toolbar-actions {
+    padding-left: 0;
+    border-left: 0;
   }
   .readiness-list li {
     grid-template-columns: 22px 1fr;
@@ -2854,7 +2970,8 @@ li.missing .readiness-mark {
 .shot-simple .elsewhere,
 .shot-simple .risks,
 .shot-simple .inline-field,
-.shot-simple .shot-edit {
+.shot-simple .shot-edit,
+.shot-simple .candidates.single {
   display: none;
 }
 
@@ -2902,11 +3019,32 @@ li.missing .readiness-mark {
 .provider-card.open {
   border-color: var(--accent);
 }
+/* 名称和状态一行，链接和按钮固定在第二行：以前按内容宽度换行，有的卡片一行、有的两行。 */
 .provider-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
+  gap: 8px 12px;
+}
+.provider-row .provider-actions {
+  grid-column: 1 / -1;
+}
+.settings-jump {
+  display: flex;
   flex-wrap: wrap;
+  gap: 8px;
+}
+.settings-jump .chip.ok {
+  color: var(--ok);
+}
+.settings-jump .chip.warn {
+  color: var(--warn);
+}
+.provider-group {
+  scroll-margin-top: 12px;
+}
+.default-missing {
+  margin: 0;
 }
 .provider-name {
   flex: 1 1 200px;
@@ -3029,8 +3167,13 @@ li.missing .readiness-mark {
 .cut-foot {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  /* 主按钮和首页一样占满一行 */
+  align-items: stretch;
   gap: 6px;
+}
+.cut-drop svg {
+  width: 22px;
+  height: 22px;
 }
 .cut-header {
   display: flex;
