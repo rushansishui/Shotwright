@@ -22,6 +22,12 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+# 输出被重定向时（GitHub Actions、写进日志），Windows 默认用系统的 ANSI 编码；
+# 英文系统上是 cp1252，打印中文会直接报 UnicodeEncodeError。统一改成 UTF-8。
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None and hasattr(_stream, "reconfigure") and not _stream.isatty():
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 CONFIG = """[app]
 auto_fetch_visuals = false
 

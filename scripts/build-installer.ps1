@@ -32,6 +32,10 @@ $FfmpegUrls = @(
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'  # Invoke-WebRequest 显示进度条时下载会慢很多
+# 打包过程中运行的 Python（freeze.py、pip-licenses、冒烟测试）一律用 UTF-8：GitHub 的 Windows 机器
+# 和英文系统的默认编码是 cp1252，打印中文会报错。控制台也按 UTF-8 解读它们的输出，日志里中文不乱码。
+$env:PYTHONUTF8 = '1'
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 

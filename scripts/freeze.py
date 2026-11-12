@@ -22,6 +22,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+# 输出被重定向时（GitHub Actions、写进日志），Windows 默认用系统的 ANSI 编码；
+# 英文系统上是 cp1252，打印中文会直接报 UnicodeEncodeError。统一改成 UTF-8。
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None and hasattr(_stream, "reconfigure") and not _stream.isatty():
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 # 这些包带有数据文件、二进制库或动态导入，需要整包收集。
 COLLECT_ALL = (
     "edge_tts",
