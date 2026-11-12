@@ -12,7 +12,7 @@
 # FFmpeg 固定用下面 $FfmpegVersion 这个版本（gyan.dev 的 essentials 构建，带字幕用的 libass），
 # 下载后校验 SHA256，保证同一个版本号打出来的安装包一样。升级 FFmpeg 时同时改版本号和校验值。
 #
-# 需要预先安装：Python 3.11+、Node.js 20+、Inno Setup 6.5+（https://jrsoftware.org/isdl.php；
+# 需要预先安装：Python 3.11–3.13（最新版 Python 可能还装不上本地语音识别的依赖）、Node.js 20+、Inno Setup 6.5+（https://jrsoftware.org/isdl.php；
 # 低于 6.5 时安装界面没有简体中文）。
 # GitHub Actions 上由 .github/workflows/release-windows.yml 调用。
 
@@ -38,7 +38,10 @@ Set-Location $root
 function Invoke-Checked {
     # 外部命令失败时 PowerShell 不会自动停下，这里检查退出码。
     # 故意不用 param()：这样 -m、-hide_banner 这类参数会原样传给外部命令。
-    $exe, $rest = $args
+    # $rest 用 Select-Object 取成数组：只剩一个参数时，`$exe, $rest = $args` 得到的是字符串，
+    # 展开传参时会被拆成单个字符（ci 变成 c i）。
+    $exe = $args[0]
+    $rest = @($args | Select-Object -Skip 1)
     & $exe @rest
     if ($LASTEXITCODE -ne 0) { throw "$exe $($rest -join ' ') 失败，退出码 $LASTEXITCODE" }
 }
@@ -47,11 +50,46 @@ $version = (Select-String -Path 'pyproject.toml' -Pattern '^version\s*=\s*"(.+)"
 Write-Host "[build] Shotwright $version"
 
 # ---- Python 环境 -------------------------------------------------------------
+# 本地语音识别依赖的 onnxruntime 只给较早的 Python 版本提供安装包，最新版 Python 往往还装不上，
+# 所以打包用的 Python 固定在下面这几个版本里选（优先 3.12）。不能直接用 `py -3`：它会挑机器上
+# 最新的 Python，GitHub 的 Windows 机器上预装了更新的版本。
+$SupportedPython = @('3.12', '3.13', '3.11')
+
+function Get-PythonVersion {
+    # 返回 "3.12" 这样的版本号；命令不存在或运行失败时返回空。
+    $exe = $args[0]
+    $rest = @($args | Select-Object -Skip 1)
+    try {
+        $out = & $exe @rest -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
+        if ($LASTEXITCODE -eq 0) { return "$out".Trim() }
+    } catch { }
+    return ''
+}
+
 $py = '.venv-build\Scripts\python.exe'
+if (Test-Path $py) {
+    $venvVersion = Get-PythonVersion $py
+    if ($SupportedPython -notcontains $venvVersion) {
+        Write-Host "[build] .venv-build 用的是 Python $venvVersion，不在支持的版本里，重新创建"
+        Remove-Item .venv-build -Recurse -Force
+    }
+}
 if (-not (Test-Path $py)) {
-    Write-Host '[build] 创建打包用的虚拟环境 .venv-build'
-    if (Get-Command py -ErrorAction SilentlyContinue) { Invoke-Checked py -3 -m venv .venv-build }
-    else { Invoke-Checked python -m venv .venv-build }
+    # 候选：PATH 里的 python（GitHub Actions 上就是 setup-python 装的那个），再按版本问 py 启动器。
+    $candidates = @()
+    if (Get-Command python -ErrorAction SilentlyContinue) { $candidates += , @('python') }
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        foreach ($v in $SupportedPython) { $candidates += , @('py', "-$v") }
+    }
+    $base = $null
+    foreach ($c in $candidates) {
+        if ($SupportedPython -contains (Get-PythonVersion @c)) { $base = $c; break }
+    }
+    if (-not $base) {
+        throw "找不到 Python $($SupportedPython -join ' / ')，请从 https://www.python.org/downloads/ 安装其中一个"
+    }
+    Write-Host "[build] 用 Python $(Get-PythonVersion @base)（$($base -join ' ')）创建打包用的虚拟环境 .venv-build"
+    Invoke-Checked @base -m venv .venv-build
 }
 $extra = if ($NoAsr) { '.' } else { '.[asr]' }
 Write-Host "[build] 安装依赖 $extra + pyinstaller + pip-licenses"
