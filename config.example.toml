@@ -46,6 +46,9 @@ base_url = "https://ark.cn-beijing.volces.com/api/v3"
 # 看图模型（可选）：填了之后会检查生成的画面（产品是否走样、是否切题）、给素材候选排序、
 # 检查成片里的手指和乱码文字。填控制台里支持图片理解的模型 ID，留空时不检查。
 # vision_model = ""
+# 单次输出上限（tokens）：不填时用下面这个预设的默认值（豆包 16384）。分镜、脚本这类长输出
+# 报「输出被截断」时调大；模型不支持这么大的值时镜匠会自动退回服务商默认值。
+# max_tokens = "16384"
 
 # DeepSeek：https://platform.deepseek.com
 [providers.llm.deepseek]
