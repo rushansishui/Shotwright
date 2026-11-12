@@ -1,4 +1,4 @@
-"""不录界面的镜头（痛点、片尾）：用网页动画做成动态画面，再用浏览器录下来。
+"""不录界面的镜头（开场介绍、痛点、章节卡、片尾）：用网页动画做成动态画面，再用浏览器录下来。
 
 每个场景是一段 HTML + CSS 动画，按配音时长排好出场节奏；文字用仓库自带的思源黑体，
 图标是内嵌的 SVG，不依赖电脑上装了什么字体。画面底部留出字幕的位置。
@@ -80,7 +80,7 @@ def _page(css: str, body: str, *, total: float, font: Path) -> str:
     return f"<!doctype html><html><head><meta charset='utf-8'><style>{base}{css}</style></head><body>{body}</body></html>"
 
 
-def pain_html(lang: str, seconds: float, font: Path) -> str:
+def pain_html(lang: str, seconds: float, font: Path, **_: str) -> str:
     data = PAIN[lang]
     step = max(0.45, min(1.1, (seconds - 1.2) / 3))
     cards = "".join(
@@ -105,7 +105,7 @@ p { font-size: 24px; line-height: 1.5; color: #CBD5E1; }
     return _page(css, body, total=seconds + 1, font=font)
 
 
-def outro_html(lang: str, seconds: float, font: Path) -> str:
+def outro_html(lang: str, seconds: float, font: Path, **_: str) -> str:
     data = OUTRO[lang]
     badges = "".join(
         f'<span style="animation-delay:{0.9 + i * 0.18:.2f}s">{badge}</span>'
@@ -130,4 +130,112 @@ def outro_html(lang: str, seconds: float, font: Path) -> str:
     return _page(css, body, total=seconds + 1, font=font)
 
 
-SCENES = {"pain": pain_html, "outro": outro_html}
+INTRO = {
+    "zh": {
+        "tagline": "开源 · 本地运行的 AI 短视频工具",
+        "script": "脚本",
+        "film": "成片",
+        "shots": ["素材库", "AI 视频", "AI 图片", "自己拍的"],
+        "shot": "镜头",
+        "auto": ["配音", "字幕", "音乐"],
+    },
+    "en": {
+        "tagline": "Open source AI video, running on your machine",
+        "script": "Script",
+        "film": "Video",
+        "shots": ["Stock", "AI video", "AI image", "Your footage"],
+        "shot": "Shot",
+        "auto": ["Voice", "Subtitles", "Music"],
+    },
+}
+
+SHOT_COLORS = ["#0EA5E9", "#DC2626", "#A855F7", "#16A34A"]
+
+DOC = (
+    '<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z" fill="none" stroke="currentColor" stroke-width="1.8" '
+    'stroke-linejoin="round"/><path d="M9 11h6M9 14.5h6M9 18h4" stroke="currentColor" stroke-width="1.8" '
+    'stroke-linecap="round"/></svg>'
+)
+PLAY = (
+    '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3" fill="none" stroke="currentColor" '
+    'stroke-width="1.8"/><path d="M10 9.2v5.6l4.6-2.8z" fill="currentColor"/></svg>'
+)
+
+
+def intro_html(lang: str, seconds: float, font: Path, **_: str) -> str:
+    """开场：名字，然后「脚本 → 一个个镜头（各选各的画面）→ 成片」，配音、字幕、音乐自动接上。"""
+    data = INTRO[lang]
+    beat = max(0.35, min(0.9, (seconds - 2.0) / 9))
+    t0 = 1.0
+    tiles = "".join(
+        f"""<div class="tile" style="animation-delay:{t0 + beat * (2 + i * 0.6):.2f}s;--c:{SHOT_COLORS[i]}">
+              <b>{data["shot"]} {i + 1}</b><span>{name}</span></div>"""
+        for i, name in enumerate(data["shots"])
+    )
+    autos = "".join(
+        f'<span style="animation-delay:{t0 + beat * (6.4 + i * 0.4):.2f}s">{name}</span>'
+        for i, name in enumerate(data["auto"])
+    )
+    css = """
+.head { display: flex; align-items: center; gap: 22px; opacity: 0; animation: rise .6s ease-out .1s forwards; }
+.logo { width: 76px; height: 76px; border-radius: 20px; background: #DC2626; display: grid; place-items: center;
+  box-shadow: 0 14px 40px rgba(220, 38, 38, .45); }
+.logo i { width: 40px; height: 40px; border: 6px solid #fff; border-radius: 10px; display: block; }
+.name { font-size: 58px; font-weight: 800; }
+.name small { font-size: 36px; color: #CBD5E1; margin-left: 12px; font-weight: 600; }
+.tagline { font-size: 26px; color: #E2E8F0; opacity: 0; animation: fade .6s ease-out .5s forwards; }
+.flow { display: flex; align-items: center; gap: 18px; margin-top: 10px; }
+.node { width: 150px; height: 150px; border-radius: 22px; background: rgba(15,23,42,.75);
+  border: 1px solid rgba(255,255,255,.18); display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 10px; font-size: 26px; font-weight: 700; opacity: 0;
+  animation: rise .5s cubic-bezier(.2,.8,.2,1) forwards; }
+.node svg { width: 56px; height: 56px; color: #FDE68A; }
+.arrow { font-size: 40px; color: #94A3B8; opacity: 0; animation: fade .4s ease-out forwards; }
+.tiles { display: grid; grid-template-columns: repeat(4, 118px); gap: 12px; }
+.tile { height: 150px; border-radius: 16px; background: rgba(15,23,42,.8); border: 2px solid var(--c);
+  display: flex; flex-direction: column; justify-content: space-between; padding: 14px 12px; opacity: 0;
+  animation: rise .45s cubic-bezier(.2,.8,.2,1) forwards; box-shadow: 0 10px 30px rgba(0,0,0,.3); }
+.tile b { font-size: 18px; color: #CBD5E1; font-weight: 600; }
+.tile span { font-size: 21px; font-weight: 800; color: var(--c); line-height: 1.2; }
+.autos { display: flex; gap: 14px; }
+.autos span { padding: 8px 20px; border-radius: 999px; font-size: 22px; background: rgba(255,255,255,.08);
+  border: 1px solid rgba(255,255,255,.22); opacity: 0; animation: rise .45s ease-out forwards; }
+"""
+    cn = "<small>镜匠</small>" if lang == "zh" else ""
+    body = f"""<div class="bg"></div><div class="stage" style="gap:26px">
+<div class="head"><div class="logo"><i></i></div><div class="name">Shotwright{cn}</div></div>
+<div class="tagline">{data["tagline"]}</div>
+<div class="flow">
+  <div class="node" style="animation-delay:{t0 + beat * 0.6:.2f}s">{DOC}{data["script"]}</div>
+  <div class="arrow" style="animation-delay:{t0 + beat * 1.4:.2f}s">→</div>
+  <div class="tiles">{tiles}</div>
+  <div class="arrow" style="animation-delay:{t0 + beat * 5.0:.2f}s">→</div>
+  <div class="node" style="animation-delay:{t0 + beat * 5.6:.2f}s">{PLAY}{data["film"]}</div>
+</div>
+<div class="autos">{autos}</div></div>"""
+    return _page(css, body, total=seconds + 1, font=font)
+
+
+def chapter_html(lang: str, seconds: float, font: Path, card: str = "", **_: str) -> str:
+    """章节卡：大号编号和章节名，一条红线从左往右画出来。``card`` 是「01|章节名」。"""
+    number, _sep, title = card.partition("|")
+    kicker = f"第 {int(number)} 部分" if lang == "zh" and number.isdigit() else f"Part {int(number)}"
+    if number.isdigit() and int(number) == 7 and lang == "zh":
+        kicker = "最后"
+    css = """
+.stage { align-items: flex-start; padding-left: 170px; gap: 18px; }
+.num { font-size: 150px; font-weight: 900; line-height: 1; color: #DC2626; letter-spacing: -.02em;
+  opacity: 0; animation: rise .5s cubic-bezier(.2,.8,.2,1) .05s forwards; }
+.kicker { font-size: 28px; letter-spacing: .14em; color: #FCA5A5; opacity: 0; animation: fade .5s ease-out .25s forwards; }
+.title { font-size: 72px; font-weight: 800; opacity: 0; animation: rise .55s ease-out .35s forwards; }
+.line { height: 6px; width: 0; border-radius: 3px; background: linear-gradient(90deg, #DC2626, #F59E0B);
+  animation: grow .9s cubic-bezier(.2,.8,.2,1) .5s forwards; }
+@keyframes grow { to { width: 520px; } }
+"""
+    body = f"""<div class="bg"></div><div class="stage">
+<div class="num">{number}</div><div class="kicker">{kicker}</div><div class="title">{title}</div>
+<div class="line"></div></div>"""
+    return _page(css, body, total=seconds + 1, font=font)
+
+
+SCENES = {"intro": intro_html, "pain": pain_html, "chapter": chapter_html, "outro": outro_html}
