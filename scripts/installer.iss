@@ -11,6 +11,7 @@
 #define AppName "Shotwright"
 #define AppPublisher "Shotwright"
 #define AppExeName "Shotwright.exe"
+#define AppURL "https://github.com/rushansishui/Shotwright"
 
 [Setup]
 AppId={{6F1B2C74-2A4E-4B57-9C1D-8E3A5D2F7B10}
@@ -18,6 +19,10 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
 AppPublisher={#AppPublisher}
+; 显示在「应用和功能」里的项目主页、支持和更新链接。
+AppPublisherURL={#AppURL}
+AppSupportURL={#AppURL}/issues
+AppUpdatesURL={#AppURL}/releases/latest
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
@@ -27,6 +32,8 @@ Compression=lzma2/max
 SolidCompression=yes
 LZMANumBlockThreads=4
 WizardStyle=modern
+; 系统语言能匹配到安装界面的语言时直接用，不再弹出选择语言的对话框。
+ShowLanguageDialog=auto
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
@@ -41,9 +48,13 @@ SetupIconFile=..\resources\icon.ico
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
-; 简体中文语言文件不是每个 Inno Setup 版本都自带，有就用。
-#if FileExists(CompilerPath + "Languages\ChineseSimplified.isl")
-Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+; Inno Setup 6 不自带简体中文（只在非官方翻译里），所以把语言文件放在仓库里：
+; scripts\ChineseSimplified.isl，来自 jrsoftware/issrc 的 is-6_7_0 标签
+; （Files/Languages/Unofficial，适用于 Inno Setup 6.5.0+），已加 UTF-8 BOM。
+#if Ver >= EncodeVer(6, 5, 0)
+Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
+#else
+  #pragma warning "Inno Setup 低于 6.5，安装界面不带简体中文；请升级到最新的 Inno Setup 6"
 #endif
 
 [Tasks]

@@ -3,14 +3,19 @@
 用法（仓库根目录）::
 
     pip install -e ".[promo]" && python -m playwright install chromium   # 只需一次
-    python scripts/promo/make_promo.py --demo f8ujye85mn4r --lang zh
-    python scripts/promo/make_promo.py --demo f8ujye85mn4r --lang en
+    python scripts/promo/make_promo.py --demo f8ujye85mn4r --lang zh                   # 1–2 分钟宣传片
+    python scripts/promo/make_promo.py --demo f8ujye85mn4r --lang en --edition long    # 3–5 分钟功能讲解
 
 ``--demo`` 是一个做好的演示项目（用过 AI 生成、有参考图、有另一种语言的版本）。脚本把它
 和它的语言版本复制到 ``storage/promo`` 里再操作，原项目不受影响；录屏只看、只点不花钱
 的按钮。配音默认用免费的 Edge（需要联网），``--tts silent`` 可以离线试跑整个流程。
 
-成片输出到 ``storage/promo/promo-<语言>.mp4``。分镜和口播在 storyboard.py 里改。
+剪辑页那一段要用一个「按说的话剪」、已经识别过原片的剪辑项目：默认自动找语言相同、
+最近改过的那个，也可以用 ``--cut-demo`` 指定。
+
+成片输出到 ``storage/promo/promo-<版本>-<语言>.mp4``；功能讲解版同时写出
+``chapters-<版本>-<语言>.txt``（视频章节时间轴，贴进 YouTube / B 站的简介）。
+分镜和口播在 storyboard.py 里改。
 """
 
 from __future__ import annotations
@@ -32,7 +37,7 @@ ROOT = HERE.parent.parent
 sys.path[:0] = [str(HERE), str(ROOT)]
 
 from recorder import Demo, Recorder, finish  # noqa: E402
-from storyboard import SHOTS  # noqa: E402
+from storyboard import EDITIONS  # noqa: E402
 
 VOICES = {"zh": "zh-CN-YunxiNeural", "en": "en-US-AndrewNeural"}
 LANGUAGES = {"zh": "zh-CN", "en": "en-US"}
@@ -122,6 +127,49 @@ def find_version(storage: Path, project_id: str) -> str | None:
     return None
 
 
+def find_cut_demo(storage: Path, lang: str) -> tuple[str, str] | None:
+    """语言相同、识别过原片的剪辑项目里最近改过的那个：（项目 id，原片素材 id）。"""
+    found: list[tuple[float, str, str]] = []
+    for path in storage.glob("*/project.json"):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("origin") != "cut" or not str(data.get("language", "")).startswith(LANGUAGES[lang][:2]):
+            continue
+        asset = transcribed_asset(path.parent)
+        if asset:
+            found.append((data.get("updated_at") or 0, data["id"], asset))
+    if not found:
+        return None
+    _, project_id, asset = max(found)
+    return project_id, asset
+
+
+def transcribed_asset(folder: Path) -> str | None:
+    """项目里识别完成的原片素材 id。"""
+    for item in sorted((folder / "cache" / "transcripts").glob("*.json")):
+        try:
+            data = json.loads(item.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if data.get("state") == "done" and data.get("words"):
+            return item.stem
+    return None
+
+
+def write_chapters(path: Path, shots, timings: list[dict], ids: list[str], lang: str) -> None:
+    """按章节卡在成片里的起点写出视频章节（YouTube / B 站简介里用）。第一条必须从 00:00 开始。"""
+    starts = {item["shot_id"]: item["start"] for item in timings}
+    lines = [("00:00", "开场" if lang == "zh" else "Intro")]
+    for item, shot_id in zip(shots, ids, strict=True):
+        if item.action == "chapter" and shot_id in starts:
+            seconds = int(starts[shot_id])
+            lines.append((f"{seconds // 60:02d}:{seconds % 60:02d}", item.card.partition("|")[2]))
+    outro = next((sid for item, sid in zip(shots, ids, strict=True) if item.action == "outro"), None)
+    if outro in starts:
+        seconds = int(starts[outro])
+        lines.append((f"{seconds // 60:02d}:{seconds % 60:02d}", "下载与开源" if lang == "zh" else "Get it"))
+    path.write_text("\n".join(f"{stamp} {name}" for stamp, name in lines) + "\n", encoding="utf-8")
+
+
 def latest_video(storage: Path, project_id: str) -> Path:
     renders = sorted(
         (storage / project_id / "renders").glob("*/video.mp4"), key=lambda p: p.stat().st_mtime, reverse=True
@@ -140,6 +188,38 @@ def ensure_web_build() -> None:
         return
     log("网页界面有更新，先重新构建（npm run build）…")
     subprocess.run("npm run build", cwd=web, shell=True, check=True)
+
+
+def check_edge(voice: str, work: Path) -> None:
+    """开跑前先用 Edge 配一句短话：连不上就早点说清楚，不用等录到一半才失败。"""
+    from shotwright.config import load_settings
+    from shotwright.providers import registry
+    from shotwright.providers.base import ProviderError
+
+    previous = Path.cwd()
+    os.chdir(ROOT)  # config.toml 在仓库根目录
+    try:
+        settings = load_settings()
+    finally:
+        os.chdir(previous)
+    tts = registry.create("tts", "edge", settings)
+    try:
+        tts.synthesize(
+            "你好" if voice.startswith("zh") else "Hello",
+            voice=voice,
+            rate=1.0,
+            volume=1.0,
+            output=work / "edge-check.mp3",
+        )
+    except ProviderError as exc:
+        proxy = f"现在用的代理：{settings.proxy}" if settings.proxy else "现在没有设代理"
+        raise SystemExit(
+            f"{exc}\n连不上 Edge 在线配音（{proxy}）。可以：\n"
+            "  1. 过一会儿再试（Edge 是免费公共服务，偶尔会超时）；\n"
+            '  2. 需要代理时，在 config.toml 的 [app] 里填 proxy = "http://127.0.0.1:7890"（换成你的代理端口）；\n'
+            "  3. 先加 --tts silent 离线把流程跑通。"
+        ) from exc
+    log("Edge 配音连接正常")
 
 
 def start_server(storage: Path, port: int, tts: str) -> subprocess.Popen:
@@ -175,9 +255,13 @@ def grid_clip(
         "box=1:boxcolor=black@0.55:boxborderw=14"
     )
     chain = (
-        f"[0:v]scale=940:-2,{label.format(font=font.as_posix(), text=labels[0])}[a];"
-        f"[1:v]scale=940:-2,{label.format(font=font.as_posix(), text=labels[1])}[b];"
-        "[a][b]hstack=inputs=2,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=#0B0F19,fps=30[v]"
+        # 横屏、竖屏都放得下：缩进 920×760 的框里，上面留给小标题、底部留给宣传片自己的字幕，
+        # 免得和成片里原有的字幕叠在一起
+        "[0:v]scale=920:760:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2,"
+        f"{label.format(font=font.as_posix(), text=labels[0])}[a];"
+        "[1:v]scale=920:760:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2,"
+        f"{label.format(font=font.as_posix(), text=labels[1])}[b];"
+        "[a][b]hstack=inputs=2,pad=1920:1080:(ow-iw)/2:150:color=#0B1020,fps=30[v]"
     )
     subprocess.run(
         [
@@ -223,6 +307,13 @@ def main() -> int:
     )
     parser.add_argument("--demo", required=True, help="演示项目 id（任一语言版本都行）")
     parser.add_argument("--lang", choices=("zh", "en"), default="zh", help="宣传片语言（界面、配音、字幕）")
+    parser.add_argument(
+        "--edition",
+        choices=tuple(EDITIONS),
+        default="short",
+        help="short：1–2 分钟宣传片；long：3–5 分钟功能讲解",
+    )
+    parser.add_argument("--cut-demo", help="演示剪辑页用的剪辑项目 id（默认自动找识别过原片、语言相同的）")
     parser.add_argument("--source", default="storage/projects", help="演示项目所在的数据目录")
     parser.add_argument("--work", default="storage/promo", help="工作目录（每次运行会清空重建）")
     parser.add_argument("--tts", choices=("edge", "silent"), default="edge", help="silent：离线试跑，不出声")
@@ -256,9 +347,27 @@ def main() -> int:
     for project_id in (demo_id, other_id):
         link_tree(source / project_id, storage / project_id)
     log(f"演示项目 {demo_id}，另一种语言 {other_id}")
+    shots = EDITIONS[options.edition][options.lang]
+    cut_id = cut_asset = ""
+    if any(item.action == "cut" for item in shots):
+        if options.cut_demo:
+            cut_id = options.cut_demo
+            cut_asset = transcribed_asset(source / cut_id) or ""
+        else:
+            cut_id, cut_asset = find_cut_demo(source, options.lang) or ("", "")
+        if cut_id and cut_asset:
+            if cut_id not in (demo_id, other_id):
+                link_tree(source / cut_id, storage / cut_id)
+            log(f"剪辑页演示项目 {cut_id}（原片 {cut_asset}）")
+        else:
+            log("没找到识别过原片的剪辑项目，跳过剪辑页那一段（可以用 --cut-demo 指定）")
+            shots = [item for item in shots if item.action != "cut"]
+            cut_id = cut_asset = ""
 
     ensure_web_build()
     port = free_port()
+    if options.tts == "edge":
+        check_edge(options.voice or VOICES[options.lang], work)
     server = start_server(storage, port, options.tts)
     base = f"http://127.0.0.1:{port}"
     api = Api(base)
@@ -266,14 +375,17 @@ def main() -> int:
     try:
         # 2. 演示「改一句」用的副本；宣传片项目
         edit_copy = api.call("POST", f"/projects/{demo_id}/duplicate", {})["id"]
-        shots = SHOTS[options.lang]
         voice = options.voice or VOICES[options.lang]
         project = api.call(
             "POST",
             "/projects",
             {
                 "mode": "empty",
-                "title": "Shotwright 宣传片" if options.lang == "zh" else "Shotwright promo",
+                "title": (
+                    ("Shotwright 功能讲解" if options.edition == "long" else "Shotwright 宣传片")
+                    if options.lang == "zh"
+                    else ("Shotwright walkthrough" if options.edition == "long" else "Shotwright promo")
+                ),
                 "language": LANGUAGES[options.lang],
                 "canvas": {"aspect": "16:9"},
                 "voice": {"provider": "silent" if options.tts == "silent" else "edge", "voice": voice},
@@ -316,7 +428,16 @@ def main() -> int:
         # 4. 每个镜头的画面
         clips = work / "clips"
         clips.mkdir(exist_ok=True)
-        demo = Demo(base, options.lang, demo_id, other_id, edit_copy, NEW_LINE[options.lang])
+        demo = Demo(
+            base,
+            options.lang,
+            demo_id,
+            other_id,
+            edit_copy,
+            NEW_LINE[options.lang],
+            cut_project=cut_id,
+            cut_asset=cut_asset,
+        )
         only = set(options.only.split(",")) if options.only else None
         for index, (item, shot_id) in enumerate(zip(shots, ids, strict=True), start=1):
             length = seconds[shot_id]
@@ -325,7 +446,9 @@ def main() -> int:
                 if recorder is None:
                     recorder = Recorder(demo, work / "raw", headless=not options.headed)
                 log(f"动画 {index}/{len(shots)}：{item.action}（{length:.1f} 秒）")
-                clip = recorder.record_scene(item.action, length, ROOT / font)
+                clip = recorder.record_scene(
+                    item.action, length, ROOT / font, card=item.card, tag=f"-{index:02d}"
+                )
                 finish(clip, length, out, font=font)
             elif item.kind == "grid":
                 names = ("中文", "English") if options.lang == "zh" else ("Chinese", "English")
@@ -350,8 +473,13 @@ def main() -> int:
         log("渲染成片…")
         api.render(pid, options.quality)
         final = latest_video(storage, pid)
-        target = work / f"promo-{options.lang}.mp4"
+        target = work / f"promo-{options.edition}-{options.lang}.mp4"
         shutil.copyfile(final, target)
+        if any(item.action == "chapter" for item in shots):
+            render = api.call("GET", f"/projects/{pid}/renders")["renders"][0]
+            chapters = work / f"chapters-{options.edition}-{options.lang}.txt"
+            write_chapters(chapters, shots, render["timings"], ids, options.lang)
+            log(f"章节时间轴：{chapters}")
         log(f"完成：{target}")
     finally:
         if recorder is not None:

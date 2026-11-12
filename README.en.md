@@ -10,6 +10,8 @@ Shotwright is built around the *shot*. The script is split into shots, and each 
 
 > Current version: v0.4.0. All v0.4 "product ads" and "video quality" features are built and being tested (editing a clip with a prompt needs a model that supports video-to-video, such as Seedance 2.5). In v0.5 "delivery and efficiency", the first-run wizard, configuring services in the UI, the extra AI video services, the Cut page, the review page, keyframes first by default, the pre-generation check, the free whole-cut preview, per-shot spend limits, brand packs and the subject library, and the Windows installer are done; the rest is in progress. See the [roadmap](docs/ROADMAP.md).
 
+**⬇️ One-click Windows install: [Download Shotwright-setup.exe](https://github.com/rushansishui/Shotwright/releases/latest/download/Shotwright-setup.exe)** (Windows 10 / 11 64-bit, just run it, nothing else to install) · [All releases](https://github.com/rushansishui/Shotwright/releases)
+
 ![Demo: write a brief, edit the storyboard, trim a clip, preview the video](docs/images/demo-en.gif)
 
 <!-- Sample videos: put 2–3 finished videos made with Shotwright here (15–30 s, portrait, one Chinese and one English).
@@ -112,9 +114,13 @@ Most disk space goes to assets: projects using AI video and 1080p stock footage 
 
 ## Quick start
 
-**Windows installer**: download `Shotwright-<version>-setup.exe` and run it. No admin rights needed, and no separate Python, Node.js or FFmpeg install (they are bundled). Open it from the Start menu or desktop icon: a server window appears and your browser opens; closing the window stops the server. Settings, projects and logs live in `%LOCALAPPDATA%\Shotwright` (“Shotwright Data” in the Start menu) and survive uninstalls and upgrades. If something goes wrong, run `Shotwright.exe doctor` in a terminal to check the environment.
+**Windows installer**: [download the latest Shotwright-setup.exe](https://github.com/rushansishui/Shotwright/releases/latest/download/Shotwright-setup.exe) (or the versioned `Shotwright-<version>-setup.exe` from the [Releases](https://github.com/rushansishui/Shotwright/releases/latest) page) and run it. No admin rights needed, and no separate Python, Node.js or FFmpeg install (they are bundled). Open it from the Start menu or desktop icon: a server window appears and your browser opens; closing the window stops the server. Settings, projects and logs live in `%LOCALAPPDATA%\Shotwright` (“Shotwright Data” in the Start menu) and survive uninstalls and upgrades. If something goes wrong, run `Shotwright.exe doctor` in a terminal to check the environment.
 
-To build it yourself, run `powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1` from the repository root (needs Python 3.11+, Node.js 20+ and [Inno Setup 6](https://jrsoftware.org/isdl.php); FFmpeg is downloaded automatically). The installer lands in `dist\installer\`.
+> The installer is not code-signed yet, so Windows may show "Windows protected your PC". Click "More info" → "Run anyway".
+
+Publishing a release (maintainers): set the same new version in `pyproject.toml` and `web/package.json` and push to `main`, then `git tag v<version>` and `git push origin v<version>`. GitHub Actions checks that the tag and both version numbers match, then builds and tests the installer and attaches it to the Release; the download link above always points to the newest one.
+
+To build it yourself, run `powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1` from the repository root (needs Python 3.11+, Node.js 20+ and [Inno Setup 6.5+](https://jrsoftware.org/isdl.php); a pinned FFmpeg version is downloaded and checksum-verified automatically). The installer lands in `dist\installer\`.
 
 **Windows from source**: install Python 3.11+, FFmpeg and Node.js (`start.bat` prints the `winget` command for anything missing), then double-click `start.bat`. The first run creates a virtual environment, installs dependencies, builds the web UI and opens your browser.
 

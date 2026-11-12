@@ -10,6 +10,8 @@ Shotwright 以"镜头"为核心：文案被拆成一个个镜头，每个镜头�
 
 > 当前版本：v0.4.0。v0.4「商品广告」与「视频质量专项」的功能已全部开发完成，正在实测（用提示词改画面需要支持视频改视频的模型，如 Seedance 2.5）。v0.5「交付与效率」已完成首次启动向导、界面配置服务、多家 AI 视频服务、剪辑页、审片页、关键帧默认先行、生成前检查、整片样片、单镜头花费上限、品牌包与主体库和 Windows 安装包，其余在做。路线图见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
+**⬇️ Windows 一键安装：[下载 Shotwright-setup.exe](https://github.com/rushansishui/Shotwright/releases/latest/download/Shotwright-setup.exe)**（Windows 10 / 11 64 位，双击安装，不用另装任何环境）· [所有版本](https://github.com/rushansishui/Shotwright/releases)
+
 ![演示：说想法、分步编辑分镜、按文字剪辑、预览成片](docs/images/demo-zh.gif)
 
 <!-- 成片示例：放 2–3 条用 Shotwright 做的成片（建议 15–30 秒、竖屏、中英文各一条）。
@@ -113,9 +115,13 @@ AI 写文案、AI 视频 / 图片和配音都在云端完成，本机只负责�
 
 ## 快速开始
 
-**Windows 安装包**：下载 `Shotwright-<版本>-setup.exe` 双击安装，不需要管理员权限，也不用另装 Python、Node.js 和 FFmpeg（都已打包在内）。装好后从开始菜单或桌面图标打开，会弹出一个服务窗口并自动打开浏览器，关掉窗口就停止服务。配置、项目和日志放在 `%LOCALAPPDATA%\Shotwright`（开始菜单里的「Shotwright Data」），卸载和升级都不会删掉。遇到问题可以在命令行运行 `Shotwright.exe doctor` 检查环境。
+**Windows 安装包**：[下载最新版 Shotwright-setup.exe](https://github.com/rushansishui/Shotwright/releases/latest/download/Shotwright-setup.exe)（或在 [Releases](https://github.com/rushansishui/Shotwright/releases/latest) 页面下载带版本号的 `Shotwright-<版本>-setup.exe`），双击安装，不需要管理员权限，也不用另装 Python、Node.js 和 FFmpeg（都已打包在内）。装好后从开始菜单或桌面图标打开，会弹出一个服务窗口并自动打开浏览器，关掉窗口就停止服务。配置、项目和日志放在 `%LOCALAPPDATA%\Shotwright`（开始菜单里的「Shotwright Data」），卸载和升级都不会删掉。遇到问题可以在命令行运行 `Shotwright.exe doctor` 检查环境。
 
-自己打包：在仓库根目录运行 `powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1`（需要 Python 3.11+、Node.js 20+ 和 [Inno Setup 6](https://jrsoftware.org/isdl.php)；FFmpeg 会自动下载），安装包输出到 `dist\installer\`。
+> 安装包暂未做代码签名，双击时 Windows 可能提示「Windows 已保护你的电脑」：点「更多信息」→「仍要运行」即可。
+
+发布新版本（维护者）：把 `pyproject.toml` 和 `web/package.json` 里的版本号改成一样的新版本并推到 `main`，然后 `git tag v<版本>` 再 `git push origin v<版本>`。GitHub Actions 会先检查标签和两处版本号是否一致，再自动打包、安装测试，并把安装包附到 Release 上，上面的下载链接自动指向最新版。
+
+自己打包：在仓库根目录运行 `powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1`（需要 Python 3.11+、Node.js 20+ 和 [Inno Setup 6.5+](https://jrsoftware.org/isdl.php)；FFmpeg 会自动下载固定版本并校验），安装包输出到 `dist\installer\`。
 
 **Windows 从源码运行**：装好 Python 3.11+、FFmpeg 和 Node.js（`start.bat` 缺哪个会提示对应的 `winget` 安装命令），双击 `start.bat`。第一次启动会自动建虚拟环境、装依赖、构建网页界面并打开浏览器。
 

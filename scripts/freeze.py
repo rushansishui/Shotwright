@@ -7,6 +7,9 @@ Windows 安装包（scripts/build-installer.ps1）和 CI 都调用这里，打�
 
 ``--ffmpeg-dir`` 指向含 ffmpeg / ffprobe 可执行文件的目录时，一起放进 dist/Shotwright/ffmpeg/，
 安装后不用另装 FFmpeg。
+
+程序目录里还会放上 LICENSE 和 NOTICE.md（第三方声明）；第三方 Python 库的许可证
+（THIRD_PARTY_LICENSES.txt）由 scripts/build-installer.ps1 在冻结后生成。
 """
 
 from __future__ import annotations
@@ -118,9 +121,13 @@ def main() -> int:
             if not path.is_file():
                 raise SystemExit(f"找不到 {path}")
             shutil.copy2(path, target / path.name)
+        # FFmpeg 是 GPL 授权：许可证和写着源码地址的 README 要随程序一起分发。
         for extra in ("LICENSE", "LICENSE.txt", "README.txt"):
             if (source / extra).is_file():
                 shutil.copy2(source / extra, target / f"FFmpeg-{extra}")
+    # Shotwright 自己的许可证和第三方声明，放在 Shotwright.exe 旁边。
+    for name in ("LICENSE", "NOTICE.md"):
+        shutil.copy2(ROOT / name, out / name)
     print(f"[freeze] 完成：{out}")
     return 0
 

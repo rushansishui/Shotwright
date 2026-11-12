@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from storyboard import DEMO_SCRIPT
+from storyboard import DEMO_BRIEF, DEMO_IDEA, DEMO_SCRIPT
 
 VIEWPORT = {"width": 1280, "height": 720}
 """按 1280×720 的窗口排版和录制，导出时放大到 1920×1080：界面文字在视频里够大。
@@ -58,6 +58,18 @@ LABELS = {
     "ai_fix": r"让 AI 按建议改写描述|Let AI rewrite it",
     "keyframes": r"先出 3 张关键帧|3 keyframes first",
     "translate": r"翻译并生成|Translate",
+    "normalize": r"整理成诉求|整理成完整诉求|Turn into a brief|Write the brief",
+    "write_script": r"写口播脚本|Write the script|Write script",
+    "board": r"^(分镜表|Storyboard table)$",
+    "prompts": r"^(提示词|Prompts)$",
+    "prompt_edit": r"^(改这段|Edit this prompt)$",
+    "review": r"^(审片|Review)$",
+    "approve": r"^(✓ )?(通过|Approve)",
+    "sample": r"先看整片样片|Preview the whole cut",
+    "fillers": r"勾掉语气词|Remove filler words",
+    "undo": r"^(撤销|Undo)$",
+    "find": r"^(查找替换|Find & replace)$",
+    "csv": r"导出 CSV|Export CSV",
 }
 
 
@@ -78,6 +90,10 @@ class Demo:
     new_line: str
     """「改一句」时换上的新文案。"""
     fonts_dir: Path = Path("resources/fonts")
+    cut_project: str = ""
+    """演示「按说的话剪」的剪辑项目（识别过原片），没有时跳过剪辑页那一段。"""
+    cut_asset: str = ""
+    """剪辑项目里识别过的原片素材 id。"""
 
 
 @dataclass
@@ -292,14 +308,259 @@ def act_settings(s: Session, demo: Demo) -> None:
     s.scroll(600, seconds=2.4)
 
 
+def idea_draft(lang: str) -> str:
+    """打开首页时停在「说想法」这一步、想法还空着的草稿。"""
+    import json
+
+    draft = {
+        "step": 1,
+        "idea": "",
+        "subject": "",
+        "title": "",
+        "lines": [],
+        "videoType": "product_ad",
+        "aspect": "9:16",
+        "duration": 20,
+        "language": "zh-CN" if lang == "zh" else "en-US",
+    }
+    return f"try {{ localStorage.setItem('shotwright.newVideoDraft', {json.dumps(json.dumps(draft))}); }} catch (e) {{}}"
+
+
+def mock_brief(context, lang: str) -> None:
+    """「说想法」那一段不调用大模型：拦下判断设置、整理诉求的请求，直接返回准备好的结果。
+
+    界面、按钮、步骤都是真实的，只是 AI 的回答换成固定的一段，录出来每次都一样、不花钱。
+    服务列表里也标成配好了文字模型，没配置的电脑上也能录到正常的新建流程。
+    """
+    import json
+
+    def fulfill(route, body: dict, delay: float) -> None:
+        time.sleep(delay)  # 留出「整理中…」的样子
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(body, ensure_ascii=False))
+
+    context.route(
+        "**/api/v2/brief/decide",
+        lambda route: fulfill(
+            route, {"video_type": "product_ad", "duration": 20, "aspect": "9:16", "reason": ""}, 0.4
+        ),
+    )
+    context.route("**/api/v2/brief/normalize", lambda route: fulfill(route, {"brief": DEMO_BRIEF[lang]}, 1.4))
+
+    def providers(route) -> None:
+        response = route.fetch()
+        data = response.json()
+        llm = data.get("llm") or []
+        if not any(item.get("default") and item.get("configured") for item in llm):
+            data["llm"] = [
+                {**item, "default": index == 0, "configured": True} for index, item in enumerate(llm)
+            ] or [{"id": "openai", "name": "LLM", "default": True, "configured": True}]
+        route.fulfill(response=response, body=json.dumps(data, ensure_ascii=False))
+
+    context.route("**/api/v2/providers", providers)
+
+
+def act_idea(s: Session, demo: Demo) -> None:
+    page = s.page
+    box = page.locator("#idea")
+    if not s.visible(box, 4):
+        raise RuntimeError("首页没有停在「说想法」这一步")
+    s.click(box)
+    page.keyboard.type(DEMO_IDEA[demo.lang], delay=28 if demo.lang == "zh" else 14)
+    s.pause(0.5)
+    s.click(page.locator(".flow-actions .btn.primary").first)
+    subject = page.locator("#subject")
+    if not s.visible(subject, 8):
+        return
+    s.pause(0.6)
+    s.hover(subject, 0.8)
+    # 诉求里【待补充】那一行：滚到它，光标放过去
+    subject.evaluate("e => { e.scrollTop = e.scrollHeight * 0.35; }")
+    s.pause(0.8)
+    s.hover(page.locator(".flow-actions .btn.primary").first, 0.9)
+
+
+def act_board(s: Session, demo: Demo) -> None:
+    page = s.page
+    s.click(s.button("board"))
+    table = page.locator(".board-table, .board").first
+    if not s.visible(table, 4):
+        return
+    s.pause(0.6)
+    s.hover(page.locator(".board-thumb").first, 0.7)
+    s.hover(page.locator(".board-table td.col-visual, .col-visual").nth(1), 0.8)
+    s.hover(page.locator(".board-table td.col-source, .col-source").nth(1), 0.8)
+    s.scroll(360, seconds=1.6)
+    s.pause(0.4)
+    csv = s.button("csv")
+    if s.visible(csv, 0.5):
+        s.hover(csv, 0.9)
+
+
+def act_look(s: Session, demo: Demo) -> None:
+    page = s.page
+    ready = page.locator(".readiness").first
+    if s.visible(ready, 3):
+        s.scroll_to(ready, seconds=0.8)
+        for index in range(min(3, page.locator(".readiness-list > *").count())):
+            s.hover(page.locator(".readiness-list > *").nth(index), 0.45)
+    subject = page.locator(".look-subject").first
+    if s.visible(subject, 2):
+        s.scroll_to(subject, seconds=1.0)
+        images = subject.locator(".look-image-cell, .look-image")
+        for index in range(min(4, images.count())):
+            s.hover(images.nth(index), 0.45)
+        s.scroll(320, seconds=1.4)
+    s.pause(0.5)
+
+
+def act_prompts(s: Session, demo: Demo) -> None:
+    page = s.page
+    s.click(s.button("prompts"))
+    block = page.locator(".prompt-block").first
+    if not s.visible(block, 5):
+        return
+    s.pause(0.5)
+    s.hover(block.locator(".prompt-meta, .prompt-head").first, 0.8)
+    s.hover(block.locator(".prompt-text").first, 1.0)
+    edit = block.get_by_role("button", name=re.compile(LABELS["prompt_edit"]))
+    if s.visible(edit, 0.8):
+        s.click(edit)
+        area = block.locator("textarea").first
+        if s.visible(area, 2):
+            s.click(area)
+            page.keyboard.press("Control+End")
+            s.pause(1.2)
+            page.keyboard.press("Escape")  # 不保存：只演示可以整段改
+            s.pause(0.5)
+    s.scroll(420, seconds=1.4)
+
+
+def act_cost(s: Session, demo: Demo) -> None:
+    page = s.page
+    side = page.locator("aside.side")
+    delivery = side.locator(".delivery button, .delivery label")
+    if delivery.count() > 2:
+        s.hover(delivery.nth(1), 0.5)
+        s.hover(delivery.nth(delivery.count() - 1), 0.5)
+    cost = side.get_by_text(re.compile(r"累计约|AI generation so far|spent", re.I)).first
+    if s.visible(cost, 1.5):
+        s.hover(cost, 1.0)
+    metrics = side.locator(".spend-metrics summary, .spend-metrics").first
+    if s.visible(metrics, 1):
+        s.click(metrics)
+        s.pause(0.8)
+    budget = side.locator(".budget input, .inline-field.budget").first
+    if s.visible(budget, 1):
+        s.hover(budget, 0.8)
+    sample = side.get_by_role("button", name=re.compile(LABELS["sample"])).first
+    if s.visible(sample, 1):
+        s.hover(sample, 1.2)  # 只指一下：点了会跑一遍样片
+
+
+def act_review(s: Session, demo: Demo) -> None:
+    page = s.page
+    s.click(s.button("review"))
+    rows = page.locator(".review-row")
+    if not s.visible(rows.first, 4):
+        return
+    s.pause(0.5)
+    s.hover(rows.first.locator(".review-takes, .review-take").first, 0.8)
+    approve = rows.first.get_by_role("button", name=re.compile(LABELS["approve"]))
+    if s.visible(approve, 0.8):
+        s.click(approve)  # 审片标记不花钱，只改演示副本
+        s.pause(0.4)
+    if rows.count() > 1:
+        s.scroll_to(rows.nth(1), seconds=0.9)
+        approve = rows.nth(1).get_by_role("button", name=re.compile(LABELS["approve"]))
+        if s.visible(approve, 0.8):
+            s.click(approve)
+    note = page.locator(".review-note").first
+    if s.visible(note, 0.6):
+        s.hover(note, 0.8)
+    s.scroll(300, seconds=1.2)
+
+
+def act_audio(s: Session, demo: Demo) -> None:
+    page = s.page
+    steps = page.locator(".editor-steps button")
+    # ③ 配音与字幕
+    s.click(steps.nth(2))
+    s.pause(0.5)
+    selects = page.locator(".editor-main select")
+    for index in range(min(2, selects.count())):
+        s.hover(selects.nth(index), 0.5)
+    s.scroll(420, seconds=1.4)
+    s.pause(0.4)
+    # ④ 音乐与音效
+    s.click(steps.nth(3))
+    s.pause(0.6)
+    checks = page.locator(".editor-main input[type=checkbox]")
+    for index in range(min(2, checks.count())):
+        s.hover(checks.nth(index), 0.5)
+    # ⑤ 标题与文字
+    s.click(steps.nth(4))
+    s.pause(0.6)
+    s.scroll(300, seconds=1.2)
+
+
+def act_cut(s: Session, demo: Demo) -> None:
+    page = s.page
+    words = page.locator(".cut-word")
+    if not s.visible(words.first, 6):
+        raise RuntimeError("剪辑页没有出现文稿：剪辑项目还没识别过原片？")
+    count = words.count()
+    # 点一个词：视频跳到那里
+    s.click(words.nth(min(3, count - 1)))
+    s.pause(0.6)
+    # 拖选几个词，按 Delete 删掉
+    start, stop = min(12, count - 1), min(17, count - 1)
+    if stop > start and s.move_to(words.nth(start)):
+        page.mouse.down()
+        box = words.nth(stop).bounding_box()
+        if box:
+            page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, steps=24)
+        page.mouse.up()
+        s.pause(0.5)
+        page.keyboard.press("Delete")
+        s.pause(0.9)
+    fillers = s.button("fillers")
+    if s.visible(fillers, 0.6) and fillers.is_enabled():
+        s.click(fillers)
+        s.pause(0.6)
+    stats = page.locator(".cut-stats").first
+    if s.visible(stats, 0.6):
+        s.hover(stats, 0.8)
+    undo = s.button("undo")
+    if s.visible(undo, 0.6) and undo.is_enabled():
+        s.click(undo)
+        s.pause(0.5)
+    find = s.button("find")
+    if s.visible(find, 0.6):
+        s.click(find)
+        field = page.locator(".cut-find input").first
+        if s.visible(field, 1):
+            s.click(field)
+            sample = words.nth(min(6, count - 1)).inner_text().strip(" ，。,.!?！？")[:6]
+            page.keyboard.type(sample, delay=60)
+            s.pause(0.9)
+
+
 ACTIONS: dict[str, tuple[str, Callable[[Session, Demo], None]]] = {
     # 动作名 → （起始页面，动作）。起始页面里的 {project}/{copy} 换成项目 id，#step=N 是编辑器步骤。
+    "idea": ("#/", act_idea),
     "script": ("#/", act_script),
+    "board": ("#/p/{project}#step=2", act_board),
+    "look": ("#/p/{project}#step=1", act_look),
     "shots": ("#/p/{project}#step=1", act_shots),
     "precheck": ("#/p/{project}#step=2", act_precheck),
     "rerender": ("#/p/{copy}#step=2", act_rerender),
     "versions": ("#/p/{project}#step=5", act_versions),
     "settings": ("#/p/{project}#step=2", act_settings),
+    "prompts": ("#/p/{project}#step=2", act_prompts),
+    "cost": ("#/p/{project}#step=2", act_cost),
+    "review": ("#/p/{copy}#step=2", act_review),
+    "audio": ("#/p/{project}#step=3", act_audio),
+    "cut": ("#/cut/{cut}/{cut_asset}", act_cut),
 }
 
 
@@ -342,11 +603,12 @@ class Recorder:
         self.browser.close()
         self._pw.stop()
 
-    def record_scene(self, name: str, seconds: float, font: Path) -> Clip:
-        """录一段网页动画（scenes.py），时长按配音来。"""
+    def record_scene(self, name: str, seconds: float, font: Path, *, card: str = "", tag: str = "") -> Clip:
+        """录一段网页动画（scenes.py），时长按配音来。``card`` 是章节卡上的字。"""
         from scenes import SCENES
 
-        html = SCENES[name](self.demo.lang, seconds, font)
+        html = SCENES[name](self.demo.lang, seconds, font, card=card)
+        name = f"{name}{tag}"
         page_file = self.work / f"scene-{name}.html"
         page_file.write_text(html, encoding="utf-8")
         context = self.browser.new_context(
@@ -367,7 +629,11 @@ class Recorder:
         """录一段动作，录像至少比配音长一点；返回原始录像和要保留的范围。"""
         start_page, action = ACTIONS[name]
         demo = self.demo
-        target = start_page.format(project=demo.project, copy=demo.edit_copy)
+        if name == "cut" and not demo.cut_project:
+            raise RuntimeError("没有识别过原片的剪辑项目：用 --cut-demo 指定一个")
+        target = start_page.format(
+            project=demo.project, copy=demo.edit_copy, cut=demo.cut_project, cut_asset=demo.cut_asset
+        )
         step = None
         if "#step=" in target:
             target, step_text = target.split("#step=")
@@ -382,6 +648,9 @@ class Recorder:
         context.add_init_script(CURSOR_JS)
         if name == "script":
             context.add_init_script(script_draft(demo.lang))
+        if name == "idea":
+            context.add_init_script(idea_draft(demo.lang))
+            mock_brief(context, demo.lang)
         context.add_init_script(
             f"try {{ localStorage.setItem('shotwright.ui-lang', '{demo.lang}'); }} catch (e) {{}}"
         )

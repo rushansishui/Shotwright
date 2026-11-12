@@ -303,3 +303,133 @@ def test_switching_mode_selects_that_sources_candidate(store, settings):
     visuals.switch_mode(project, shot, "stock")
     assert visuals.asset_mode(project.assets[shot.visual.selected]) == "stock"
     assert stock_id in shot.visual.candidates
+
+
+# ---- 大模型：传输层断开时的重试 -------------------------------------------------
+
+
+def _llm(handler, monkeypatch, **extra):
+    from shotwright.providers.llm.openai_compat import OpenAICompatibleLLM
+
+    real = httpx.Client
+    monkeypatch.setattr(
+        "shotwright.providers.llm.openai_compat.httpx.Client",
+        lambda **kw: real(transport=httpx.MockTransport(handler)),
+    )
+    # 重试的退避等待不让测试真的等。
+    monkeypatch.setattr("shotwright.providers.llm.openai_compat.time.sleep", lambda seconds: None)
+    return OpenAICompatibleLLM({"api_key": KEY, "base_url": "https://llm.test/v1", "model": "m", **extra})
+
+
+def test_llm_retries_when_connection_drops(monkeypatch):
+    """推理模型要等几十秒，中途被网络设备断开时应该自动重试，而不是让用户再点一次。"""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if len(calls) < 3:
+            raise httpx.RemoteProtocolError("server disconnected", request=request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    llm = _llm(handler, monkeypatch)
+    assert llm.complete([{"role": "user", "content": "hi"}]) == "ok"
+    assert len(calls) == 3
+
+
+def test_llm_reports_actionable_reason_after_retries(monkeypatch):
+    """重试用完仍失败时，错误提示要说明发生了什么、去哪里改，而不只是一个异常类名。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.RemoteProtocolError("server disconnected", request=request)
+
+    llm = _llm(handler, monkeypatch)
+    with pytest.raises(ProviderError) as info:
+        llm.complete([{"role": "user", "content": "hi"}])
+    message = str(info.value)
+    assert "连接被服务端中断" in message
+    assert "已重试 2 次" in message
+    assert "代理" in message
+
+
+def test_llm_does_not_retry_read_timeout(monkeypatch):
+    """读超时说明服务端可能已经在生成，重试会重复计费，只报错不重试。"""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        raise httpx.ReadTimeout("slow", request=request)
+
+    llm = _llm(handler, monkeypatch)
+    with pytest.raises(ProviderError, match="ReadTimeout"):
+        llm.complete([{"role": "user", "content": "hi"}])
+    assert len(calls) == 1
+
+
+# ---- 大模型：输出被截断 ---------------------------------------------------------
+
+
+def test_llm_sends_configured_max_tokens(monkeypatch):
+    """不传 max_tokens 时服务商默认值很小，30 多个镜头的分镜会被从中间砍断。"""
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+        )
+
+    llm = _llm(handler, monkeypatch, max_tokens="16384")
+    assert llm.complete([{"role": "user", "content": "hi"}]) == "ok"
+    assert seen[0]["max_tokens"] == 16384
+
+
+def test_llm_leaves_max_tokens_to_the_provider_when_unset(monkeypatch):
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+        )
+
+    _llm(handler, monkeypatch).complete([{"role": "user", "content": "hi"}])
+    assert "max_tokens" not in seen[0]
+
+
+def test_llm_explains_truncated_output_instead_of_json_error(monkeypatch):
+    """输出到上限被截断时，JSON 一定不完整；这时该说「太长了」，而不是「无法解析」。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": '{"shots": [{"text": "半句'}, "finish_reason": "length"}]
+            },
+        )
+
+    llm = _llm(handler, monkeypatch, max_tokens="8192")
+    with pytest.raises(ProviderError) as info:
+        llm.complete([{"role": "user", "content": "hi"}], json_mode=True)
+    message = str(info.value)
+    assert "输出被截断" in message
+    assert "8192" in message
+    assert "无法解析" not in message
+
+
+def test_llm_drops_max_tokens_when_the_model_rejects_it(monkeypatch):
+    """填的 max_tokens 超过这个模型的上限时，退回到服务商默认值，而不是整次失败。"""
+    calls: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        calls.append(body)
+        if "max_tokens" in body:
+            return httpx.Response(400, json={"error": {"message": "max_tokens too large"}})
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+        )
+
+    llm = _llm(handler, monkeypatch, max_tokens="999999")
+    assert llm.complete([{"role": "user", "content": "hi"}]) == "ok"
+    assert "max_tokens" in calls[0] and "max_tokens" not in calls[1]
+    assert llm.max_tokens == 0  # 之后不再重复尝试
