@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 
 from shotwright.core.languages import LANGUAGES
@@ -28,6 +29,9 @@ class EdgeTTS:
     def __init__(self, settings: dict[str, str]):
         self.proxy = settings.get("proxy") or None
         self.timeout = float(settings.get("timeout", "60"))
+        # Edge 是免费的公共服务，偶尔连接超时或断流：失败后隔几秒再试，几次都失败才报错。
+        self.retries = max(0, int(settings.get("retries", "3") or 0))
+        self.retry_wait = float(settings.get("retry_wait", "3"))
 
     def synthesize(self, text: str, *, voice: str, rate: float, volume: float, output: Path) -> SpeechResult:
         try:
@@ -36,17 +40,17 @@ class EdgeTTS:
             raise ProviderError("未安装 edge-tts") from exc
 
         output = output.with_suffix(".mp3")
-        communicate = edge_tts.Communicate(
-            text,
-            voice,
-            rate=_percent(rate),
-            volume=_percent(min(volume, 2.0)),
-            # 默认只返回整句边界；取逐词边界用于字幕对齐。
-            boundary="WordBoundary",
-            proxy=self.proxy,
-        )
 
         async def _save() -> list[WordTiming]:
+            communicate = edge_tts.Communicate(
+                text,
+                voice,
+                rate=_percent(rate),
+                volume=_percent(min(volume, 2.0)),
+                # 默认只返回整句边界；取逐词边界用于字幕对齐。
+                boundary="WordBoundary",
+                proxy=self.proxy,
+            )
             # 边收音频边记 WordBoundary：时间戳是 100 纳秒单位，换算成秒。
             words: list[WordTiming] = []
             with output.open("wb") as handle:
@@ -68,11 +72,19 @@ class EdgeTTS:
                 await asyncio.wait_for(_consume(), timeout=self.timeout)
             return words
 
-        try:
-            words = asyncio.run(_save())
-        except Exception as exc:
-            output.unlink(missing_ok=True)
-            raise ProviderError(f"Edge 配音失败：{type(exc).__name__}") from exc
+        attempt = 0
+        while True:
+            try:
+                words = asyncio.run(_save())
+                break
+            except Exception as exc:
+                output.unlink(missing_ok=True)
+                if attempt >= self.retries:
+                    hint = "；检查网络，需要代理时在 config.toml 的 [app] 里填 proxy" if attempt else ""
+                    tried = f"（试了 {attempt + 1} 次）" if attempt else ""
+                    raise ProviderError(f"Edge 配音失败：{type(exc).__name__}{tried}{hint}") from exc
+                attempt += 1
+                time.sleep(self.retry_wait * attempt)
         try:
             info = probe(output)
         except MediaError as exc:
@@ -89,7 +101,10 @@ registry.register(
         id="edge",
         name="Edge 在线语音（免费）",
         name_en="Edge online voices (free)",
-        fields=(ConfigField("timeout", "超时（秒）", default="60"),),
+        fields=(
+            ConfigField("timeout", "超时（秒）", default="60"),
+            ConfigField("retries", "失败重试次数", default="3"),
+        ),
         docs_url="https://github.com/rany2/edge-tts",
         word_timestamps=True,
     ),
