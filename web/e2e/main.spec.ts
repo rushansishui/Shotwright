@@ -177,7 +177,12 @@ test.describe("Shotwright 主流程", () => {
     await look.getByRole("button", { name: /添加主体|Add subject/ }).click();
     const appearance = look.getByRole("textbox", { name: /外观|Appearance/ }).first();
     await appearance.fill("哑光白色圆柱形机身");
+    // 失焦时才保存：等保存请求完成再刷新，否则 CI 机器慢时会先刷新、丢掉没存上的内容。
+    const saved = page.waitForResponse(
+      (r) => r.request().method() === "PATCH" && /\/projects\/[^/]+$/.test(new URL(r.url()).pathname) && r.ok(),
+    );
     await appearance.blur();
+    await saved;
     await page.reload();
     await expect(page.locator(".look").getByRole("textbox", { name: /外观|Appearance/ }).first()).toHaveValue(
       "哑光白色圆柱形机身",
