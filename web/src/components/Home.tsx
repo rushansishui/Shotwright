@@ -573,6 +573,10 @@ export function Home() {
         loading={projects === null}
         onError={setError}
         onChanged={() => api.listProjects().then(setProjects).catch(() => setProjects([]))}
+        onSample={async () => {
+          const project = await api.createSample(language);
+          window.location.hash = `#/p/${project.id}`;
+        }}
       />
     </main>
   );

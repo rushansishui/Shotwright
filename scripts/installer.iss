@@ -74,10 +74,12 @@ Name: "{localappdata}\{#AppName}"; Flags: uninsneveruninstall
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"
+; 想用自己的浏览器（例如要装插件、开多个标签页）时用这个入口。
+Name: "{group}\{#AppName} (Browser)"; Filename: "{app}\{#AppExeName}"; Parameters: "serve --open"; WorkingDir: "{app}"
 Name: "{group}\{#AppName} Data"; Filename: "{localappdata}\{#AppName}"
 Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-; 不带参数启动：程序会自己启动服务并打开浏览器。
+; 不带参数启动：程序会自己启动服务，界面开在桌面窗口里（没有 WebView2 时用浏览器）。
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent

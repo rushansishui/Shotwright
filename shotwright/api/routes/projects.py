@@ -223,6 +223,15 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
         project.title = project.title or body.subject[:40] or "未命名项目"
         return store.create(project)
 
+    @api.post("/projects/sample", status_code=201)
+    def create_sample(language: str = "zh-CN"):
+        """建一个示例项目（虚构的冷萃咖啡带货视频）：画面是现画的插画，不用 Key、不花钱就能渲染。"""
+        from shotwright.services import sample
+
+        return sample.build(
+            store, language=languages.get(language).code, tts=settings.default_provider("tts")
+        )
+
     def _materials(items) -> list[brief_service.Material]:
         return [
             brief_service.Material(

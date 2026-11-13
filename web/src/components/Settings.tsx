@@ -296,6 +296,11 @@ function ProviderCard({
           {provider.paid && (
             <span className="tag warn">{t("status.paid")}</span>
           )}
+          {provider.free && (
+            <span className="tag ok" title={t("status.freeHint")}>
+              {t("status.free")}
+            </span>
+          )}
           {provider.default && (
             <span className="tag">{t("status.default")}</span>
           )}

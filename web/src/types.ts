@@ -532,6 +532,8 @@ export interface ProviderInfo {
   name: string;
   name_en: string;
   paid: boolean;
+  /** 不花钱：服务商目前的免费档，或在本机运行。 */
+  free?: boolean;
   offline: boolean;
   configured: boolean;
   default: boolean;

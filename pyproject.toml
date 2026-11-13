@@ -19,6 +19,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6"]
 asr = ["faster-whisper>=1.0"]  # 剪辑页的本地语音识别
+desktop = ["pywebview>=5.3"]  # 安装版的桌面窗口（Windows 用系统自带的 WebView2）
 promo = ["playwright>=1.45"]  # scripts/promo：自动录屏做宣传片
 
 [project.scripts]

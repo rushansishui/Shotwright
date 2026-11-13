@@ -904,6 +904,11 @@ input[type="color"] {
   color: var(--warn);
 }
 
+.tag.ok {
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  color: var(--ok);
+}
+
 .ok {
   color: var(--ok);
   font-weight: 500;
@@ -1811,6 +1816,21 @@ input[type="color"] {
 }
 .project-import {
   cursor: pointer;
+}
+.project-sample {
+  margin-left: auto;
+}
+.projects-empty .sample-cta {
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+.projects-empty .sample-cta p {
+  margin: 0;
 }
 .projects-head h2 {
   margin: 0;
@@ -3624,6 +3644,28 @@ li.missing .readiness-mark {
   gap: 8px;
   flex-wrap: wrap;
   margin-top: auto;
+}
+/* 首页向导里不花钱的大模型：两颗按钮放在选服务下拉框上面 */
+.setup-free-llm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px dashed var(--ok);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ok) 6%, transparent);
+}
+.setup-free-llm .label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ok);
+}
+.setup-free-llm .row {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.setup-free-llm p {
+  margin: 0;
 }
 .provider-guide {
   margin: 0 0 10px;

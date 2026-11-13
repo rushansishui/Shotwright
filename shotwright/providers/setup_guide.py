@@ -17,6 +17,20 @@ GUIDES: dict[tuple[str, str], tuple[str, str]] = {
         "Seed model under Model Activation. The same key also works for Seedance (AI video) and Seedream (AI images) "
         "once those models are enabled. Billed by usage.",
     ),
+    ("llm", "zhipu"): (
+        "在 bigmodel.cn（智谱开放平台）用手机号注册，进入「API Key」页面创建一个 Key，粘贴到这里即可。"
+        "GLM-4.7-Flash 目前对注册用户免费，免费档同时只能处理一个请求；免费政策以智谱官网为准。",
+        "Sign up at bigmodel.cn (Zhipu Open Platform), create a key on the API Key page and paste it here. "
+        "GLM-4.7-Flash is currently free for registered users (one request at a time); check Zhipu's site for the "
+        "current terms.",
+    ),
+    ("llm", "ollama"): (
+        "在本机安装 Ollama（ollama.com），再下载一个模型，例如在命令行运行 ollama pull qwen3:8b，"
+        "然后把模型名填到这里。不用 Key、不花钱、不联网；模型越大写得越好，也越吃内存和显卡。",
+        "Install Ollama (ollama.com) on this computer and download a model, e.g. run ollama pull qwen3:8b, then "
+        "enter the model name here. No key, no cost, works offline; bigger models write better but need more "
+        "memory and GPU.",
+    ),
     ("llm", "deepseek"): (
         "在 platform.deepseek.com 注册，进入「API keys」创建 Key，充值后即可使用。按用量计费。",
         "Sign up at platform.deepseek.com, create a key under API keys and top up your balance. Billed by usage.",

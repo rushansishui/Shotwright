@@ -69,6 +69,8 @@ class ProviderSpec:
     capabilities: frozenset[str] = field(default_factory=frozenset)
     paid: bool = False
     """调用是否会产生费用。收费操作在界面和 API 上都需要用户确认。"""
+    free: bool = False
+    """调用不花钱（服务商目前的免费档，或在本机运行）：界面上标「免费」，引导没有 Key 的用户先用起来。"""
     docs_url: str = ""
     offline: bool = False
     """不需要网络即可工作（例如静音配音）。"""

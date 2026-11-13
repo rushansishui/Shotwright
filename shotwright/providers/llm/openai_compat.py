@@ -20,6 +20,29 @@ from shotwright.providers.base import ConfigField, ProviderError, ProviderNotCon
 log = logging.getLogger("shotwright.llm")
 
 VISION_HELP = "用于检查生成的画面（产品是否走样、是否切题），需要支持看图的模型；留空时不检查"
+OLLAMA_URL = "http://127.0.0.1:11434/v1"
+"""Ollama 在本机默认监听的地址（OpenAI 兼容接口）。"""
+
+
+def local_ollama(timeout: float = 1.5) -> list[str] | None:
+    """本机有没有在运行 Ollama：在运行时返回已下载的模型名（可能为空列表），没运行时返回 None。
+
+    只连本机，不走代理（trust_env=False），超时很短：首页打开时调用，不能拖慢页面。
+    """
+    try:
+        with httpx.Client(timeout=timeout, trust_env=False) as client:
+            response = client.get(OLLAMA_URL.removesuffix("/v1") + "/api/tags")
+    except httpx.HTTPError:
+        return None
+    if response.status_code != 200:
+        return None
+    try:
+        models = response.json().get("models") or []
+    except ValueError:
+        return None
+    return [str(m.get("name")) for m in models if isinstance(m, dict) and m.get("name")]
+
+
 MAX_TOKENS_HELP = "单次最多输出多少个 token；分镜、脚本这类长输出被截断时调大。留空用服务商默认值"
 
 RETRIES = 2
@@ -218,6 +241,19 @@ PRESETS: tuple[dict, ...] = (
         "max_tokens": "8192",
         "docs_url": "https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope",
     },
+    {
+        # 智谱的 Flash 模型目前对注册用户免费（免费档同时只能有一个请求），没有 Key 的用户先从这里用起来。
+        # 免费政策由服务商决定，界面上只写「目前免费」。
+        "id": "zhipu",
+        "name": "智谱 GLM-4.7-Flash（免费）",
+        "name_en": "Zhipu GLM-4.7-Flash (free)",
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "model": "glm-4.7-flash",
+        "timeout": "300",
+        "max_tokens": "16384",
+        "docs_url": "https://docs.bigmodel.cn/cn/guide/models/free/glm-4.7-flash",
+        "free": True,
+    },
 )
 
 for preset in PRESETS:
@@ -237,11 +273,35 @@ for preset in PRESETS:
                 ),
                 ConfigField("vision_model", "看图模型", help=VISION_HELP),
             ),
-            paid=True,
+            paid=not preset.get("free", False),
+            free=bool(preset.get("free", False)),
             docs_url=preset["docs_url"],
         ),
         OpenAICompatibleLLM,
     )
+
+# 本机运行的大模型（Ollama）：不要 Key、不花钱、不联网。模型名不给默认值——
+# 要填本机实际下载过的模型，没填就显示「未配置」，免得没装 Ollama 也显示成可用。
+registry.register(
+    ProviderSpec(
+        kind="llm",
+        id="ollama",
+        name="本地模型（Ollama，免费）",
+        name_en="Local model (Ollama, free)",
+        fields=(
+            ConfigField(
+                "model", "模型", required=True, help="填本机已下载的模型名，例如 qwen3:8b、glm-4.7-flash"
+            ),
+            ConfigField("base_url", "Base URL", default=OLLAMA_URL),
+            ConfigField("timeout", "超时（秒）", default="600"),
+            ConfigField("max_tokens", "最大输出 tokens", default="8192", help=MAX_TOKENS_HELP),
+            ConfigField("vision_model", "看图模型", help=VISION_HELP),
+        ),
+        free=True,
+        docs_url="https://ollama.com/download",
+    ),
+    OpenAICompatibleLLM,
+)
 
 registry.register(
     ProviderSpec(

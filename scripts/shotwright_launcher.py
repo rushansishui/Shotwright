@@ -1,7 +1,8 @@
 """Windows 安装包里 Shotwright.exe 的入口（PyInstaller 打包这个文件）。
 
 不能直接打包 ``shotwright/__main__.py``：它用的是相对导入，作为脚本运行时会报错。
-双击图标（不带参数）时启动服务并打开浏览器；带参数时和命令行 ``shotwright`` 一样。
+双击图标（不带参数）时启动服务，界面开在桌面窗口里（没有 WebView2 时用浏览器）；
+带参数时和命令行 ``shotwright`` 一样，例如 ``Shotwright.exe serve --open`` 用浏览器打开。
 """
 
 import sys
@@ -20,7 +21,11 @@ def _run(args: list[str]) -> int:
     from shotwright.cli import main
 
     desktop.prepare()
-    return main(args or ["serve", "--open"])
+    if args:
+        return main(args)
+    # 双击打开：藏起黑色控制台窗口，界面开在桌面窗口里；退回浏览器或出错时控制台会再显示出来。
+    desktop.hide_console()
+    return main(["serve", "--window"])
 
 
 if __name__ == "__main__":
@@ -35,5 +40,11 @@ if __name__ == "__main__":
         code = 1
     if code and not args:
         # 双击启动失败时窗口会一闪而过，停一下让用户看到原因。
+        try:
+            from shotwright import desktop
+
+            desktop.show_console()
+        except Exception:  # noqa: BLE001
+            pass
         input("\nShotwright 没能启动，按回车键关闭窗口… / Press Enter to close…")
     raise SystemExit(code)

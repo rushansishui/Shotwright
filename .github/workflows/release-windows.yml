@@ -3,12 +3,25 @@ name: Windows installer
 # 在 GitHub 的 Windows 机器上打包并验证安装包：
 #   代码检查和单元测试 → 冻结 → 冒烟测试（doctor + 启动服务 + 渲染一条成片）→ 生成安装程序
 #   → 静默安装 → 对装好的程序再跑一遍冒烟测试 → 静默卸载，确认用户数据还在。
-# 手动运行（Actions 页面 Run workflow）或推送 v* 标签时触发；推标签时把安装包附到 Release 上。
+# 触发：手动运行（Actions 页面 Run workflow）、推送 v* 标签、合并到 main 且改动了会影响安装包的文件、
+# 每周一凌晨定时跑一次。只有推标签时才把安装包附到 Release 上，其余只验证、不发布：
+# 以前打包流程只在发版时跑，Python 版本、参数传递、中文编码这类问题要到发版当天才暴露。
 
 on:
   workflow_dispatch:
   push:
     tags: ["v*"]
+    branches: [main]
+    paths:
+      - "shotwright/**"
+      - "scripts/**"
+      - "web/**"
+      - "resources/**"
+      - "pyproject.toml"
+      - ".github/workflows/release-windows.yml"
+  schedule:
+    # 每周一 02:30（北京时间）= 周日 18:30 UTC：依赖和 GitHub 机器环境会悄悄变化，定期跑一次。
+    - cron: "30 18 * * 0"
 
 permissions:
   contents: write
@@ -120,28 +133,93 @@ jobs:
           name: Shotwright-windows-installer
           path: dist/installer/*.exe
           if-no-files-found: error
+          # 日常验证出的安装包只留一周，免得占满仓库的存储额度；发版的安装包在 Release 里。
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/v') && 30 || 7 }}
 
-      - name: Add fixed-name copy for the latest-download link
+      - name: Add fixed-name copy and checksum
         # README 里的「下载最新版」直链指向 releases/latest/download/Shotwright-setup.exe，
         # 所以每个 Release 除了带版本号的安装包，再附一份固定名字的副本。
+        # 国内用户常走第三方加速地址下载，附上 SHA256 方便核对文件没被改过。
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           $setup = Get-ChildItem dist\installer\Shotwright-*-setup.exe | Select-Object -First 1
           Copy-Item $setup.FullName dist\installer\Shotwright-setup.exe -Force
+          $hash = (Get-FileHash dist\installer\Shotwright-setup.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  Shotwright-setup.exe" | Out-File dist\installer\Shotwright-setup.exe.sha256 -Encoding ascii
+          "SETUP_SHA256=$hash" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "SETUP_MB=$([math]::Round($setup.Length / 1MB))" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Upload to China mirror (optional)
+        # 国内下载镜像：把安装包传到兼容 S3 的对象存储（腾讯云 COS、阿里云 OSS 等）。
+        # 在仓库 Settings → Secrets and variables → Actions 里配好下面这些才会上传，没配就跳过：
+        #   Secrets：MIRROR_S3_ACCESS_KEY、MIRROR_S3_SECRET_KEY
+        #   Variables：MIRROR_S3_ENDPOINT（如 https://cos.ap-shanghai.myqcloud.com）、MIRROR_S3_REGION（如 ap-shanghai）、
+        #              MIRROR_S3_BUCKET（存储桶名）、MIRROR_PUBLIC_URL（对外的下载地址前缀，如 https://dl.example.com）
+        # 上传到 <桶>/shotwright/latest/ 和 <桶>/shotwright/<版本>/ 两处，README 里的国内直链指向 latest。
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.MIRROR_S3_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.MIRROR_S3_SECRET_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.MIRROR_S3_REGION }}
+          MIRROR_S3_ENDPOINT: ${{ vars.MIRROR_S3_ENDPOINT }}
+          MIRROR_S3_BUCKET: ${{ vars.MIRROR_S3_BUCKET }}
+          MIRROR_PUBLIC_URL: ${{ vars.MIRROR_PUBLIC_URL }}
+          # 新版 AWS CLI 默认附加的完整性校验头，COS / OSS 的 S3 兼容接口不认，只在必需时才加。
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+        run: |
+          if (-not $env:AWS_ACCESS_KEY_ID -or -not $env:MIRROR_S3_BUCKET -or -not $env:MIRROR_S3_ENDPOINT) {
+            Write-Host '没有配置国内镜像（MIRROR_S3_*），跳过上传'
+            exit 0
+          }
+          aws configure set default.s3.addressing_style virtual
+          $version = '${{ github.ref_name }}'
+          foreach ($prefix in @("shotwright/$version", 'shotwright/latest')) {
+            foreach ($name in @('Shotwright-setup.exe', 'Shotwright-setup.exe.sha256')) {
+              aws s3 cp "dist\installer\$name" "s3://$env:MIRROR_S3_BUCKET/$prefix/$name" --endpoint-url $env:MIRROR_S3_ENDPOINT --no-progress
+              if ($LASTEXITCODE -ne 0) { throw "上传 $prefix/$name 失败" }
+            }
+          }
+          if ($env:MIRROR_PUBLIC_URL) {
+            "MIRROR_URL=$($env:MIRROR_PUBLIC_URL.TrimEnd('/'))/shotwright/$version/Shotwright-setup.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
+
+      - name: Write release notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          $repo = '${{ github.repository }}'
+          $direct = "https://github.com/$repo/releases/download/${{ github.ref_name }}/Shotwright-setup.exe"
+          $lines = @(
+            '## 下载安装 / Download',
+            '',
+            'Windows 10 / 11（64 位）：下载下面的 **Shotwright-setup.exe**，双击安装。不需要管理员权限，也不用另装 Python、Node.js 和 FFmpeg。',
+            'Windows 10 / 11 (64-bit): download **Shotwright-setup.exe** below and run it. No admin rights, no separate Python, Node.js or FFmpeg install.',
+            '',
+            "### 国内下载（约 $env:SETUP_MB MB）",
+            ''
+          )
+          if ($env:MIRROR_URL) { $lines += "- 国内镜像（推荐）：$env:MIRROR_URL" }
+          $lines += @(
+            "- 加速地址 1：https://gh-proxy.com/$direct",
+            "- 加速地址 2：https://ghfast.top/$direct",
+            '',
+            '加速地址是第三方公益服务，偶尔会慢或打不开，换一个即可。下载后可以核对 SHA256（PowerShell：`Get-FileHash .\Shotwright-setup.exe`）：',
+            '',
+            "``$env:SETUP_SHA256``",
+            '',
+            '如果 Windows 提示「Windows 已保护你的电脑」，点「更多信息」→「仍要运行」（安装包暂未做代码签名）。',
+            'If Windows shows "Windows protected your PC", click "More info" → "Run anyway" (the installer is not code-signed yet).',
+            '',
+            '`Shotwright-<版本>-setup.exe` 与 `Shotwright-setup.exe` 是同一个文件 / are the same file.'
+          )
+          $lines -join "`n" | Out-File dist\release-notes.md -Encoding utf8
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/installer/*.exe
+          files: |
+            dist/installer/*.exe
+            dist/installer/*.sha256
           generate_release_notes: true
-          body: |
-            ## 下载安装 / Download
-
-            Windows 10 / 11（64 位）：下载下面的 **Shotwright-setup.exe**，双击安装。不需要管理员权限，也不用另装 Python、Node.js 和 FFmpeg。
-            Windows 10 / 11 (64-bit): download **Shotwright-setup.exe** below and run it. No admin rights, no separate Python, Node.js or FFmpeg install.
-
-            如果 Windows 提示「Windows 已保护你的电脑」，点「更多信息」→「仍要运行」（安装包暂未做代码签名）。
-            If Windows shows "Windows protected your PC", click "More info" → "Run anyway" (the installer is not code-signed yet).
-
-            `Shotwright-<版本>-setup.exe` 与 `Shotwright-setup.exe` 是同一个文件 / are the same file.
+          body_path: dist/release-notes.md

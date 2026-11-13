@@ -27,6 +27,14 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
     def health():
         return {"status": "ok", "version": __version__}
 
+    @api.get("/local-llm")
+    def local_llm():
+        """本机的 Ollama：在运行时列出已下载的模型，首页据此提供「一键使用本地模型」。"""
+        from shotwright.providers.llm.openai_compat import local_ollama
+
+        models = local_ollama()
+        return {"running": models is not None, "models": models or []}
+
     @api.get("/providers")
     def providers():
         result: dict[str, list[dict]] = {}
@@ -37,6 +45,7 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
                     "name": spec.name,
                     "name_en": spec.name_en or spec.name,
                     "paid": spec.paid,
+                    "free": spec.free,
                     "offline": spec.offline,
                     "docs_url": spec.docs_url,
                     "setup": setup_guide.guide(spec.kind, spec.id)[0],

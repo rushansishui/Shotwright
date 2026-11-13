@@ -95,7 +95,7 @@ if (-not (Test-Path $py)) {
     Write-Host "[build] 用 Python $(Get-PythonVersion @base)（$($base -join ' ')）创建打包用的虚拟环境 .venv-build"
     Invoke-Checked @base -m venv .venv-build
 }
-$extra = if ($NoAsr) { '.' } else { '.[asr]' }
+$extra = if ($NoAsr) { '.[desktop]' } else { '.[asr,desktop]' }
 Write-Host "[build] 安装依赖 $extra + pyinstaller + pip-licenses"
 Invoke-Checked $py -m pip install --upgrade pip
 Invoke-Checked $py -m pip install $extra pyinstaller pip-licenses

@@ -17,6 +17,8 @@ interface ProjectListProps {
   title?: string;
   /** 列表为空时的提示。 */
   empty?: string;
+  /** 提供时显示「打开示例项目」：标题栏一个小按钮，列表为空时再放一个醒目的。 */
+  onSample?: () => Promise<void>;
 }
 
 const PAGE = 12;
@@ -63,6 +65,7 @@ export function ProjectList({
   loading = false,
   title,
   empty,
+  onSample,
 }: ProjectListProps) {
   const { t } = useI18n();
   const when = useRelativeTime();
@@ -104,6 +107,17 @@ export function ProjectList({
     }
   }
 
+  async function openSample() {
+    if (!onSample) return;
+    setBusy("sample");
+    try {
+      await onSample();
+    } catch (e) {
+      onError((e as Error).message);
+      setBusy(null);
+    }
+  }
+
   async function remove(p: ProjectSummary) {
     if (!window.confirm(t("projects.deleteConfirm", { title: p.title }))) return;
     setBusy(p.id);
@@ -136,6 +150,18 @@ export function ProjectList({
             />
           </label>
         )}
+        {onSample && projects.length > 0 && (
+          <button
+            type="button"
+            className="btn small ghost project-sample"
+            title={t("projects.sampleHint")}
+            disabled={busy === "sample"}
+            onClick={openSample}
+          >
+            <Icon name="film" />
+            {busy === "sample" ? t("projects.sampleBusy") : t("projects.sample")}
+          </button>
+        )}
         <label className="btn small ghost project-import" title={t("projects.importHint")}>
           <Icon name="upload" />
           {busy === "import" ? t("projects.importing") : t("projects.import")}
@@ -155,7 +181,18 @@ export function ProjectList({
       {loading ? (
         <p className="muted">{t("projects.loading")}</p>
       ) : projects.length === 0 ? (
-        <p className="muted">{empty ?? t("home.empty")}</p>
+        <div className="projects-empty">
+          <p className="muted">{empty ?? t("home.empty")}</p>
+          {onSample && (
+            <div className="sample-cta">
+              <button type="button" className="btn" disabled={busy === "sample"} onClick={openSample}>
+                <Icon name="film" />
+                {busy === "sample" ? t("projects.sampleBusy") : t("projects.sampleOpen")}
+              </button>
+              <p className="muted small">{t("projects.sampleHint")}</p>
+            </div>
+          )}
+        </div>
       ) : filtered.length === 0 ? (
         <p className="muted">{t("projects.noMatch")}</p>
       ) : (

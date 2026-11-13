@@ -264,6 +264,15 @@ test.describe("Shotwright 主流程", () => {
   });
 });
 
+test("示例项目：首页一键打开，镜头和画面都已填好", async ({ page }) => {
+  await page.goto("/");
+  // 没有项目时是列表里醒目的「打开示例项目」，有项目时是标题栏的「示例」小按钮。
+  await page.locator(".projects").getByRole("button", { name: /^(打开示例项目|示例|Open the sample project|Sample)$/ }).first().click();
+  await expect(page.locator(".editor")).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator("article.shot")).toHaveCount(5);
+  await expect(page.locator("article.shot").first().locator("textarea").first()).toHaveValue(/冷萃|cold brew/i);
+});
+
 test("服务设置：在页面里填写 Key，保存后只显示后 4 位", async ({ page }) => {
   await page.goto("/#/settings");
   const card = page.locator('[data-provider="video_gen.wan"]');

@@ -5,7 +5,8 @@ import type { Providers } from "../types";
 
 /**
  * 首次启动向导：还没配置大模型时显示在首页最上面。
- * 两条路：选一家大模型服务填 Key（不偏向任何一家），或者先免费试试（自己写口播脚本、剪辑已有视频）。
+ * 两条路：选一家大模型服务填 Key，或者先免费试试（自己写口播脚本、剪辑已有视频）。
+ * 选服务时把不花钱的两种放在最前面：智谱的免费模型（注册拿 Key）和本机的 Ollama（不要 Key）。
  * 保存后立刻测试连接，成功就刷新服务状态，卡片自动消失。
  */
 export function SetupCard({
@@ -27,6 +28,11 @@ export function SetupCard({
   const guide = provider ? (lang === "zh" ? provider.setup : provider.setup_en) : "";
   /** 除了 Key 还有必填、又没有默认值的字段（例如自定义接口的地址）：到服务设置页去填。 */
   const needsMore = !!provider?.fields.some((f) => f.required && f.key !== "api_key" && !f.default);
+  /** 不花钱的大模型：智谱免费模型、本机 Ollama。 */
+  const freeLlms = llms.filter((p) => p.free);
+  /** 本机 Ollama 的检测结果：null 表示还没检测完。 */
+  const [local, setLocal] = useState<{ running: boolean; models: string[] } | null>(null);
+  const [localModel, setLocalModel] = useState("");
 
   useEffect(() => {
     api
@@ -34,6 +40,45 @@ export function SetupCard({
       .then((data) => setEditable(data.editable))
       .catch(() => setEditable(false));
   }, []);
+
+  function detectLocal() {
+    setLocal(null);
+    api
+      .localLlm()
+      .then((found) => {
+        setLocal(found);
+        setLocalModel((current) => (found.models.includes(current) ? current : (found.models[0] ?? "")));
+      })
+      .catch(() => setLocal({ running: false, models: [] }));
+  }
+
+  // 打开首页就看一眼本机有没有在跑 Ollama：有就直接给「一键使用」。
+  useEffect(detectLocal, []);
+
+  function pick(id: string) {
+    setChosen(id);
+    setResult(null);
+    if (id === "ollama") detectLocal();
+  }
+
+  /** 一键使用本机模型：填上模型名、设为默认，再测一次连接。 */
+  async function useLocal() {
+    if (!localModel) return;
+    setResult(null);
+    setState("saving");
+    try {
+      await api.saveProviderSettings("llm", "ollama", { model: localModel });
+      await api.saveDefaultProvider("llm", "ollama");
+      setState("testing");
+      const tested = await api.testProvider("llm", "ollama");
+      setResult(tested);
+      if (tested.ok) onConfigured();
+    } catch (e) {
+      setResult({ ok: false, message: (e as Error).message });
+    } finally {
+      setState("");
+    }
+  }
 
   async function save() {
     if (!provider) return;
@@ -64,16 +109,39 @@ export function SetupCard({
         <div className="setup-option">
           <h3>{t("setup.llm")}</h3>
           <p className="muted small">{t("setup.llmWhy")}</p>
+          {freeLlms.length > 0 && (
+            <div className="setup-free-llm">
+              <span className="label">{t("setup.freeLlm")}</span>
+              <div className="row">
+                {freeLlms.map((p) => (
+                  <button
+                    type="button"
+                    key={p.id}
+                    className={`chip ${chosen === p.id ? "on" : ""}`}
+                    aria-pressed={chosen === p.id}
+                    onClick={() => pick(p.id)}
+                  >
+                    {providerName(p, lang)}
+                  </button>
+                ))}
+              </div>
+              {local?.running && local.models.length > 0 && chosen !== "ollama" && (
+                <p className="hint small">
+                  {t("setup.localFound", { n: local.models.length })}{" "}
+                  <button type="button" className="linkish" onClick={() => pick("ollama")}>
+                    {t("setup.localUse")}
+                  </button>
+                </p>
+              )}
+            </div>
+          )}
           <div className="field">
             <label htmlFor="setup-llm">{t("setup.llmPick")}</label>
             <select
               id="setup-llm"
               className="input"
               value={chosen}
-              onChange={(e) => {
-                setChosen(e.target.value);
-                setResult(null);
-              }}
+              onChange={(e) => pick(e.target.value)}
             >
               <option value="" disabled>
                 {t("setup.llmChoose")}
@@ -86,7 +154,49 @@ export function SetupCard({
             </select>
           </div>
           {guide && <p className="small setup-guide">{guide}</p>}
-          {!provider ? null : editable === false || needsMore ? (
+          {!provider ? null : provider.id === "ollama" && editable !== false ? (
+            // 本机模型不要 Key：检测到 Ollama 就直接选模型一键使用，没检测到就说怎么装。
+            <div className="setup-local">
+              {local === null ? (
+                <p className="muted small">{t("setup.localChecking")}</p>
+              ) : !local.running ? (
+                <p className="hint warn small">
+                  {t("setup.localMissing")}{" "}
+                  <button type="button" className="linkish" onClick={detectLocal}>
+                    {t("setup.localRetry")}
+                  </button>
+                </p>
+              ) : local.models.length === 0 ? (
+                <p className="hint warn small">
+                  {t("setup.localNoModel")}{" "}
+                  <button type="button" className="linkish" onClick={detectLocal}>
+                    {t("setup.localRetry")}
+                  </button>
+                </p>
+              ) : (
+                <div className="setup-key">
+                  <label className="sr-only" htmlFor="setup-local-model">
+                    {t("setup.localModel")}
+                  </label>
+                  <select
+                    id="setup-local-model"
+                    className="input"
+                    value={localModel}
+                    onChange={(e) => setLocalModel(e.target.value)}
+                  >
+                    {local.models.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                  <button type="button" className="btn primary" disabled={!localModel || state !== ""} onClick={useLocal}>
+                    {state === "saving" ? t("setup.saving") : state === "testing" ? t("setup.testing") : t("setup.localUse")}
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : editable === false || needsMore ? (
             <p className="hint warn small">
               {editable === false ? t("setup.notEditable") : t("setup.needsMore")} <a href="#/settings">{t("nav.status")} →</a>
             </p>

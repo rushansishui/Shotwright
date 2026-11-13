@@ -36,6 +36,9 @@ COLLECT_ALL = (
     "onnxruntime",  # VAD 推理
     "tokenizers",
     "av",  # faster-whisper 导入时需要，实际解码用的是 FFmpeg
+    "webview",  # 桌面窗口（pywebview），含 WebView2 的 .NET 程序集
+    "clr_loader",  # pywebview 在 Windows 上通过 pythonnet 调 WebView2
+    "pythonnet",
 )
 # 运行时用 importlib.metadata 查版本的包，要带上它们的元数据。
 COPY_METADATA = ("huggingface_hub", "tqdm", "filelock", "regex", "requests", "packaging", "safetensors")

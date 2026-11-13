@@ -12,6 +12,8 @@ Shotwright is built around the *shot*. The script is split into shots, and each 
 
 **⬇️ One-click Windows install: [Download Shotwright-setup.exe](https://github.com/rushansishui/Shotwright/releases/latest/download/Shotwright-setup.exe)** (Windows 10 / 11 64-bit, just run it, nothing else to install) · [All releases](https://github.com/rushansishui/Shotwright/releases)
 
+Slow download from mainland China? Try a mirror: [mirror 1](https://gh-proxy.com/https://github.com/rushansishui/Shotwright/releases/latest/download/Shotwright-setup.exe) · [mirror 2](https://ghfast.top/https://github.com/rushansishui/Shotwright/releases/latest/download/Shotwright-setup.exe) (third-party services; each release lists the SHA256 so you can verify the file). After installing, click "Open the sample project" to render a finished video without any API key.
+
 ![Demo: write a brief, edit the storyboard, trim a clip, preview the video](docs/images/demo-en.gif)
 
 <!-- Sample videos: put 2–3 finished videos made with Shotwright here (15–30 s, portrait, one Chinese and one English).
@@ -114,7 +116,7 @@ Most disk space goes to assets: projects using AI video and 1080p stock footage 
 
 ## Quick start
 
-**Windows installer**: [download the latest Shotwright-setup.exe](https://github.com/rushansishui/Shotwright/releases/latest/download/Shotwright-setup.exe) (or the versioned `Shotwright-<version>-setup.exe` from the [Releases](https://github.com/rushansishui/Shotwright/releases/latest) page) and run it. No admin rights needed, and no separate Python, Node.js or FFmpeg install (they are bundled). Open it from the Start menu or desktop icon: a server window appears and your browser opens; closing the window stops the server. Settings, projects and logs live in `%LOCALAPPDATA%\Shotwright` (“Shotwright Data” in the Start menu) and survive uninstalls and upgrades. If something goes wrong, run `Shotwright.exe doctor` in a terminal to check the environment.
+**Windows installer**: [download the latest Shotwright-setup.exe](https://github.com/rushansishui/Shotwright/releases/latest/download/Shotwright-setup.exe) (or the versioned `Shotwright-<version>-setup.exe` from the [Releases](https://github.com/rushansishui/Shotwright/releases/latest) page) and run it. No admin rights needed, and no separate Python, Node.js or FFmpeg install (they are bundled). Open it from the Start menu or desktop icon: the app opens in its own desktop window (using the system WebView2, built into Windows 11 and installed with Edge on Windows 10); closing the window stops the server. Without WebView2 it falls back to your browser. To use your own browser, open "Shotwright (Browser)" from the Start menu. Settings, projects and logs live in `%LOCALAPPDATA%\Shotwright` (“Shotwright Data” in the Start menu) and survive uninstalls and upgrades. If something goes wrong, run `Shotwright.exe doctor` in a terminal to check the environment.
 
 > The installer is not code-signed yet, so Windows may show "Windows protected your PC". Click "More info" → "Run anyway".
 

@@ -12,6 +12,8 @@ Shotwright 以"镜头"为核心：文案被拆成一个个镜头，每个镜头�
 
 **⬇️ Windows 一键安装：[下载 Shotwright-setup.exe](https://github.com/rushansishui/Shotwright/releases/latest/download/Shotwright-setup.exe)**（Windows 10 / 11 64 位，双击安装，不用另装任何环境）· [所有版本](https://github.com/rushansishui/Shotwright/releases)
 
+国内下载慢可以用加速地址：[加速 1](https://gh-proxy.com/https://github.com/rushansishui/Shotwright/releases/latest/download/Shotwright-setup.exe) · [加速 2](https://ghfast.top/https://github.com/rushansishui/Shotwright/releases/latest/download/Shotwright-setup.exe)（第三方公益服务，打不开就换一个；每个版本的 Release 页面附有 SHA256，可以核对文件）。装好打开后点「打开示例项目」，不用配置任何 Key 就能先渲染出一条成片看看效果。
+
 ![演示：说想法、分步编辑分镜、按文字剪辑、预览成片](docs/images/demo-zh.gif)
 
 <!-- 成片示例：放 2–3 条用 Shotwright 做的成片（建议 15–30 秒、竖屏、中英文各一条）。
@@ -115,11 +117,11 @@ AI 写文案、AI 视频 / 图片和配音都在云端完成，本机只负责�
 
 ## 快速开始
 
-**Windows 安装包**：[下载最新版 Shotwright-setup.exe](https://github.com/rushansishui/Shotwright/releases/latest/download/Shotwright-setup.exe)（或在 [Releases](https://github.com/rushansishui/Shotwright/releases/latest) 页面下载带版本号的 `Shotwright-<版本>-setup.exe`），双击安装，不需要管理员权限，也不用另装 Python、Node.js 和 FFmpeg（都已打包在内）。装好后从开始菜单或桌面图标打开，会弹出一个服务窗口并自动打开浏览器，关掉窗口就停止服务。配置、项目和日志放在 `%LOCALAPPDATA%\Shotwright`（开始菜单里的「Shotwright Data」），卸载和升级都不会删掉。遇到问题可以在命令行运行 `Shotwright.exe doctor` 检查环境。
+**Windows 安装包**：[下载最新版 Shotwright-setup.exe](https://github.com/rushansishui/Shotwright/releases/latest/download/Shotwright-setup.exe)（或在 [Releases](https://github.com/rushansishui/Shotwright/releases/latest) 页面下载带版本号的 `Shotwright-<版本>-setup.exe`），双击安装，不需要管理员权限，也不用另装 Python、Node.js 和 FFmpeg（都已打包在内）。装好后从开始菜单或桌面图标打开，界面显示在独立的桌面窗口里（用系统自带的 WebView2，Windows 11 自带，Windows 10 一般随 Edge 更新已装好），关掉窗口就停止服务；电脑上没有 WebView2 时自动改用浏览器打开。想用自己的浏览器时，从开始菜单的「Shotwright (Browser)」打开。配置、项目和日志放在 `%LOCALAPPDATA%\Shotwright`（开始菜单里的「Shotwright Data」），卸载和升级都不会删掉。遇到问题可以在命令行运行 `Shotwright.exe doctor` 检查环境。
 
 > 安装包暂未做代码签名，双击时 Windows 可能提示「Windows 已保护你的电脑」：点「更多信息」→「仍要运行」即可。
 
-发布新版本（维护者）：把 `pyproject.toml` 和 `web/package.json` 里的版本号改成一样的新版本并推到 `main`，然后 `git tag v<版本>` 再 `git push origin v<版本>`。GitHub Actions 会先检查标签和两处版本号是否一致，再自动打包、安装测试，并把安装包附到 Release 上，上面的下载链接自动指向最新版。
+发布新版本（维护者）：把 `pyproject.toml` 和 `web/package.json` 里的版本号改成一样的新版本并推到 `main`，然后 `git tag v<版本>` 再 `git push origin v<版本>`。GitHub Actions 会先检查标签和两处版本号是否一致，再自动打包、安装测试，并把安装包附到 Release 上，上面的下载链接自动指向最新版。想要国内镜像直链时，在仓库的 Actions 设置里配好兼容 S3 的对象存储（腾讯云 COS、阿里云 OSS 等，见 `.github/workflows/release-windows.yml` 里「Upload to China mirror」一步的说明），发版时会自动上传，Release 说明里会带上国内地址。
 
 自己打包：在仓库根目录运行 `powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1`（需要 Python 3.11+、Node.js 20+ 和 [Inno Setup 6.5+](https://jrsoftware.org/isdl.php)；FFmpeg 会自动下载固定版本并校验），安装包输出到 `dist\installer\`。
 

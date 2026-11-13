@@ -27,7 +27,7 @@ auto_fetch_visuals = true
 
 # 各类别默认使用的 Provider
 [defaults]
-llm = "doubao"       # doubao / deepseek / kimi / qwen / openai
+llm = "doubao"       # doubao / deepseek / kimi / qwen / zhipu（免费）/ ollama（本机，免费）/ openai
 tts = "edge"        # 改成 "silent" 可离线预览
 stock = "pixabay"     # 或 "pexels"（Pexels 目前暂停发放新 Key）
 video_gen = "seedance"  # AI 视频（收费）：seedance / wan / kling / minimax / fal
@@ -37,6 +37,18 @@ asr = "faster_whisper"   # 剪辑页的语音识别：faster_whisper（本地免
 # ---- 大模型 ------------------------------------------------------------------
 # 在 [defaults] 里把 llm 改成要用的那一家，然后在对应小节填写 api_key 即可。
 # 模型更新很快，model 可以按控制台里的模型 ID 修改。
+# 不想花钱：用 zhipu（智谱 GLM-4.7-Flash，目前对注册用户免费）或 ollama（在本机运行，不要 Key）。
+
+# 智谱 GLM-4.7-Flash（目前免费，同时只能处理一个请求）：https://bigmodel.cn（注册后在「API Key」页面创建）
+[providers.llm.zhipu]
+api_key = ""
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+# model = "glm-4.7-flash"
+
+# 本地模型（Ollama）：先安装 https://ollama.com 并下载模型（例如 ollama pull qwen3:8b），不要 Key
+[providers.llm.ollama]
+# model = "qwen3:8b"
+base_url = "http://127.0.0.1:11434/v1"
 
 # 豆包 Seed：https://console.volcengine.com/ark（API Key 管理 + 开通模型）
 [providers.llm.doubao]
@@ -68,14 +80,11 @@ api_key = ""
 base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"   # 国际站：https://dashscope-intl.aliyuncs.com/compatible-mode/v1
 # model = "qwen-plus"
 
-# 其他 OpenAI 兼容接口（OpenAI、本地 Ollama 等）
+# 其他 OpenAI 兼容接口（OpenAI、各类中转等）；本地 Ollama 用上面的 [providers.llm.ollama]
 [providers.llm.openai]
 api_key = ""
 base_url = "https://api.openai.com/v1"
 model = "gpt-4o-mini"
-# 本地 Ollama 示例（api_key 留空）：
-# base_url = "http://127.0.0.1:11434/v1"
-# model = "qwen2.5:7b"
 
 # ---- 配音 --------------------------------------------------------------------
 # 默认用 Edge 在线语音：免 Key、不收费。下面几家是收费服务，按需启用：

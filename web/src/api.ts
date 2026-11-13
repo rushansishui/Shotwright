@@ -80,6 +80,8 @@ const json = (method: string, body?: unknown): RequestInit => ({
 
 export const api = {
   providers: () => request<Providers>("/providers"),
+  /** 本机的 Ollama：在运行时列出已下载的模型。 */
+  localLlm: () => request<{ running: boolean; models: string[] }>("/local-llm"),
   settings: () => request<SettingsData>("/settings"),
   transcript: (id: string, asset: string) => request<TranscriptData>(`/projects/${id}/transcripts/${asset}`),
   startTranscript: (id: string, asset: string, body: { provider?: string | null; language?: string | null } = {}) =>
@@ -116,6 +118,9 @@ export const api = {
   createVersion: (id: string, language: string) => request<Project>(`/projects/${id}/versions`, json("POST", { language })),
   listProjects: () => request<ProjectSummary[]>("/projects"),
   getProject: (id: string) => request<Project>(`/projects/${id}`),
+  /** 建一个示例项目（插画画面，不用 Key、不花钱就能渲染）。 */
+  createSample: (language: string) =>
+    request<Project>(`/projects/sample?language=${encodeURIComponent(language)}`, { method: "POST" }),
   createProject: (body: {
     mode: "llm" | "split" | "empty";
     title?: string;

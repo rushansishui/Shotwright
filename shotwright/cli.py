@@ -15,6 +15,7 @@ shotwright bench [--render]              跑质量基准集，结果存档并与
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -96,17 +97,68 @@ def cmd_serve(args) -> int:
     from shotwright.logs import quiet_polling_access_log
 
     quiet_polling_access_log()  # uvicorn 配置日志之后再挂一次过滤，避免被覆盖
+    if getattr(args, "window", False):
+        return _serve_in_window(server, sock, url)
     if args.open:
 
         def open_when_ready() -> None:
-            for _ in range(300):
-                if server.started:
-                    webbrowser.open(url)
-                    return
-                threading.Event().wait(0.1)
+            if _wait_started(server):
+                webbrowser.open(url)
 
         threading.Thread(target=open_when_ready, daemon=True).start()
     server.run(sockets=[sock])
+    return 0
+
+
+def _wait_started(server, seconds: float = 30.0) -> bool:
+    import threading
+
+    for _ in range(int(seconds * 10)):
+        if server.started:
+            return True
+        threading.Event().wait(0.1)
+    return bool(server.started)
+
+
+def _serve_in_window(server, sock, url: str) -> int:
+    """服务在后台线程跑，界面开在桌面窗口里；关掉窗口就停止服务。
+
+    窗口打不开（没装 pywebview、没有 WebView2、启动出错）时退回浏览器，服务照常运行，
+    关掉控制台窗口才停止，和以前一样。
+    """
+    import threading
+    import webbrowser
+
+    from shotwright import desktop
+
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
+    thread.start()
+    if not _wait_started(server):
+        desktop.show_console()
+        print("Shotwright 服务没能在 30 秒内启动，请查看上面的错误信息")
+        server.should_exit = True
+        thread.join(5)
+        return 1
+    opened = False
+    if desktop.window_supported():
+        try:
+            desktop.open_window(url)
+            opened = True
+        except Exception as exc:  # noqa: BLE001 —— 窗口打不开就用浏览器，不影响使用
+            print(f"桌面窗口打不开（{exc}），改用浏览器打开")
+    else:
+        print("没有找到桌面窗口组件（WebView2），改用浏览器打开")
+    if not opened:
+        desktop.show_console()
+        print(f"关掉这个窗口就会停止 Shotwright。界面地址：{url}")
+        webbrowser.open(url)
+        try:
+            while thread.is_alive():
+                thread.join(0.5)
+        except KeyboardInterrupt:
+            pass
+    server.should_exit = True
+    thread.join(10)
     return 0
 
 
@@ -338,6 +390,16 @@ def cmd_doctor(args) -> int:
     if not asr_ok and asr_detail == "未安装":
         asr_detail = '未安装（剪辑页需要：pip install -e ".[asr]"）'
     check("本地语音识别", asr_ok, asr_detail, args.strict)
+    # 桌面窗口：Windows 上要能导入 pywebview 的 WebView2 后端（pythonnet + .NET 程序集）。
+    win_modules = ("webview", "webview.platforms.winforms") if os.name == "nt" else ("webview",)
+    win_ok, win_detail = _loads(*win_modules)
+    if win_ok and os.name == "nt":
+        version = desktop.webview2_version()
+        win_detail = f"WebView2 {version}" if version else "缺少 WebView2 运行时，双击打开时会改用浏览器"
+    elif win_detail == "未安装":
+        win_detail = '未安装，双击打开时会改用浏览器（pip install -e ".[desktop]"）'
+    # 安装包必须带上窗口组件（冒烟测试用 --strict）；没有 WebView2 只是提醒，会自动退回浏览器。
+    check("桌面窗口", win_ok, win_detail, args.strict and desktop.frozen())
 
     failed = False
     for name, ok, detail, required in results:
@@ -360,6 +422,9 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000, help="首选端口；用不了时自动换后面的端口")
     serve.add_argument("--open", action="store_true", help="启动后用浏览器打开界面")
+    serve.add_argument(
+        "--window", action="store_true", help="界面开在桌面窗口里（需要 pywebview），关掉窗口就停止服务"
+    )
     serve.set_defaults(func=cmd_serve)
 
     doctor = sub.add_parser("doctor", help="检查运行环境（FFmpeg、网页界面、字体、语音识别）")

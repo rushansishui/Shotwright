@@ -8,6 +8,9 @@
 安装包里自带 FFmpeg（``ffmpeg\\ffmpeg.exe``），启动时放到 PATH 最前面，用户不用另装。
 
 从源码运行（``python -m shotwright``、``start.bat``）时这里什么都不做。
+
+双击打开时界面显示在独立的桌面窗口里（pywebview + 系统自带的 WebView2，和 Edge 同一个内核），
+不再跳到浏览器；关掉窗口就停止服务。没有 WebView2 或窗口打不开时，退回用浏览器打开。
 """
 
 from __future__ import annotations
@@ -71,3 +74,116 @@ def prepare() -> Path | None:
     if ffmpeg is not None:
         os.environ["PATH"] = f"{ffmpeg}{os.pathsep}{os.environ.get('PATH', '')}"
     return home
+
+
+# ---- 桌面窗口 -----------------------------------------------------------------
+
+WEBVIEW2_CLIENT = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+"""WebView2 运行时在 EdgeUpdate 里登记的 id（微软文档给出的检测方法）。"""
+
+
+def webview2_version() -> str | None:
+    """已安装的 WebView2 运行时版本；没装或不是 Windows 时返回 None。
+
+    Windows 11 自带；Windows 10 一般随 Edge 更新装好了。
+    """
+    if os.name != "nt":
+        return None
+    import winreg
+
+    places = (
+        (
+            winreg.HKEY_LOCAL_MACHINE,
+            "SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\" + WEBVIEW2_CLIENT,
+        ),
+        (winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\" + WEBVIEW2_CLIENT),
+        (winreg.HKEY_CURRENT_USER, "SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\" + WEBVIEW2_CLIENT),
+    )
+    for root, key in places:
+        try:
+            with winreg.OpenKey(root, key) as handle:
+                version, _ = winreg.QueryValueEx(handle, "pv")
+        except OSError:
+            continue
+        if version and version != "0.0.0.0":
+            return str(version)
+    return None
+
+
+def window_supported() -> bool:
+    """能不能用桌面窗口：装了 pywebview，Windows 上还要有 WebView2。"""
+    import importlib.util
+
+    if importlib.util.find_spec("webview") is None:
+        return False
+    if os.name == "nt":
+        return webview2_version() is not None
+    return True
+
+
+def _console_window():
+    """当前进程的控制台窗口句柄，以及这个控制台是不是只有我们自己在用。"""
+    if os.name != "nt":
+        return None, False
+    import ctypes
+
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.GetConsoleWindow()
+    if not handle:
+        return None, False
+    processes = (ctypes.c_uint32 * 4)()
+    count = kernel32.GetConsoleProcessList(processes, 4)
+    return handle, count <= 1
+
+
+def hide_console() -> bool:
+    """双击打开时把黑色的控制台窗口藏起来。
+
+    只在控制台是程序自己的时候藏（双击图标打开）；从命令行运行时控制台是用户的，不动。
+    返回是否真的藏了。
+    """
+    handle, own = _console_window()
+    if handle is None or not own:
+        return False
+    import ctypes
+
+    ctypes.windll.user32.ShowWindow(handle, 0)  # SW_HIDE
+    return True
+
+
+def show_console() -> None:
+    """把藏起来的控制台窗口放回来（退回浏览器模式、或启动出错要给用户看原因时）。"""
+    handle, own = _console_window()
+    if handle is None or not own:
+        return
+    import ctypes
+
+    ctypes.windll.user32.ShowWindow(handle, 5)  # SW_SHOW
+
+
+def open_window(url: str, *, title: str = APP_NAME) -> None:
+    """在桌面窗口里打开界面，窗口关掉后才返回。打不开时抛出异常，由调用方退回浏览器。"""
+    import webview
+
+    settings = getattr(webview, "settings", None)
+    if isinstance(settings, dict):
+        # 成片、工程包、字幕文件都是用 <a download> 下载的；外部链接（帮助、申请 Key）用系统浏览器打开。
+        settings["ALLOW_DOWNLOADS"] = True
+        settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
+    webview.create_window(
+        title,
+        url,
+        width=1440,
+        height=920,
+        min_size=(1024, 680),
+        text_select=True,
+        confirm_close=False,
+    )
+    storage = data_dir() / "webview"
+    storage.mkdir(parents=True, exist_ok=True)
+    # private_mode=False：保留 localStorage（首页草稿、界面语言、面板展开状态）。
+    webview.start(
+        gui="edgechromium" if os.name == "nt" else None,
+        private_mode=False,
+        storage_path=str(storage),
+    )
