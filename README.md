@@ -8,7 +8,7 @@
 
 Shotwright 以"镜头"为核心：文案被拆成一个个镜头，每个镜头可以单独选择画面来源（素材库检索、AI 生成、上传图片或视频），可以替换、锁定、单独重做。改一个镜头，只会重新渲染这个镜头，再加上最后的拼接导出。
 
-> 当前版本：v0.4.0。v0.4「商品广告」与「视频质量专项」的功能已全部开发完成，正在实测（用提示词改画面需要支持视频改视频的模型，如 Seedance 2.5）。v0.5「交付与效率」已完成首次启动向导、界面配置服务、多家 AI 视频服务、剪辑页、审片页、关键帧默认先行、生成前检查、整片样片、单镜头花费上限、品牌包与主体库和 Windows 安装包，其余在做。路线图见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+> 当前版本：v0.5.0。v0.4「商品广告」与「视频质量专项」的功能已全部开发完成，正在实测（用提示词改画面需要支持视频改视频的模型，如 Seedance 2.5）。v0.5「交付与效率」已完成首次启动向导、界面配置服务、多家 AI 视频服务、剪辑页、审片页、关键帧默认先行、生成前检查、整片样片、单镜头花费上限、品牌包与主体库、Windows 安装包（桌面窗口、国内下载加速）、示例项目和免费大模型（智谱 GLM-4.7-Flash、本地 Ollama），其余在做。路线图见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 **⬇️ Windows 一键安装：[下载 Shotwright-setup.exe](https://github.com/rushansishui/Shotwright/releases/latest/download/Shotwright-setup.exe)**（Windows 10 / 11 64 位，双击安装，不用另装任何环境）· [所有版本](https://github.com/rushansishui/Shotwright/releases)
 
