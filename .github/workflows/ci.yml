@@ -36,6 +36,10 @@ jobs:
           ruff format --check .
       - name: Test
         run: pytest
+      - name: 渲染基准冒烟（镜头级缓存没被改坏）
+        # 不联网、不花钱：3 个镜头跑一遍冷启动 + 改一镜，检查只重渲 1 个镜头且有缓存复用。
+        if: matrix.python-version == '3.13'
+        run: shotwright bench --local --draft --shots 3 --runs 1 --edits 1 --check --out storage/bench-smoke
 
   frontend:
     runs-on: ubuntu-latest

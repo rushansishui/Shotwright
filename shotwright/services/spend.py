@@ -15,10 +15,12 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from shotwright.core.models import Asset, Project, Shot
-from shotwright.core.store import ProjectStore, read_json
+from shotwright.core.store import ProjectStore, read_json, write_json
 from shotwright.services.durations import estimated_shot_seconds
 
 
@@ -103,12 +105,15 @@ def used_assets(shot: Shot) -> set[str]:
     return used
 
 
-def measure(store: ProjectStore, project: Project) -> SpendMetrics:
+def measure(store: ProjectStore, project: Project, *, render_id: str | None = None) -> SpendMetrics:
     """算出这个项目的四项花费指标。
 
     花费按全部版本累加（关键帧也是真花钱的），但「生成过几版」「首次可用率」只看
     正式画面：关键帧只是首帧的备选，混进来会让默认的「先出 3 张关键帧」把平均重做
     次数抬高好几倍，指标就失去了比较的意义。
+
+    ``render_id`` 指定用哪一次渲染的成片时长（写回执时用，避免并发下拿到别的渲染）；
+    为空时取最近一次渲染。
     """
     metrics = SpendMetrics(total=round(project.cost_credits, 4))
     for index, shot in enumerate(project.shots, start=1):
@@ -130,7 +135,7 @@ def measure(store: ProjectStore, project: Project) -> SpendMetrics:
         metrics.shots.append(ShotSpend(index, shot.id, len(generations), round(cost, 4), round(wasted, 4)))
 
     metrics.wasted = round(metrics.wasted, 4)
-    duration = _delivered_duration(store, project)
+    duration = _delivered_duration(store, project, render_id)
     if duration is None:
         metrics.duration = round(sum(estimated_shot_seconds(project, shot) for shot in project.shots), 2)
     else:
@@ -139,11 +144,14 @@ def measure(store: ProjectStore, project: Project) -> SpendMetrics:
     return metrics
 
 
-def _delivered_duration(store: ProjectStore, project: Project) -> float | None:
-    """最近一次渲染的成片时长；还没渲染过、或读不出来时返回 None。"""
+def _delivered_duration(store: ProjectStore, project: Project, render_id: str | None = None) -> float | None:
+    """某次渲染的成片时长；没指定时用最近一次。还没渲染过、或读不出来时返回 None。"""
     if store is None:
         return None
     try:
+        if render_id:
+            data = read_json(store.render_dir(project.id, render_id) / "render.json")
+            return _positive_duration((data or {}).get("duration"))
         directory = store.project_dir(project.id) / "renders"
     except (ValueError, OSError):
         return None
@@ -151,19 +159,22 @@ def _delivered_duration(store: ProjectStore, project: Project) -> float | None:
         return None
     latest: tuple[float, float] | None = None
     for child in directory.iterdir():
-        data = read_json(child / "render.json")
-        if not data:
-            continue
-        duration = data.get("duration")
-        if not isinstance(duration, (int, float)) or duration <= 0:
+        duration = _positive_duration((read_json(child / "render.json") or {}).get("duration"))
+        if duration is None:
             continue
         try:
             created = child.stat().st_mtime
         except OSError:
             continue
         if latest is None or created > latest[0]:
-            latest = (created, float(duration))
+            latest = (created, duration)
     return None if latest is None else latest[1]
+
+
+def _positive_duration(value) -> float | None:
+    if isinstance(value, (int, float)) and value > 0:
+        return float(value)
+    return None
 
 
 def asset_unused(shot: Shot, asset: Asset) -> bool:
@@ -172,3 +183,118 @@ def asset_unused(shot: Shot, asset: Asset) -> bool:
     if asset.id in used_assets(shot):
         return False
     return visual.take(asset.id) is not None
+
+
+# ---- 花费回执 ---------------------------------------------------------------
+#
+# 回执是把「花了多少钱」变成一张能截图、能转发的账单：每个镜头生成过几版、哪几版
+# 白花了，最后汇总成四个数。数字全部来自项目文件，不调用任何外部服务。
+
+
+def format_receipt(project: Project, metrics: SpendMetrics) -> str:
+    """终端里能直接看的花费回执（等宽对齐，中文按两格算）。"""
+    head = f"《{project.title}》 · {_duration(metrics)} · {len(project.shots)} 个镜头"
+    lines = [head, f"花费回执 · {time.strftime('%Y-%m-%d %H:%M')}", "─" * 40]
+    if not metrics.generated_shots:
+        lines.append("还没有收费生成，这个项目一分钱没花。")
+        lines.append("（配音用免费服务、画面用素材库或上传文件时不产生费用。）")
+        return "\n".join(lines)
+
+    lines += [
+        f"累计花费      ¥{metrics.total:.2f}",
+        f"其中浪费      ¥{metrics.wasted:.2f}（{_waste_ratio(metrics)}）",
+        f"每秒成片      ¥{metrics.per_second:.3f}",
+        f"首次可用率    {_first_pass(metrics)}",
+        f"平均重做      {metrics.average_takes:.2f} 版 / 镜头",
+        "",
+        "逐镜头",
+    ]
+    for item in metrics.shots:
+        if item.takes == 0:
+            continue
+        wasted = f"浪费 ¥{item.wasted:.2f}" if item.wasted > 0 else "都算数"
+        lines.append(f"  #{item.shot_index:<2} ¥{item.cost:>5.2f}  {item.takes:>2} 版  {wasted}")
+    return "\n".join(lines)
+
+
+def receipt_markdown(project: Project, metrics: SpendMetrics) -> str:
+    """同上一份回执，Markdown 版：贴到 issue、周报或 README 里用。"""
+    lines = [
+        f"### 花费回执 · {project.title}",
+        "",
+        f"- 成片 {_duration(metrics)}，{len(project.shots)} 个镜头",
+        f"- 累计花费 **¥{metrics.total:.2f}**，其中浪费 ¥{metrics.wasted:.2f}（{_waste_ratio(metrics)}）",
+        f"- 每秒成片 ¥{metrics.per_second:.3f}",
+        f"- 首次可用率 {_first_pass(metrics)}",
+        f"- 平均重做 {metrics.average_takes:.2f} 版 / 镜头" if metrics.average_takes else "- 还没有生成记录",
+        "",
+        "| 镜头 | 花费 | 版本 | 浪费 |",
+        "|---|---|---|---|",
+    ]
+    for item in metrics.shots:
+        if item.takes == 0:
+            continue
+        lines.append(f"| #{item.shot_index} | ¥{item.cost:.2f} | {item.takes} | ¥{item.wasted:.2f} |")
+    return "\n".join(lines) + "\n"
+
+
+def write_receipt(store: ProjectStore, project: Project, render_id: str | None = None) -> Path | None:
+    """把花费回执写进渲染目录的 ``cost.json``，和成片放在一起。
+
+    ``render_id`` 为空时写到最近一次渲染；还没有渲染过时返回 ``None``。
+    渲染成功后才调用，失败不影响成片。
+    """
+    directory = _render_dir(store, project, render_id)
+    if directory is None:
+        return None
+    metrics = measure(store, project, render_id=directory.name)
+    path = directory / "cost.json"
+    write_json(
+        path,
+        {
+            **metrics.to_dict(),
+            "project_id": project.id,
+            "project_title": project.title,
+            "render_id": directory.name,
+            "generated_at": round(time.time(), 3),
+            "receipt": format_receipt(project, metrics),
+        },
+    )
+    return path
+
+
+def _render_dir(store: ProjectStore, project: Project, render_id: str | None) -> Path | None:
+    try:
+        if render_id:
+            directory = store.render_dir(project.id, render_id)
+            return directory if directory.is_dir() else None
+        root = store.project_dir(project.id) / "renders"
+        if not root.is_dir():
+            return None
+        latest: tuple[float, Path] | None = None
+        for child in root.iterdir():
+            if not (child / "render.json").is_file():
+                continue
+            created = child.stat().st_mtime
+            if latest is None or created > latest[0]:
+                latest = (created, child)
+        return None if latest is None else latest[1]
+    except (OSError, ValueError):
+        return None
+
+
+def _duration(metrics: SpendMetrics) -> str:
+    source = "成片" if metrics.duration_source == "render" else "估算"
+    return f"{metrics.duration:.1f} 秒（{source}）"
+
+
+def _waste_ratio(metrics: SpendMetrics) -> str:
+    if metrics.total <= 0:
+        return "0%"
+    return f"{round(metrics.wasted / metrics.total * 100)}%"
+
+
+def _first_pass(metrics: SpendMetrics) -> str:
+    if metrics.first_pass_rate is None:
+        return "—"
+    return f"{round(metrics.first_pass_rate * 100)}%（{metrics.first_pass_shots}/{metrics.generated_shots} 个镜头）"

@@ -269,6 +269,33 @@ def cmd_render(args) -> int:
     for warning in result.warnings:
         print(f"提示：{warning}")
     print(store.render_dir(result.project_id, result.render_id) / result.video)
+    from shotwright.services import spend
+
+    receipt = spend.write_receipt(store, store.load(result.project_id), result.render_id)
+    if receipt:
+        print(f"花费回执：{receipt}")
+    return 0
+
+
+def cmd_spend(args) -> int:
+    """打印花费回执：每个镜头花了多少、哪几版白花了。"""
+    import json
+
+    from shotwright.services import spend
+
+    _settings, store = _store(args)
+    project = store.load(args.project)
+    metrics = spend.measure(store, project)
+    if args.json:
+        print(
+            json.dumps(
+                {**metrics.to_dict(), "receipt": spend.format_receipt(project, metrics)},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    else:
+        print(spend.format_receipt(project, metrics))
     return 0
 
 
@@ -304,6 +331,30 @@ def cmd_bench(args) -> int:
     if args.offline:
         settings.auto_fetch_visuals = False
     root = Path(args.out) if args.out else settings.storage_dir.parent / "bench"
+    out_dir = root / time.strftime("%Y%m%d-%H%M%S")
+    if args.local:
+        from shotwright.services import bench_local
+
+        report = bench_local.run_local_bench(
+            store,
+            settings,
+            out_dir,
+            quality="draft" if args.draft else "final",
+            shots=args.shots,
+            runs=max(1, args.runs),
+            edits=args.edits,
+            keep=args.keep,
+            progress=print,
+        )
+        print(bench_local.format_report(report.to_dict()))
+        print(f"结果已保存到 {out_dir}")
+        if args.check:
+            problems = bench_local.check_report(report)
+            for problem in problems:
+                print(f"基准回归：{problem}", file=sys.stderr)
+            return 1 if problems else 0
+        return 0
+
     previous = None
     if args.compare:
         previous = json.loads((Path(args.compare) / "report.json").read_text(encoding="utf-8"))
@@ -311,7 +362,6 @@ def cmd_bench(args) -> int:
         runs = sorted(p for p in root.glob("*") if (p / "report.json").exists()) if root.exists() else []
         if runs:
             previous = json.loads((runs[-1] / "report.json").read_text(encoding="utf-8"))
-    out_dir = root / time.strftime("%Y%m%d-%H%M%S")
     report = bench.run_bench(
         store,
         settings,
@@ -492,6 +542,21 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--render", action="store_true", help="同时渲染草稿成片，测量响度和慢放定格占比")
     bench.add_argument("--allow-paid", action="store_true", help="渲染时允许为 AI 镜头调用收费生成")
     bench.add_argument("--offline", action="store_true", help="渲染时不检索素材，缺画面的镜头用纯色")
+    bench.add_argument(
+        "--local",
+        action="store_true",
+        help="本地渲染基准：不联网、不花钱，测整片冷启动和改一个镜头的重渲耗时",
+    )
+    bench.add_argument("--edits", type=int, default=3, help="本地基准里改几次镜头（默认 3）")
+    bench.add_argument("--shots", type=int, default=12, help="本地基准的镜头数（默认 12）")
+    bench.add_argument("--runs", type=int, default=3, help="冷启动跑几次取中位数（默认 3）")
+    bench.add_argument("--draft", action="store_true", help="本地基准用草稿档（更快，数字偏小）")
+    bench.add_argument("--keep", action="store_true", help="本地基准跑完保留示例项目")
+    bench.add_argument(
+        "--check",
+        action="store_true",
+        help="本地基准跑完后检查缓存有没有失效（CI 用），有问题时退出码为 1",
+    )
     bench.add_argument("--aspect", action="append", choices=["9:16", "16:9", "1:1"], help="只跑这些画面比例")
     bench.add_argument("--brief", action="append", help="只跑这些诉求（briefs.json 里的 id）")
     bench.add_argument(
@@ -502,6 +567,11 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--out", help="结果目录（默认 storage/bench）")
     bench.add_argument("--compare", help="与这次结果对比（默认与最近一次对比）")
     bench.set_defaults(func=cmd_bench)
+
+    spend_parser = sub.add_parser("spend", help="打印花费回执：每个镜头花了多少、哪几版白花了")
+    spend_parser.add_argument("project")
+    spend_parser.add_argument("--json", action="store_true", help="输出 JSON，便于脚本处理")
+    spend_parser.set_defaults(func=cmd_spend)
     return parser
 
 

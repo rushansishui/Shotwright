@@ -28,6 +28,7 @@ shotwright/
 │   ├── models.py        Project / Shot / ShotVisual / Asset 等 Pydantic 模型
 │   ├── store.py         项目存储：原子写入、素材按 SHA-256 去重、路径越界校验
 │   ├── fingerprint.py   阶段指纹
+│   ├── sysinfo.py       峰值内存、平台信息（基准报告用）
 │   ├── platforms.py     交付平台规格表：推荐比例、安全区、编码参数（唯一一份）
 │   └── ids.py
 ├── providers/
@@ -65,6 +66,7 @@ shotwright/
 │   ├── speech.py        配音标注：[停顿]、*强调*
 │   ├── pronounce.py     读音纠正：易读错的词换成同音字再配音
 │   ├── bench.py         质量基准集：固定诉求跑分镜和成片，输出可对比的指标
+│   ├── bench_local.py   本地渲染基准：不联网、不花钱，测冷启动和改一个镜头的重渲耗时
 │   ├── visuals.py       检索（带检索缓存）/ 生成候选素材，登记上传文件，改画面，恢复收费任务
 │   ├── editing.py       镜头内剪辑：拆分、合并镜头（改入出点，不切文件）；按文案句子拆镜头
 │   ├── transcribe.py    剪辑页：语音识别原片、按文字剪、生成原声镜头
@@ -139,7 +141,7 @@ storage/projects/<项目id>/
 │   └── other/        其他来源
 ├── cache/            voice/ shots/ assembly/ final/，按指纹命名，可随时删除
 │                     stock-search/ 检索结果缓存，相同检索词 7 天内复用
-└── renders/<渲染id>/ video.mp4、subtitles.srt、render.json
+└── renders/<渲染id>/ video.mp4、subtitles.srt、render.json、cost.json
 ```
 
 镜头内剪辑的设置都在 `ShotVisual` 里：
@@ -320,6 +322,7 @@ Base URL 误填成完整的 `/chat/completions` 地址时会自动纠正。
 | POST | `/projects/{id}/shots/{shot}/merge` | 和后一个镜头合并；同一段视频里相邻的片段连成一段 |
 | POST | `/projects/{id}/footage` | 导入原片，按画面变化切成镜头（`?replace_shots=true` 替换现有镜头） |
 | GET | `/projects/{id}/cost-estimate` | 渲染前的预计费用（`?quality=draft` 按草稿分辨率估算） |
+| GET | `/projects/{id}/spend` | 花费指标和花费回执：每秒成片花费、首次可用率、平均重做次数、浪费金额；`receipt` 是纯文本账单，`markdown` 可直接贴到 issue（渲染完成后同样写进 `renders/<id>/cost.json`） |
 | GET | `/projects/{id}/checkup` | 渲染前体检：缺画面、素材太短、分辨率不足、文字重叠、超出费用上限、画面比例不合平台等 |
 | GET | `/platforms` | 交付平台规格（推荐比例、安全区） |
 | POST | `/projects/{id}/shots/{shot}/rewrite` | 单镜头 AI 改写：`{"instruction": "..."}`，只改画面描述、运镜和衔接 |

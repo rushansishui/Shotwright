@@ -1,0 +1,36 @@
+name: 功能建议
+description: 想要的新能力、新服务、新模板
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你现在卡在哪
+      description: 先说场景和痛点，再说功能。这样更容易判断该不该做、怎么做。
+      placeholder: 我一次要给同一个产品出 6 个国家的版本，现在只能一个个建项目，改一个设定要重复 6 遍……
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 你希望它怎么工作
+      description: 界面上一句话怎么操作、结果长什么样。不用写实现。
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 你现在怎么绕过（可选）
+      description: 临时办法、用过的其他工具、为什么不够用。
+  - type: dropdown
+    id: area
+    attributes:
+      label: 大概属于哪块
+      options:
+        - 创作与分镜
+        - 画面（素材 / AI 视频 / AI 图片）
+        - 配音、字幕、音乐
+        - 剪辑已有视频
+        - 多语言与交付
+        - 费用与预算
+        - 服务接入（新模型 / 新配音 / 新素材库）
+        - 界面与上手
+        - 其他

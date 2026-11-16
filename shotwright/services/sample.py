@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 import random
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter
@@ -94,6 +94,19 @@ TEXTS = {
 def _texts(language: str) -> tuple[dict[str, str], list[SampleShot]]:
     key = "zh" if language.lower().startswith("zh") else "en"
     return TEXTS[key], SHOTS[key]
+
+
+def _plan_shots(base: list[SampleShot], count: int | None, language: str) -> list[SampleShot]:
+    """按需要的镜头数循环使用场景；超出一轮时给文案加后缀，避免指纹重复。"""
+    if not count or count <= 0 or count <= len(base):
+        return list(base[:count] if count else base)
+    zh = language.lower().startswith("zh")
+    plan: list[SampleShot] = []
+    for index in range(count):
+        item = base[index % len(base)]
+        suffix = f"（第 {index // len(base) + 1} 段）" if zh else f" (part {index // len(base) + 1})"
+        plan.append(replace(item, text=item.text + suffix))
+    return plan
 
 
 # ---- 插画 -------------------------------------------------------------------
@@ -353,9 +366,17 @@ def paint(scene: str, size: tuple[int, int]) -> Image.Image:
 # ---- 建项目 -----------------------------------------------------------------
 
 
-def build(store: ProjectStore, *, language: str = "zh-CN", tts: str | None = None) -> Project:
-    """建一个示例项目并保存，返回项目。插画按 9:16 画布尺寸现画。"""
-    texts, shots = _texts(language)
+def build(
+    store: ProjectStore, *, language: str = "zh-CN", tts: str | None = None, shots: int | None = None
+) -> Project:
+    """建一个示例项目并保存，返回项目。插画按 9:16 画布尺寸现画。
+
+    ``shots`` 为空时用默认的 5 个镜头；指定更大的数字时循环使用场景，并给文案加上
+    「（第 N 段）」后缀，保证每个镜头的配音指纹不同（否则同一段文案会命中同一份缓存，
+    基准就测不出「只重渲一个镜头」了）。基准集用这个参数把片子拉长到更接近真实项目。
+    """
+    texts, base = _texts(language)
+    plan = _plan_shots(base, shots, language)
     project = Project(title=texts["title"], subject=texts["subject"], video_type="product_ad")
     project.canvas = Canvas(aspect="9:16")
     if tts:
@@ -367,7 +388,7 @@ def build(store: ProjectStore, *, language: str = "zh-CN", tts: str | None = Non
     project = store.create(project)
     size = (project.canvas.width, project.canvas.height)
     with tempfile.TemporaryDirectory(prefix="shotwright-sample-") as work:
-        for index, item in enumerate(shots, start=1):
+        for index, item in enumerate(plan, start=1):
             path = Path(work) / f"sample-{index}.jpg"
             paint(item.scene, size).save(path, quality=90)
             asset = store.add_asset(
@@ -382,7 +403,7 @@ def build(store: ProjectStore, *, language: str = "zh-CN", tts: str | None = Non
                     ),
                 )
             )
-    project.script = [item.text for item in shots]
+    project.script = [item.text for item in plan]
     # 价格和购买引导只在最后一个镜头出现：按估算的配音时长定时间，渲染时以实际配音为准。
     from shotwright.services.durations import estimated_shot_seconds
 
