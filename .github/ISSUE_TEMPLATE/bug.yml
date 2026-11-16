@@ -32,7 +32,7 @@ body:
     attributes:
       label: 版本
       description: 安装包文件名里的版本号，或 `shotwright --version` 的输出。
-      placeholder: v0.5.0
+      placeholder: v0.5.1
     validations:
       required: true
   - type: dropdown
