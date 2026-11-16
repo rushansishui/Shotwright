@@ -939,7 +939,7 @@ def test_stock_prefers_resolution_and_ranks_by_vision(store, settings):
 
 
 def test_speech_marks_parse_and_strip():
-    from shotwright.services import speech
+    from shotwright.core import speech
 
     text = "早上没时间？[停顿]试试这台*便携咖啡机*。[停顿 1.2][pause]三分钟出咖啡。"
     parts = speech.segments(text)

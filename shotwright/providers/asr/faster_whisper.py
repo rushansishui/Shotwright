@@ -151,7 +151,7 @@ class FasterWhisperASR:
         kwargs = {"allow_patterns": MODEL_FILES, "cache_dir": self.download_root}
         try:
             return huggingface_hub.snapshot_download(repo, local_files_only=True, **kwargs)
-        except Exception:
+        except Exception:  # noqa: BLE001 - 本地缓存探测失败就转下载，原因不重要
             pass  # 本地没有，下面下载
 
         endpoints = [self.mirror] if self.mirror else []
@@ -181,7 +181,7 @@ class FasterWhisperASR:
             watcher.start()
             try:
                 return huggingface_hub.snapshot_download(repo, endpoint=endpoint, **kwargs)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - 换下一个下载源，错误汇总后统一报
                 errors.append(f"{endpoint}：{str(exc)[:160]}")
                 log.warning("从 %s 下载识别模型失败：%s", endpoint, exc)
             finally:

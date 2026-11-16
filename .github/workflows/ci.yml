@@ -34,6 +34,7 @@ jobs:
         run: |
           ruff check .
           ruff format --check .
+          python scripts/check_layers.py
       - name: Test
         run: pytest
       - name: 渲染基准冒烟（镜头级缓存没被改坏）
