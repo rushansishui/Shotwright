@@ -47,6 +47,25 @@ def tools() -> Tools:
     return _tools
 
 
+def version() -> str:
+    """FFmpeg 的版本行（例如 ``ffmpeg version 9.0.2-full_build``）；拿不到时返回空字符串。
+
+    基准报告要写清楚是哪个版本编出来的，不同版本的编码速度没有可比性。
+    """
+    try:
+        proc = subprocess.run(
+            [tools().ffmpeg, "-version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    lines = (proc.stdout or "").splitlines()
+    return lines[0].strip() if lines else ""
+
+
 def run_ffmpeg(
     args: list[str],
     *,
