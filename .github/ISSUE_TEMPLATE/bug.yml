@@ -1,0 +1,61 @@
+name: 问题反馈
+description: 装不上、跑不起来、渲染出错、界面不对
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        先跑一句 `shotwright doctor`（安装版是 `Shotwright.exe doctor`），它会检查 FFmpeg、字体、网页界面和语音识别组件。
+        它输出里没有的问题，再往下填。
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 你期望的结果，和实际看到的结果。
+      placeholder: 我想渲染一条 6 个镜头的视频，点「渲染」后进度停在「配音 3/6」……
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 怎么复现
+      description: 从打开界面开始，一步一步写。能稳定复现最好；只出现一次也可以说清楚当时在做什么。
+      placeholder: |
+        1. 新建项目，粘贴 6 句文案
+        2. 画面全部选「素材库」，填检索词
+        3. 点渲染，画质选「成片」
+        4. 停在「配音 3/6」
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      description: 安装包文件名里的版本号，或 `shotwright --version` 的输出。
+      placeholder: v0.5.0
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: 系统
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS
+        - Linux
+        - Docker
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: shotwright doctor 的输出
+      description: 整段贴进来。它会自动脱敏，不含 API Key。
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志（可选）
+      description: 在 `storage/logs/shotwright.log`（安装版在 `%LOCALAPPDATA%\Shotwright\logs`），贴出错前后几十行即可。日志里不含 Key。
+      render: text
