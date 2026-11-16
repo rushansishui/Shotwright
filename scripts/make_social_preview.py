@@ -48,7 +48,9 @@ def _shadowed_card(image: Image.Image, size: tuple[int, int], radius: int = 18) 
     card.putalpha(mask)
 
     shadow = Image.new("RGBA", (size[0] + 60, size[1] + 60), (0, 0, 0, 0))
-    ImageDraw.Draw(shadow).rounded_rectangle((30, 30, 30 + size[0], 30 + size[1]), radius=radius, fill=(0, 0, 0, 150))
+    ImageDraw.Draw(shadow).rounded_rectangle(
+        (30, 30, 30 + size[0], 30 + size[1]), radius=radius, fill=(0, 0, 0, 150)
+    )
     shadow = shadow.filter(ImageFilter.GaussianBlur(18))
     return card, shadow
 
@@ -84,7 +86,9 @@ def main() -> None:
         x, y = 680, (H - card_h) // 2
         canvas.alpha_composite(shadow, (x - 30, y - 30))
         canvas.alpha_composite(card, (x, y))
-        draw.rounded_rectangle((x, y, x + card_w, y + card_h), radius=18, outline=(255, 255, 255, 40), width=2)
+        draw.rounded_rectangle(
+            (x, y, x + card_w, y + card_h), radius=18, outline=(255, 255, 255, 40), width=2
+        )
 
     draw.text((108, 540), "github.com/rushansishui/Shotwright", font=tiny, fill=MUTED)
     draw.rounded_rectangle((104, 528, 112, 536), radius=2, fill=ACCENT)
