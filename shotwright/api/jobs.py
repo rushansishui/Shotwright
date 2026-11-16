@@ -17,6 +17,7 @@ from shotwright.config import Settings
 from shotwright.core.ids import new_id
 from shotwright.core.store import ProjectStore
 from shotwright.pipeline.render import RenderCancelled, Renderer
+from shotwright.services import spend
 
 log = logging.getLogger(__name__)
 
@@ -133,6 +134,10 @@ class JobManager:
             log.exception("渲染任务 %s 失败", job.id)
         else:
             job.state, job.progress, job.message, job.result = "done", 1.0, "完成", result.to_dict()
+            try:
+                spend.write_receipt(self.store, self.store.load(job.project_id), result.render_id)
+            except Exception:  # noqa: BLE001 - 回执写不出来不影响成片
+                log.exception("渲染任务 %s 写花费回执失败", job.id)
             reused = sum(1 for s in result.stages if s.reused)
             log.info(
                 "渲染任务 %s 完成：%.1f 秒成片，复用缓存 %d/%d，提示 %d 条",

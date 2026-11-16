@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 
 from shotwright.core.models import Project, Shot, ShotVisual, Take
@@ -163,3 +164,70 @@ def test_keyframes_do_not_inflate_the_average_takes():
     # 花费仍按全部版本累加，关键帧的钱不会漏。
     assert metrics.total == 1.3
     assert metrics.shots[0].cost == 1.3
+
+
+# ---- 花费回执 ---------------------------------------------------------------
+
+
+def test_receipt_lists_each_shot_and_the_waste():
+    project = _project([("a", 1.0, True), ("b", 0.5, False)])
+    metrics = _measure(project)
+    text = spend.format_receipt(project, metrics)
+    assert "累计花费" in text
+    assert "¥1.50" in text
+    assert "浪费" in text
+    assert "#1" in text
+    assert "首次可用率" in text
+
+
+def test_receipt_for_a_free_project_says_so():
+    project = Project(title="免费项目")
+    metrics = spend.measure(None, project)  # type: ignore[arg-type]
+    text = spend.format_receipt(project, metrics)
+    assert "一分钱没花" in text
+    # 没有生成记录时不该出现逐镜头表格。
+    assert "逐镜头" not in text
+
+
+def test_receipt_markdown_is_pasteable():
+    project = _project([("a", 1.0, True), ("b", 0.5, False)])
+    markdown = spend.receipt_markdown(project, _measure(project))
+    assert "| 镜头 | 花费 | 版本 | 浪费 |" in markdown
+    assert "| #1 | ¥1.50 | 2 | ¥0.50 |" in markdown
+
+
+def test_write_receipt_lands_next_to_the_render(store):
+    project = store.create(Project(title="收据测试"))
+    directory = store.render_dir(project.id, "r1")
+    (directory / "render.json").write_text('{"duration": 12.5, "render_id": "r1"}', encoding="utf-8")
+
+    path = spend.write_receipt(store, project, "r1")
+
+    assert path is not None and path.name == "cost.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["render_id"] == "r1"
+    assert data["currency"] == "CNY"
+    assert data["duration_source"] == "render"
+    assert "receipt" in data
+    # 不传 render_id 时写到最近一次渲染。
+    assert spend.write_receipt(store, project) == path
+
+
+def test_receipt_uses_the_render_it_belongs_to(store):
+    """并发或连续渲染时，回执要写自己那一次的时长，不能拿最近一次的。"""
+    project = store.create(Project(title="收据测试"))
+    first = store.render_dir(project.id, "r1")
+    (first / "render.json").write_text('{"duration": 12.5, "render_id": "r1"}', encoding="utf-8")
+    later = store.render_dir(project.id, "r2")
+    (later / "render.json").write_text('{"duration": 40, "render_id": "r2"}', encoding="utf-8")
+
+    path = spend.write_receipt(store, project, "r1")
+    assert path is not None
+    assert json.loads(path.read_text(encoding="utf-8"))["duration"] == 12.5
+
+
+def test_spend_endpoint_returns_a_receipt(client):
+    pid = client.post("/api/v2/projects", json={"mode": "empty"}).json()["id"]
+    body = client.get(f"/api/v2/projects/{pid}/spend").json()
+    assert body["currency"] == "CNY"
+    assert "receipt" in body and "markdown" in body

@@ -293,10 +293,23 @@ export function RenderPanel(props: {
 
   // 花费指标：只在花过钱、且不在渲染时拉取。
   const [spend, setSpend] = useState<SpendMetrics | null>(null);
+  const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (running || project.cost_credits <= 0) { setSpend(null); return; }
     api.spend(project.id).then(setSpend).catch(() => setSpend(null));
   }, [project.id, project.revision, project.cost_credits, running]);
+
+  function copyReceipt() {
+    const text = spend?.receipt;
+    if (!text) return;
+    navigator.clipboard?.writeText(text).then(
+      () => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 2000);
+      },
+      () => undefined,
+    );
+  }
 
   async function start() {
     setError("");
@@ -465,6 +478,11 @@ export function RenderPanel(props: {
               </li>
             </ul>
             {spend.duration_source === "estimate" && <p className="muted small">{t("spend.estimated")}</p>}
+            {spend.receipt && (
+              <button type="button" className="btn ghost" onClick={copyReceipt}>
+                {copied ? t("spend.copied") : t("spend.copy")}
+              </button>
+            )}
           </details>
         )}
         {!running && (

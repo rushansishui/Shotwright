@@ -620,6 +620,15 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
 
     @api.get("/projects/{project_id}/spend")
     def get_spend(project_id: str):
-        """花费指标：每秒成片花费、首次可用率、平均重做次数、浪费金额。只读。"""
+        """花费指标和花费回执：每秒成片花费、首次可用率、平均重做次数、浪费金额。只读。
+
+        ``receipt`` 是给人看的账单（纯文本），``markdown`` 是同一份账单的 Markdown 版，
+        可以直接贴到 issue 或周报里。
+        """
         project = store.load(_id(project_id))
-        return spend.measure(store, project).to_dict()
+        metrics = spend.measure(store, project)
+        return {
+            **metrics.to_dict(),
+            "receipt": spend.format_receipt(project, metrics),
+            "markdown": spend.receipt_markdown(project, metrics),
+        }

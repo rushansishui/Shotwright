@@ -696,6 +696,10 @@ export interface SpendMetrics {
   /** render：成片时长来自最近一次渲染；estimate：按配音估算。 */
   duration_source: "render" | "estimate";
   currency: string;
+  /** 给人看的花费回执（纯文本），可以直接复制或截图。 */
+  receipt?: string;
+  /** 同一份回执的 Markdown 版。 */
+  markdown?: string;
   shots: { shot_index: number; shot_id: string; takes: number; cost: number; wasted: number }[];
 }
 

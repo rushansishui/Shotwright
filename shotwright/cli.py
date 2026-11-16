@@ -269,6 +269,33 @@ def cmd_render(args) -> int:
     for warning in result.warnings:
         print(f"提示：{warning}")
     print(store.render_dir(result.project_id, result.render_id) / result.video)
+    from shotwright.services import spend
+
+    receipt = spend.write_receipt(store, store.load(result.project_id), result.render_id)
+    if receipt:
+        print(f"花费回执：{receipt}")
+    return 0
+
+
+def cmd_spend(args) -> int:
+    """打印花费回执：每个镜头花了多少、哪几版白花了。"""
+    import json
+
+    from shotwright.services import spend
+
+    _settings, store = _store(args)
+    project = store.load(args.project)
+    metrics = spend.measure(store, project)
+    if args.json:
+        print(
+            json.dumps(
+                {**metrics.to_dict(), "receipt": spend.format_receipt(project, metrics)},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    else:
+        print(spend.format_receipt(project, metrics))
     return 0
 
 
@@ -540,6 +567,11 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--out", help="结果目录（默认 storage/bench）")
     bench.add_argument("--compare", help="与这次结果对比（默认与最近一次对比）")
     bench.set_defaults(func=cmd_bench)
+
+    spend_parser = sub.add_parser("spend", help="打印花费回执：每个镜头花了多少、哪几版白花了")
+    spend_parser.add_argument("project")
+    spend_parser.add_argument("--json", action="store_true", help="输出 JSON，便于脚本处理")
+    spend_parser.set_defaults(func=cmd_spend)
     return parser
 
 

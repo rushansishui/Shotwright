@@ -50,3 +50,14 @@ def test_sample_project_renders_without_keys(client: TestClient):
     job = client.post(f"/api/v2/projects/{pid}/renders", json={"quality": "draft"}).json()
     status = client.get(f"/api/v2/renders/{job['id']}").json()
     assert status["state"] == "done", status
+
+
+def test_render_writes_a_cost_receipt(client: TestClient, settings):
+    """渲染完成后，花费回执和成片放在一起，界面和命令行都能读。"""
+    pid = client.post("/api/v2/projects/sample").json()["id"]
+    job = client.post(f"/api/v2/projects/{pid}/renders", json={"quality": "draft"}).json()
+    assert client.get(f"/api/v2/renders/{job['id']}").json()["state"] == "done"
+
+    receipt = settings.storage_dir / pid / "renders" / job["id"] / "cost.json"
+    assert receipt.is_file()
+    assert "receipt" in client.get(f"/api/v2/projects/{pid}/spend").json()
