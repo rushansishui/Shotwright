@@ -12,14 +12,14 @@ import time
 from pathlib import Path
 
 from shotwright.config import Settings
+from shotwright.core import pronounce
+from shotwright.core import speech as marks
 from shotwright.core.fingerprint import fingerprint
 from shotwright.core.models import Project, Shot
 from shotwright.core.store import ProjectStore, read_json, write_json
 from shotwright.media.ffmpeg import run_ffmpeg
 from shotwright.providers import registry
 from shotwright.providers.base import ProviderError, TTSProvider
-from shotwright.services import pronounce
-from shotwright.services import speech as marks
 
 from .render_types import AUDIO_ARGS, RenderError, StageRecord
 

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import json
 
-from shotwright.core import languages
+from shotwright.core import languages, speech
 from shotwright.core.models import VIDEO_TYPE_NAMES, Project
 from shotwright.providers.base import LLMProvider, ProviderError
-from shotwright.services import speech
 from shotwright.services.storyboard import _extract_json
 
 PROMPT = """你是短视频标题编辑。根据视频的诉求和每个镜头的文案，用 {language} 写标题。

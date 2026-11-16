@@ -24,9 +24,8 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from shotwright.core import platforms
+from shotwright.core import platforms, speech
 from shotwright.core.models import Project
-from shotwright.services import speech
 from shotwright.services.archive import safe_name
 
 log = logging.getLogger("shotwright.publish")

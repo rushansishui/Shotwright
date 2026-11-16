@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Literal
 
 from shotwright.config import Settings
-from shotwright.core import platforms
+from shotwright.core import platforms, pronounce, speech
 from shotwright.core.fingerprint import fingerprint
 from shotwright.core.ids import new_id
 from shotwright.core.models import Project, Shot, auto_subtitle_margin
@@ -41,7 +41,7 @@ from shotwright.media.ffmpeg import (
 )
 from shotwright.media.grades import GRADE_VERSION, grade_filter
 from shotwright.providers.base import ProviderError
-from shotwright.services import pronounce, speech, visuals
+from shotwright.services import visuals
 
 from .metadata import tag_video
 from .render_types import (

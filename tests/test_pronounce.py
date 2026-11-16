@@ -3,12 +3,12 @@
 import json
 from pathlib import Path
 
+from shotwright.core import pronounce
 from shotwright.core.models import Project, Pronunciation
 from shotwright.media import subtitles as subs
 from shotwright.providers import registry
 from shotwright.providers.base import ProviderSpec, SpeechResult, WordTiming
 from shotwright.providers.tts.silent import SilentTTS
-from shotwright.services import pronounce
 
 FONT = Path(__file__).resolve().parents[1] / "resources" / "fonts" / "NotoSansSC-Bold.ttf"
 
