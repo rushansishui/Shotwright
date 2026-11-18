@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import tempfile
 import time
+from collections.abc import Callable, Iterator
+from contextlib import ExitStack, contextmanager
 from dataclasses import asdict
 from pathlib import Path
 from typing import Literal
@@ -307,8 +309,10 @@ def check_budget(
     *,
     resolution: str = "",
     seconds: float | None = None,
-) -> None:
-    """收费生成前检查花费：单镜头上限、单镜头次数上限、项目上限，任意一个会超就拒绝提交。
+    project_reserved: float = 0,
+    shot_reserved: float = 0,
+) -> float:
+    """检查单镜头金额、次数和项目金额上限，并返回本次参考费用。
 
     单镜头的上限比项目的更早生效：某个镜头一直抽不中，就先卡住这个镜头，别让它把
     整个项目的预算吃光；提示里也说清楚「建议换个思路」。
@@ -316,7 +320,7 @@ def check_budget(
     from shotwright.services import cost
 
     visual = shot.visual
-    spent = round(sum(take.cost for take in visual.takes), 4)
+    spent = round(sum(take.cost for take in visual.takes), 4) + shot_reserved
     # 次数上限和钱无关：单价没配（例如 fal 这类要自己填 price 的服务）时金额算出来是 0，
     # 不能因此把「最多生成几版」一起跳过，否则上限在那类服务上完全不起作用。
     generations = len(visual.generation_takes())
@@ -329,19 +333,63 @@ def check_budget(
         settings, project, shot, kind, provider_id or "", resolution=resolution, seconds=seconds
     )
     if amount <= 0:
-        return
+        return 0.0
     if visual.budget is not None and spent + amount > visual.budget + 1e-9:
         raise BudgetExceeded(
             f"超出这个镜头的费用上限：已花约 {spent:.2f} 元，本次约 {amount:.2f} 元，"
             f"上限 {visual.budget:.2f} 元。建议先换思路：改描述、换角度，或改用素材库"
         )
-    if project.budget is None:
-        return
-    if project.cost_credits + amount > project.budget + 1e-9:
+    if (
+        project.budget is not None
+        and project.cost_credits + project_reserved + amount > project.budget + 1e-9
+    ):
         raise BudgetExceeded(
             f"超出项目费用上限：已花约 {project.cost_credits:.2f} 元，本次约 {amount:.2f} 元，"
             f"上限 {project.budget:.2f} 元。可以在渲染面板提高上限"
         )
+    return amount
+
+
+_reservations: dict[tuple[ProjectStore, str], dict[object, tuple[str, float]]] = {}
+
+
+@contextmanager
+def _reserve_spend(
+    store: ProjectStore,
+    settings: Settings,
+    project: Project,
+    shot: Shot,
+    kind: str,
+    provider_id: str | None,
+    *,
+    resolution: str = "",
+    seconds: float | None = None,
+) -> Iterator[None]:
+    key = (store, project.id)
+    token = object()
+    with store.lock(project.id):
+        latest = store.load(project.id)
+        pending = _reservations.get(key, {})
+        amount = check_budget(
+            settings,
+            latest,
+            shot,
+            kind,
+            provider_id,
+            resolution=resolution,
+            seconds=seconds,
+            project_reserved=sum(value for _, value in pending.values()),
+            shot_reserved=sum(value for shot_id, value in pending.values() if shot_id == shot.id),
+        )
+        _reservations.setdefault(key, {})[token] = (shot.id, amount)
+    try:
+        yield
+    finally:
+        with store.lock(project.id):
+            pending = _reservations[key]
+            del pending[token]
+            if not pending:
+                del _reservations[key]
 
 
 def available_sources(settings: Settings) -> set[str]:
@@ -829,9 +877,8 @@ def generate_ai_candidate(
     wanted = estimated_shot_seconds(project, shot)
     longest = _max_duration(provider, provider_id)
     extend = reference_video is None and longest is not None and wanted > longest + 0.5
-    check_budget(settings, project, shot, "video_gen", provider_id, resolution=resolution)
     kind: TakeKind = "edit" if reference_video is not None else "extend" if extend else "video"
-    with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
+    with tempfile.TemporaryDirectory(prefix="shotwright-") as temp, ExitStack() as reservations:
         work = Path(temp)
         # 主体照片作为参考图：各镜头的人物、产品保持一致，构图不受限制（不支持时上面已改用首帧）。
         # 先读出真正能用的图片，再按它们拼提示词，「参考图 1/2」与实际发出的图片一一对应。
@@ -860,11 +907,31 @@ def generate_ai_candidate(
 
         def generate_once(text: str, frame: Path | None, kwargs: dict) -> tuple[Path, list[float]]:
             # 几个项目一起一键生成时，这里排队，避免同时猛打收费接口。
-            with limits.limit("ai", settings.ai_concurrency):
-                return _generate_or_extend(text, frame, kwargs)
+            with ExitStack() as attempt, limits.limit("ai", settings.ai_concurrency):
 
-        def _generate_or_extend(text: str, frame: Path | None, kwargs: dict) -> tuple[Path, list[float]]:
+                def reserve(seconds: float) -> None:
+                    attempt.enter_context(
+                        _reserve_spend(
+                            store,
+                            settings,
+                            project,
+                            shot,
+                            "video_gen",
+                            provider_id,
+                            resolution=resolution,
+                            seconds=seconds,
+                        )
+                    )
+
+                result = _generate_or_extend(text, frame, kwargs, reserve)
+                reservations.enter_context(attempt.pop_all())
+                return result
+
+        def _generate_or_extend(
+            text: str, frame: Path | None, kwargs: dict, reserve: Callable[[float], None]
+        ) -> tuple[Path, list[float]]:
             if not extend:
+                reserve(wanted)
                 path = provider.generate(
                     text,
                     aspect=project.canvas.aspect,
@@ -885,7 +952,17 @@ def generate_ai_candidate(
                 else build_prompt(settings, project, shot, "video_gen", provider_id, ref_limit=0, refs=[])
             )
             return _generate_extended(
-                provider, text, project, work, wanted, longest or wanted, frame, remember_task, kwargs, tail
+                provider,
+                text,
+                project,
+                work,
+                wanted,
+                longest or wanted,
+                frame,
+                remember_task,
+                kwargs,
+                tail,
+                reserve,
             )
 
         try:
@@ -922,21 +999,21 @@ def generate_ai_candidate(
         asset = _register_media(
             store, project, path, source=provider_id or "video_gen", folder="ai-video", meta=meta
         )
-    shot.visual.pending = None
-    _attach(shot, [asset.id], select=True, take=kind, batch=batch)
-    for seconds in spent:
-        record_spend(
-            store,
-            settings,
-            project,
-            shot,
-            "video_gen",
-            provider_id or "",
-            resolution=resolution,
-            seconds=seconds,
-            asset_id=asset.id,
-        )
-    return [asset.id]
+        shot.visual.pending = None
+        _attach(shot, [asset.id], select=True, take=kind, batch=batch)
+        for seconds in spent:
+            record_spend(
+                store,
+                settings,
+                project,
+                shot,
+                "video_gen",
+                provider_id or "",
+                resolution=resolution,
+                seconds=seconds,
+                asset_id=asset.id,
+            )
+        return [asset.id]
 
 
 MAX_EXTEND_PARTS = 4
@@ -975,6 +1052,7 @@ def _generate_extended(
     remember_task,
     extra: dict | None = None,
     tail_prompt: str | None = None,
+    reserve: Callable[[float], None] | None = None,
 ) -> tuple[Path, list[float]]:
     """``extra`` 只用于第一段（例如参考图）；后面的段从上一段最后一帧接着生成。
 
@@ -993,6 +1071,14 @@ def _generate_extended(
             text = prompt
         else:
             text = f"{prompting.CONTINUE[lang]}\n{tail_prompt if tail_prompt is not None else prompt}"
+        if reserve is not None:
+            try:
+                reserve(length)
+            except BudgetExceeded:
+                if not segments:
+                    raise
+                # 已付费的片段仍可交付，剩余时长由镜头渲染的补足方式处理。
+                break
         path = provider.generate(
             text,
             aspect=project.canvas.aspect,
@@ -1046,9 +1132,11 @@ def generate_image_candidate(
     provider_id = _provider_id(settings, "image_gen", shot)
     provider: ImageGenProvider = registry.create("image_gen", provider_id, settings)  # type: ignore[assignment]
     require_charge_confirmation(settings, "image_gen", provider_id, confirm_charge)
-    check_budget(settings, project, shot, "image_gen", provider_id)
     ref_limit = _reference_limit(provider) if _accepts_references(provider) else 0
-    with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
+    with (
+        tempfile.TemporaryDirectory(prefix="shotwright-") as temp,
+        _reserve_spend(store, settings, project, shot, "image_gen", provider_id),
+    ):
         work = Path(temp)
         meta: dict[str, str] = {}
         references, used_refs = (
@@ -1079,9 +1167,9 @@ def generate_image_candidate(
             folder="ai-image",
             meta=meta,
         )
-    _attach(shot, [asset.id], select=not keyframe, take="keyframe" if keyframe else "image", batch=batch)
-    record_spend(store, settings, project, shot, "image_gen", provider_id or "", asset_id=asset.id)
-    return [asset.id]
+        _attach(shot, [asset.id], select=not keyframe, take="keyframe" if keyframe else "image", batch=batch)
+        record_spend(store, settings, project, shot, "image_gen", provider_id or "", asset_id=asset.id)
+        return [asset.id]
 
 
 def generate_subject_image(
@@ -1102,11 +1190,13 @@ def generate_subject_image(
     provider: ImageGenProvider = registry.create("image_gen", provider_id, settings)  # type: ignore[assignment]
     require_charge_confirmation(settings, "image_gen", provider_id, confirm_charge)
     stand_in = Shot(text="")  # 费用按一张图片估算，与镜头无关
-    check_budget(settings, project, stand_in, "image_gen", provider_id)
     text = prompting.subject_portrait_prompt(project, code)
     spec = _spec("image_gen", provider_id)
     prompt = prompting.for_provider(settings, project, text, spec.prompt_languages if spec else ("en",))
-    with tempfile.TemporaryDirectory(prefix="shotwright-") as temp:
+    with (
+        tempfile.TemporaryDirectory(prefix="shotwright-") as temp,
+        _reserve_spend(store, settings, project, stand_in, "image_gen", provider_id),
+    ):
         work = Path(temp)
         # 已经有照片时（例如一张产品图）也带上，让定妆图和它一致。张数按服务能接受的上限来。
         references: list[Path] = []
@@ -1134,9 +1224,9 @@ def generate_subject_image(
             folder="reference",
             meta={"prompt": prompt[:1500], "subject": code},
         )
-    record_spend(store, settings, project, stand_in, "image_gen", provider_id or "")
-    subject.images.append(asset.id)
-    return asset.id
+        record_spend(store, settings, project, stand_in, "image_gen", provider_id or "")
+        subject.images.append(asset.id)
+        return asset.id
 
 
 def refresh_candidates(

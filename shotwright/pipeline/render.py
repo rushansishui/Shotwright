@@ -194,7 +194,17 @@ class Renderer:
         if not project.shots:
             raise RenderError("项目里还没有镜头")
         self._report(0.0, "准备画面")
+        original_revision = project.revision
         self._prepare_visuals(project)
+        latest = self.store.load(project.id)
+        # 保存素材会改变修订号和更新时间，项目内容也一致时才能采用新修订。
+        if (
+            project.model_copy(update={"revision": latest.revision, "updated_at": latest.updated_at})
+            == latest
+        ):
+            project = latest
+        else:
+            project.revision = original_revision
 
         total = len(project.shots)
         voices: list[tuple[str, Path, float, list[tuple[str, float, float]]]] = []
@@ -275,6 +285,7 @@ class Renderer:
             stages=self.stages,
             warnings=self.warnings,
             inspection=inspection,
+            project_snapshot=project,
         )
         write_json(output_dir / "render.json", result.to_dict())
         self._report(1.0, "完成")
@@ -379,7 +390,6 @@ class Renderer:
                     target.visual.selected = selected
                     target.visual.takes = takes
             self.store.save(latest)
-        project.revision = latest.revision
 
     def _has_visual(self, project: Project, shot: Shot) -> bool:
         selected = shot.visual.selected
@@ -734,8 +744,8 @@ class Renderer:
         faces = self._text_faces(project) if needs_ass else None
         font = faces["subtitle"].path if faces else None
         used_faces = sorted({face.path for face in faces.values()}) if faces else []
-        fp = fingerprint(
-            "final",
+        video_fp = fingerprint(
+            "final-video",
             assembly_fp,
             [asdict(c) for c in cues],
             style.model_dump() if cues else None,
@@ -744,13 +754,17 @@ class Renderer:
             self.quality,
             project.ai_badge,
             [sha256_file(path) for path in used_faces] or None,
+            (grade, GRADE_VERSION) if grade else None,
+            project.delivery if project.delivery != platforms.DEFAULT_PLATFORM else None,
+            (titles.model_dump(exclude={"candidates"}), shot_titles, project.title) if has_titles else None,
+        )
+        fp = fingerprint(
+            "final",
+            video_fp,
             bgm_asset.sha256 if bgm_asset else None,
             project.bgm.model_dump(exclude={"candidates", "query"}) if bgm_asset else None,
             project.loudness,
             AUDIO_MIX,
-            (grade, GRADE_VERSION) if grade else None,
-            project.delivery if project.delivery != platforms.DEFAULT_PLATFORM else None,
-            (titles.model_dump(exclude={"candidates"}), shot_titles, project.title) if has_titles else None,
             (
                 project.sfx.model_dump(),
                 ambience.sha256 if ambience else None,
@@ -761,11 +775,10 @@ class Renderer:
             else None,
         )
         output = self.store.cache_dir(project.id, "final") / f"{fp}.mp4"
-        info = probe(assembly)
-        duration = info.duration or 0.0
+        duration = probe(assembly).duration or 0.0
 
-        def build(temp: Path) -> None:
-            with tempfile.TemporaryDirectory(prefix="shotwright-final-") as work_dir:
+        def build_video(temp: Path) -> None:
+            with tempfile.TemporaryDirectory(prefix="shotwright-video-") as work_dir:
                 work = Path(work_dir)
                 args = ["-protocol_whitelist", LOCAL_PROTOCOLS, "-i", str(assembly)]
                 chain = _VideoChain()
@@ -798,46 +811,83 @@ class Renderer:
                     ]
                     chain.overlay(index, item, project)
 
-                audio_args, audio_graph = self._audio_inputs(
-                    project, 1 + len(image_overlays), bgm_asset, ambience, whoosh, cuts, duration
-                )
-                args += audio_args
-                filters = chain.filters
-                audio_map = "0:a"
-                if audio_graph:
-                    filters.append(audio_graph)
-                    audio_map = "[a]"
                 if reencode and not chain.filtered:
-                    # 交付平台有码率和编码要求，没有滤镜时也要重新编码一次。
                     chain.add("null")
-                command = [*args]
-                if filters:
-                    command += ["-filter_complex", ";".join(filters)]
-                command += ["-map", chain.output, "-map", audio_map]
-                if not chain.filtered:
-                    command += ["-c:v", "copy"]
-                elif reencode:
-                    command += platforms.encode_args(project.delivery, project.canvas.fps)
-                else:
-                    command += _video_args(project.canvas.fps, self.quality)
-                command += AUDIO_ARGS if audio_map != "0:a" else ["-c:a", "copy"]
-                mixed = work / "mixed.mp4"
-                command += [
-                    "-t",
-                    f"{duration:.3f}",
-                    "-movflags",
-                    "+faststart",
-                    "-f",
-                    "mp4",
-                    str(mixed.resolve()),
-                ]
-                if filters:
-                    run_ffmpeg(command, cwd=work, cancel=self._cancel)
-                else:
-                    shutil.copyfile(assembly, mixed)
-                self._normalize(project, mixed, temp)
+                video_args = (
+                    platforms.encode_args(project.delivery, project.canvas.fps)
+                    if reencode
+                    else _video_args(project.canvas.fps, self.quality)
+                )
+                run_ffmpeg(
+                    [
+                        *args,
+                        "-filter_complex",
+                        ";".join(chain.filters),
+                        "-map",
+                        chain.output,
+                        "-map",
+                        "0:a",
+                        *video_args,
+                        "-c:a",
+                        "copy",
+                        "-t",
+                        f"{duration:.3f}",
+                        "-movflags",
+                        "+faststart",
+                        "-f",
+                        "mp4",
+                        str(temp.resolve()),
+                    ],
+                    cwd=work,
+                    cancel=self._cancel,
+                )
+
+        source = assembly
+
+        def build(temp: Path) -> None:
+            audio_args, audio_graph = self._audio_inputs(
+                project, 1, bgm_asset, ambience, whoosh, cuts, duration
+            )
+            if not audio_graph:
+                self._normalize(project, source, temp)
+                return
+            with tempfile.TemporaryDirectory(prefix="shotwright-audio-") as work_dir:
+                mixed = temp if project.loudness is None else Path(work_dir) / "mixed.mp4"
+                run_ffmpeg(
+                    [
+                        "-protocol_whitelist",
+                        LOCAL_PROTOCOLS,
+                        "-i",
+                        str(source),
+                        *audio_args,
+                        "-filter_complex",
+                        audio_graph,
+                        "-map",
+                        "0:v",
+                        "-map",
+                        "[a]",
+                        "-c:v",
+                        "copy",
+                        *AUDIO_ARGS,
+                        "-t",
+                        f"{duration:.3f}",
+                        "-movflags",
+                        "+faststart",
+                        "-f",
+                        "mp4",
+                        str(mixed.resolve()),
+                    ],
+                    cancel=self._cancel,
+                )
+                if project.loudness is not None:
+                    self._normalize(project, mixed, temp)
 
         try:
+            if needs_ass or image_overlays or grade or reencode:
+                source = self.store.cache_dir(project.id, "final-video") / f"{video_fp}.mp4"
+                self._stage("final-video", "final-video", video_fp, source, build_video)
+            if bgm_asset is None and ambience is None and not whoosh and project.loudness is None:
+                return source
             self._stage("final", "final", fp, output, build)
         except MediaCancelled as exc:
             raise RenderCancelled(str(exc)) from exc

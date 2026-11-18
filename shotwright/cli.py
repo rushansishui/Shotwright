@@ -271,7 +271,11 @@ def cmd_render(args) -> int:
     print(store.render_dir(result.project_id, result.render_id) / result.video)
     from shotwright.services import spend
 
-    receipt = spend.write_receipt(store, store.load(result.project_id), result.render_id)
+    receipt = (
+        spend.write_receipt(store, result.project_snapshot, result.render_id)
+        if result.project_snapshot is not None
+        else None
+    )
     if receipt:
         print(f"花费回执：{receipt}")
     return 0

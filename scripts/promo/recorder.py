@@ -1,6 +1,6 @@
 """用浏览器自动操作 Shotwright 的界面并录屏，每个动作录成一段视频。
 
-录屏用 Playwright 自带的录像：每段开一个新的浏览器上下文（1920×1080），页面里注入一个
+录屏用 Playwright 自带的录像：每段开一个新的浏览器上下文（1280×720），页面里注入一个
 模拟鼠标指针和点击光圈，鼠标移动有过程，看起来像人在操作。动作只看、只点不花钱的按钮；
 会花钱的按钮（生成视频、出关键帧）只把鼠标移上去，不点。
 
@@ -151,6 +151,12 @@ class Session:
         self.page.mouse.up()
         self.pause(0.35)
 
+    def click_required(self, locator) -> None:
+        if not self.move_to(locator):
+            raise RuntimeError(f"缺少演示所需的控件：{locator}")
+        locator.click(timeout=5000)
+        self.pause(0.35)
+
     def hover(self, locator, seconds: float = 0.9) -> None:
         if self.move_to(locator):
             self.pause(seconds)
@@ -170,6 +176,9 @@ class Session:
 
     def button(self, pattern: str):
         return self.page.get_by_role("button", name=re.compile(LABELS.get(pattern, pattern))).first
+
+    def shot_view(self, name: str):
+        return self.page.get_by_role("radio", name=re.compile(LABELS[name]))
 
     def visible(self, locator, timeout: float = 1.5) -> bool:
         try:
@@ -216,9 +225,19 @@ def act_script(s: Session, demo: Demo) -> None:
         s.click(box)
         box.fill(line)  # 「贴上」：一段一段出现
         s.pause(0.25)
-    s.hover(page.locator(".flow-actions .btn.primary").first, 0.9)
-    goto_editor(s, demo.base, demo.project, step=2)
-    s.scroll(340, seconds=1.6)
+    with page.expect_response(
+        lambda r: r.request.method == "POST" and r.url.endswith("/storyboard"), timeout=30_000
+    ) as response:
+        s.click_required(page.locator(".flow-actions .btn.primary").first)
+    board = response.value
+    if not board.ok:
+        raise RuntimeError(f"从口播生成分镜失败：HTTP {board.status}")
+    project = board.json()
+    if [shot["text"] for shot in project["shots"]] != script_lines(demo.lang):
+        raise RuntimeError("生成后的镜头文案与演示脚本不一致")
+    page.wait_for_url(f"**/#/p/{project['id']}")
+    goto_editor(s, demo.base, project["id"], step=2)
+    s.scroll(260, seconds=1.3)
 
 
 def act_shots(s: Session, demo: Demo) -> None:
@@ -260,26 +279,47 @@ def act_precheck(s: Session, demo: Demo) -> None:
 def act_rerender(s: Session, demo: Demo) -> None:
     page = s.page
     text = page.locator("article.shot textarea").first
-    s.click(text)
-    page.keyboard.press("Control+A")
-    page.keyboard.insert_text(demo.new_line)
+    s.click_required(text)
+    line = demo.new_line if text.input_value() != demo.new_line else f"{demo.new_line} ✓"
+    text.fill(line)
     s.pause(0.5)
-    text.evaluate("e => e.blur()")  # 失焦保存
-    s.pause(0.8)
-    before = _render_count(demo)
-    s.click(s.button("render"))
+    prefix = f"{demo.base}/api/v2/projects/{demo.edit_copy}"
+    with page.expect_response(
+        lambda r: r.request.method == "PATCH" and r.url.startswith(f"{prefix}/shots/")
+    ) as saved:
+        text.evaluate("e => e.blur()")
+    if not saved.value.ok:
+        raise RuntimeError(f"保存演示镜头失败：HTTP {saved.value.status}")
+    with page.expect_response(
+        lambda r: r.request.method == "POST" and r.url == f"{prefix}/renders"
+    ) as started:
+        s.click_required(s.button("render"))
+    if not started.value.ok:
+        raise RuntimeError(f"无法启动演示渲染：HTTP {started.value.status}")
+    job = started.value.json()
     gap_start = s.now() + 1.2
-    started = time.monotonic()
-    # 等这次渲染做完：渲染记录多了一条就是完成了（最多等 10 分钟）。8 秒内没有开始渲染就不等了。
-    while time.monotonic() - started < 600:
-        count, running = _render_state(demo)
-        if count > before or (not running and time.monotonic() - started > 8):
-            break
-        page.wait_for_timeout(1000)
-    page.wait_for_timeout(1500)  # 界面刷新出新成片
-    took = time.monotonic() - started
-    s.gaps.append((gap_start, s.now() - 0.6))
-    s.note = f"重新渲染实测 {took:.0f} 秒" if demo.lang == "zh" else f"Re-render took {took:.0f}s"
+    deadline = time.monotonic() + 600
+    while (
+        job["state"] in ("queued", "running") or (job["state"] == "done" and job["finished_at"] is None)
+    ) and time.monotonic() < deadline:
+        page.wait_for_timeout(500)
+        response = page.request.get(f"{demo.base}/api/v2/renders/{job['id']}", timeout=5000)
+        if not response.ok:
+            raise RuntimeError(f"读取渲染任务 {job['id']} 失败：HTTP {response.status}")
+        job = response.json()
+    if job["state"] != "done" or not job.get("result") or job["finished_at"] is None:
+        raise RuntimeError(f"演示渲染未成功：任务 {job['id']}，{job.get('error') or job['state']}")
+    rendered_shots = [
+        stage for stage in job["result"]["stages"] if stage["kind"] == "shot" and not stage["reused"]
+    ]
+    if len(rendered_shots) != 1:
+        raise RuntimeError(f"单镜重渲演示实际重渲了 {len(rendered_shots)} 个镜头")
+    took = job["finished_at"] - job["created_at"]
+    page.wait_for_timeout(1500)
+    gap_end = s.now() - 0.6
+    if gap_end > gap_start:
+        s.gaps.append((gap_start, gap_end))
+    s.note = f"重新渲染实测 {took:.1f} 秒" if demo.lang == "zh" else f"Re-render took {took:.1f}s"
     s.pause(1.6)
 
 
@@ -381,10 +421,9 @@ def act_idea(s: Session, demo: Demo) -> None:
 
 def act_board(s: Session, demo: Demo) -> None:
     page = s.page
-    s.click(s.button("board"))
+    s.click_required(s.shot_view("board"))
     table = page.locator(".board-table, .board").first
-    if not s.visible(table, 4):
-        return
+    table.wait_for(timeout=5000)
     s.pause(0.6)
     s.hover(page.locator(".board-thumb").first, 0.7)
     s.hover(page.locator(".board-table td.col-visual, .col-visual").nth(1), 0.8)
@@ -415,7 +454,7 @@ def act_look(s: Session, demo: Demo) -> None:
 
 def act_prompts(s: Session, demo: Demo) -> None:
     page = s.page
-    s.click(s.button("prompts"))
+    s.click_required(s.shot_view("prompts"))
     block = page.locator(".prompt-block").first
     if not s.visible(block, 5):
         return
@@ -459,10 +498,9 @@ def act_cost(s: Session, demo: Demo) -> None:
 
 def act_review(s: Session, demo: Demo) -> None:
     page = s.page
-    s.click(s.button("review"))
+    s.click_required(s.shot_view("review"))
     rows = page.locator(".review-row")
-    if not s.visible(rows.first, 4):
-        return
+    rows.first.wait_for(timeout=5000)
     s.pause(0.5)
     s.hover(rows.first.locator(".review-takes, .review-take").first, 0.8)
     approve = rows.first.get_by_role("button", name=re.compile(LABELS["approve"]))
@@ -477,7 +515,11 @@ def act_review(s: Session, demo: Demo) -> None:
     note = page.locator(".review-note").first
     if s.visible(note, 0.6):
         s.hover(note, 0.8)
-    s.scroll(300, seconds=1.2)
+    download = page.get_by_role("link", name=re.compile(r"^(下载视频|Download video)$")).first
+    download.wait_for(timeout=5000)
+    s.scroll_to(download)
+    with page.expect_download(timeout=10_000):
+        s.click_required(download)
 
 
 def act_audio(s: Session, demo: Demo) -> None:
@@ -564,21 +606,6 @@ ACTIONS: dict[str, tuple[str, Callable[[Session, Demo], None]]] = {
 }
 
 
-def _render_state(demo: Demo) -> tuple[int, bool]:
-    """（已完成的渲染数，是否有渲染在进行）。"""
-    import json
-    import urllib.request
-
-    with urllib.request.urlopen(f"{demo.base}/api/v2/projects/{demo.edit_copy}/renders", timeout=10) as resp:
-        data = json.load(resp)
-    running = any(job["state"] in ("queued", "running") for job in data["jobs"])
-    return len(data["renders"]), running
-
-
-def _render_count(demo: Demo) -> int:
-    return _render_state(demo)[0]
-
-
 def goto_editor(s: Session, base: str, project_id: str, *, step: int) -> None:
     s.page.evaluate(
         "([id, step]) => localStorage.setItem('shotwright.editorStep.' + id, String(step))",
@@ -597,11 +624,17 @@ class Recorder:
         self.work = work
         self.work.mkdir(parents=True, exist_ok=True)
         self._pw = sync_playwright().start()
-        self.browser = self._pw.chromium.launch(headless=headless)
+        try:
+            self.browser = self._pw.chromium.launch(headless=headless)
+        except BaseException:
+            self._pw.stop()
+            raise
 
     def close(self) -> None:
-        self.browser.close()
-        self._pw.stop()
+        try:
+            self.browser.close()
+        finally:
+            self._pw.stop()
 
     def record_scene(self, name: str, seconds: float, font: Path, *, card: str = "", tag: str = "") -> Clip:
         """录一段网页动画（scenes.py），时长按配音来。``card`` 是章节卡上的字。"""
@@ -614,15 +647,17 @@ class Recorder:
         context = self.browser.new_context(
             viewport=VIEWPORT, record_video_dir=str(self.work / f"raw-{name}"), record_video_size=VIEWPORT
         )
-        page = context.new_page()
-        started = time.monotonic()
-        page.goto(page_file.resolve().as_uri())
-        page.evaluate("document.fonts.ready")
-        ready = time.monotonic() - started
-        page.wait_for_timeout(int((seconds + 1.0) * 1000))
-        end = time.monotonic() - started
-        video = page.video
-        context.close()
+        try:
+            page = context.new_page()
+            started = time.monotonic()
+            page.goto(page_file.resolve().as_uri())
+            page.evaluate("document.fonts.ready")
+            ready = time.monotonic() - started
+            page.wait_for_timeout(int((seconds + 1.0) * 1000))
+            end = time.monotonic() - started
+            video = page.video
+        finally:
+            context.close()
         return Clip(Path(video.path()), ready, end)
 
     def record(self, name: str, seconds: float) -> Clip:
@@ -645,39 +680,42 @@ class Recorder:
             record_video_size=VIEWPORT,
             locale="zh-CN" if demo.lang == "zh" else "en-US",
         )
-        context.add_init_script(CURSOR_JS)
-        if name == "script":
-            context.add_init_script(script_draft(demo.lang))
-        if name == "idea":
-            context.add_init_script(idea_draft(demo.lang))
-            mock_brief(context, demo.lang)
-        context.add_init_script(
-            f"try {{ localStorage.setItem('shotwright.ui-lang', '{demo.lang}'); }} catch (e) {{}}"
-        )
-        # 关掉简洁模式：宣传片要拍的是完整的镜头卡片（画面来源、生成前检查），
-        # 简洁模式默认开着，会把这几块收起来。
-        context.add_init_script("try { localStorage.setItem('shotwright.simple', '0'); } catch (e) {}")
-        if step is not None:
-            project_id = target.rsplit("/", 1)[-1]
+        try:
+            context.add_init_script(CURSOR_JS)
+            if name == "script":
+                context.add_init_script(script_draft(demo.lang))
+            if name == "idea":
+                context.add_init_script(idea_draft(demo.lang))
+                mock_brief(context, demo.lang)
             context.add_init_script(
-                f"try {{ localStorage.setItem('shotwright.editorStep.{project_id}', '{step}'); }} catch (e) {{}}"
+                f"try {{ localStorage.setItem('shotwright.ui-lang', '{demo.lang}'); }} catch (e) {{}}"
             )
-        page = context.new_page()
-        started = time.monotonic()
-        page.goto(f"{demo.base}/{target}")
-        page.locator("main, #root > *").first.wait_for(timeout=30_000)
-        page.wait_for_load_state("networkidle")
-        page.wait_for_timeout(800)
-        session = Session(page, started)
-        page.mouse.move(session.x, session.y)
-        ready = session.now()
-        action(session, demo)
-        kept = session.now() - ready - sum(b - a for a, b in session.gaps)
-        if kept < seconds + 0.8:
-            session.pause(seconds + 0.8 - kept)
-        end = session.now()
-        video = page.video
-        context.close()
+            # 关掉简洁模式：宣传片要拍的是完整的镜头卡片（画面来源、生成前检查），
+            # 简洁模式默认开着，会把这几块收起来。
+            context.add_init_script("try { localStorage.setItem('shotwright.simple', '0'); } catch (e) {}")
+            if step is not None:
+                project_id = target.rsplit("/", 1)[-1]
+                context.add_init_script(
+                    f"try {{ localStorage.setItem('shotwright.editorStep.{project_id}', '{step}'); }} catch (e) {{}}"
+                )
+            page = context.new_page()
+            started = time.monotonic()
+            page.goto(f"{demo.base}/{target}")
+            page.locator("main, #root > *").first.wait_for(timeout=30_000)
+            if step is not None:
+                page.locator(".editor-steps").wait_for(timeout=30_000)
+            page.wait_for_timeout(800)
+            session = Session(page, started)
+            page.mouse.move(session.x, session.y)
+            ready = session.now()
+            action(session, demo)
+            kept = session.now() - ready - sum(b - a for a, b in session.gaps)
+            if kept < seconds + 0.8:
+                session.pause(seconds + 0.8 - kept)
+            end = session.now()
+            video = page.video
+        finally:
+            context.close()
         path = Path(video.path()) if video else None
         if path is None or not path.is_file():
             raise RuntimeError(f"{name}：没有录到视频")
@@ -685,7 +723,14 @@ class Recorder:
 
 
 def finish(
-    clip: Clip, seconds: float, out: Path, *, ffmpeg: str = "ffmpeg", font: Path | None = None
+    clip: Clip,
+    seconds: float,
+    out: Path,
+    *,
+    ffmpeg: str = "ffmpeg",
+    font: Path | None = None,
+    vertical: bool = False,
+    crop: tuple[int, int, int, int] | None = None,
 ) -> Path:
     """按保留范围裁剪、剪掉长等待，比配音长太多就加速；输出 H.264 MP4。"""
     pieces: list[tuple[float, float]] = []
@@ -694,18 +739,24 @@ def finish(
         if start > cursor:
             pieces.append((cursor, start))
         cursor = max(cursor, stop)
-    pieces.append((cursor, clip.end))
+    if clip.end > cursor:
+        pieces.append((cursor, clip.end))
+    if not pieces:
+        raise ValueError(f"没有可用的录屏片段：{clip.path}")
     length = sum(b - a for a, b in pieces)
     speed = min(MAX_SPEEDUP, max(1.0, length / (seconds + 0.5)))
     parts = []
     for index, (a, b) in enumerate(pieces):
         parts.append(f"[0:v]trim={a:.3f}:{b:.3f},setpts=PTS-STARTPTS[p{index}]")
     joined = "".join(f"[p{i}]" for i in range(len(pieces)))
-    chain = (
-        ";".join(parts)
-        + f";{joined}concat=n={len(pieces)}:v=1:a=0[c];[c]setpts=PTS/{speed:.3f},fps=30,"
-        + "scale=1920:1080:flags=lanczos,unsharp=5:5:0.6"
-    )
+    chain = ";".join(parts) + f";{joined}concat=n={len(pieces)}:v=1:a=0[c];[c]setpts=PTS/{speed:.3f},fps=30"
+    if vertical:
+        if crop:
+            chain += ",crop=" + ":".join(map(str, crop))
+        chain += ",scale=1000:-2:flags=lanczos,setsar=1,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=#0B1020"
+    else:
+        chain += ",scale=1920:1080:flags=lanczos"
+    chain += ",unsharp=5:5:0.6"
     if clip.note and clip.gaps and font is not None:
         # 剪掉等待的那一刻起显示 2 秒：告诉观众这里省略了多久。
         first_gap = sorted(clip.gaps)[0][0] - clip.ready
@@ -722,6 +773,8 @@ def finish(
             "-y",
             "-v",
             "error",
+            "-filter_complex_threads",
+            "2",
             "-i",
             str(clip.path),
             "-filter_complex",

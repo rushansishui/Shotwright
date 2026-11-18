@@ -1,13 +1,14 @@
 """宣传片的分镜：每个镜头的口播、屏幕上的小标题，以及画面怎么来。
 
-有两个版本（``--edition``）：
+支持以下版本（``--edition``）：
 
 * ``short``：1–2 分钟的宣传片，按卖点快速过一遍；
 * ``long``：3–5 分钟的功能讲解，分章节演示，适合发 YouTube、B 站。
+* ``vertical``：约 30 秒的 9:16 宣传片。
 
 画面类型（``kind``）：
 
-* ``grid``：把演示项目两种语言版本的成片并排拼成一屏；
+* ``grid``：把演示项目两种语言版本的成片拼成一屏；
 * ``scene``：网页动画做的动态画面（开场介绍、痛点、章节卡、片尾），``action`` 是 scenes.py 里的场景名；
 * ``record``：自动操作界面并录屏，``action`` 是 recorder.py 里的动作名。
 
@@ -31,6 +32,11 @@ class PromoShot:
     """kind 为 record 时是录屏动作，为 scene 时是场景名（intro / pain / chapter / outro）。"""
     card: str = ""
     """章节卡上的大字（scene 为 chapter 时用），也作为视频简介里的章节名。"""
+
+    seconds: float | None = None
+    """短版预留的镜头时长。旁白超出时放宽。"""
+    crop: tuple[int, int, int, int] | None = None
+    """取景宽、高、左、上，单位为录屏原始像素。"""
 
 
 def chapter(number: int, card: str, text: str) -> PromoShot:
@@ -403,7 +409,62 @@ LONG: dict[str, list[PromoShot]] = {
     ],
 }
 
-EDITIONS: dict[str, dict[str, list[PromoShot]]] = {"short": SHORT, "long": LONG}
+VERTICAL = {
+    "zh": [
+        PromoShot("grid", "一份脚本，就能做出不同语言的短视频。", "一份脚本，两种语言", seconds=5),
+        PromoShot(
+            "record",
+            "贴上口播脚本，镜匠自动把它拆成镜头。",
+            "脚本变分镜",
+            "script",
+            seconds=6,
+            crop=(920, 670, 0, 35),
+        ),
+        PromoShot(
+            "record", "改一句文案，只重做这一镜，其他镜头直接复用。", "只改这一镜", "rerender", seconds=7
+        ),
+        PromoShot(
+            "record",
+            "配音和字幕自动合成，审片确认后就能导出。",
+            "审片与导出",
+            "review",
+            seconds=6.5,
+        ),
+        PromoShot(
+            "scene", "Shotwright 镜匠，开源短视频工具。到 GitHub 下载体验。", action="outro", seconds=5.5
+        ),
+    ],
+    "en": [
+        PromoShot(
+            "grid", "One script can make a video in two languages.", "One script, two languages", seconds=5
+        ),
+        PromoShot(
+            "record",
+            "Paste a script and Shotwright breaks it into shots.",
+            "Script to storyboard",
+            "script",
+            seconds=6,
+            crop=(920, 670, 0, 35),
+        ),
+        PromoShot(
+            "record",
+            "Change one line. Only the edited shot is rendered again.",
+            "Re-render one shot",
+            "rerender",
+            seconds=7,
+        ),
+        PromoShot(
+            "record",
+            "Add voice and captions automatically, then review and export.",
+            "Review and export",
+            "review",
+            seconds=6.5,
+        ),
+        PromoShot("scene", "Shotwright is open source. Download it on GitHub.", action="outro", seconds=5.5),
+    ],
+}
+
+EDITIONS: dict[str, dict[str, list[PromoShot]]] = {"short": SHORT, "long": LONG, "vertical": VERTICAL}
 SHOTS = SHORT
 """旧名字：默认的宣传片分镜。"""
 

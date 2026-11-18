@@ -5,15 +5,17 @@
     pip install -e ".[promo]" && python -m playwright install chromium   # 只需一次
     python scripts/promo/make_promo.py --demo f8ujye85mn4r --lang zh                   # 1–2 分钟宣传片
     python scripts/promo/make_promo.py --demo f8ujye85mn4r --lang en --edition long    # 3–5 分钟功能讲解
+    python scripts/promo/make_promo.py --demo f8ujye85mn4r --lang zh --edition vertical
 
 ``--demo`` 是一个做好的演示项目（用过 AI 生成、有参考图、有另一种语言的版本）。脚本把它
-和它的语言版本复制到 ``storage/promo`` 里再操作，原项目不受影响；录屏只看、只点不花钱
+和它的语言版本复制到 ``storage/promo`` 下的新目录再操作，原项目不受影响；录屏只看、只点不花钱
 的按钮。配音默认用免费的 Edge（需要联网），``--tts silent`` 可以离线试跑整个流程。
 
 剪辑页那一段要用一个「按说的话剪」、已经识别过原片的剪辑项目：默认自动找语言相同、
 最近改过的那个，也可以用 ``--cut-demo`` 指定。
 
-成片输出到 ``storage/promo/promo-<版本>-<语言>.mp4``；功能讲解版同时写出
+加 ``--edition vertical`` 生成约 30 秒的 9:16 竖屏宣传片。
+成片输出到当次运行目录的 ``promo-<版本>-<语言>.mp4``；功能讲解版同时写出
 ``chapters-<版本>-<语言>.txt``（视频章节时间轴，贴进 YouTube / B 站的简介）。
 分镜和口播在 storyboard.py 里改。
 """
@@ -23,13 +25,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
-import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
+from contextlib import suppress
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -84,45 +88,42 @@ class Api:
         with urllib.request.urlopen(req, timeout=300) as resp:
             return json.load(resp)
 
-    def render(self, project_id: str, quality: str) -> dict:
+    def render(self, project_id: str, quality: str, *, timeout: float = 600) -> dict:
         job = self.call("POST", f"/projects/{project_id}/renders", {"quality": quality})
+        deadline = time.monotonic() + timeout
         while job["state"] in ("queued", "running"):
-            time.sleep(2)
-            job = self.call("GET", f"/renders/{job['id']}")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                with suppress(OSError, SystemExit):
+                    self.call("POST", f"/renders/{job['id']}/cancel", timeout=2)
+                raise SystemExit(f"渲染超时：任务 {job['id']}，请查看本次运行的 server.log")
+            time.sleep(min(1, remaining))
+            job = self.call("GET", f"/renders/{job['id']}", timeout=min(5, remaining))
         if job["state"] != "done":
-            raise SystemExit(f"渲染失败：{job.get('error') or job}")
-        return job
+            raise SystemExit(f"渲染失败：任务 {job['id']}，{job.get('error') or job['state']}")
+        return job["result"]
 
 
 # ---- 准备 -------------------------------------------------------------------
 
 
-def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+def copy_demo(source: Path, target: Path) -> None:
+    shutil.copytree(source, target)
+    path = target / "project.json"
+    project = json.loads(path.read_text(encoding="utf-8"))
+    for shot in project["shots"]:
+        shot.get("visual", {}).pop("pending", None)
+    path.write_text(json.dumps(project, ensure_ascii=False), encoding="utf-8")
 
 
-def link_tree(source: Path, target: Path) -> None:
-    """复制项目目录：能用硬链接就用（不占空间、几乎瞬间完成），不行再复制文件。"""
-
-    def link(src: str, dst: str) -> None:
-        try:
-            os.link(src, dst)
-        except OSError:
-            shutil.copy2(src, dst)
-
-    shutil.copytree(source, target, copy_function=link)
-
-
-def find_version(storage: Path, project_id: str) -> str | None:
+def find_version(storage: Path, project_id: str, language: str) -> str | None:
     """同一个视频的另一种语言版本（语言版本组：group 指向原项目）。"""
     main = json.loads((storage / project_id / "project.json").read_text(encoding="utf-8"))
     group = main.get("group") or project_id
     for path in sorted(storage.glob("*/project.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
         if data["id"] != project_id and (data.get("group") or data["id"]) == group:
-            if data.get("language") != main.get("language"):
+            if data.get("language", "").split("-")[0] == language:
                 return data["id"]
     return None
 
@@ -183,7 +184,13 @@ def ensure_web_build() -> None:
     """网页界面的构建产物比源码旧时先重新构建，否则录到的是旧界面（按钮、提示都对不上）。"""
     web = ROOT / "web"
     built = web / "dist" / "index.html"
-    newest = max(path.stat().st_mtime for path in (web / "src").rglob("*") if path.is_file())
+    inputs = (
+        *((web / "src").rglob("*")),
+        *web.glob("*.json"),
+        *web.glob("vite.config.*"),
+        web / "index.html",
+    )
+    newest = max(path.stat().st_mtime for path in inputs if path.is_file())
     if built.is_file() and built.stat().st_mtime >= newest:
         return
     log("网页界面有更新，先重新构建（npm run build）…")
@@ -212,7 +219,7 @@ def check_edge(voice: str, work: Path) -> None:
             output=work / "edge-check.mp3",
         )
     except ProviderError as exc:
-        proxy = f"现在用的代理：{settings.proxy}" if settings.proxy else "现在没有设代理"
+        proxy = "已配置代理" if settings.proxy else "未配置代理"
         raise SystemExit(
             f"{exc}\n连不上 Edge 在线配音（{proxy}）。可以：\n"
             "  1. 过一会儿再试（Edge 是免费公共服务，偶尔会超时）；\n"
@@ -222,46 +229,88 @@ def check_edge(voice: str, work: Path) -> None:
     log("Edge 配音连接正常")
 
 
-def start_server(storage: Path, port: int, tts: str) -> subprocess.Popen:
-    env = dict(os.environ, SHOTWRIGHT_STORAGE=str(storage), PYTHONIOENCODING="utf-8")
-    if tts == "silent":
-        env["SHOTWRIGHT_DEFAULT_TTS"] = "silent"
-    log_file = open(storage.parent / "server.log", "w", encoding="utf-8")  # noqa: SIM115 - 进程结束时关闭
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "shotwright", "serve", "--port", str(port)],
-        cwd=ROOT,
-        env=env,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-    )
-    base = f"http://127.0.0.1:{port}"
-    for _ in range(60):
-        if proc.poll() is not None:
-            raise SystemExit(f"服务启动失败，见 {storage.parent / 'server.log'}")
-        try:
-            urllib.request.urlopen(f"{base}/api/v2/health", timeout=2)
-            return proc
-        except OSError:
-            time.sleep(1)
-    raise SystemExit("服务 60 秒内没有就绪")
+def stop_server(proc: subprocess.Popen) -> None:
+    if proc.poll() is None:
+        proc.terminate()
+    try:
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+def start_server(storage: Path) -> tuple[subprocess.Popen, str]:
+    from shotwright.config import load_settings
+
+    settings = load_settings()
+    config = storage.parent / "promo-config.toml"
+    text = "[app]\nauto_fetch_visuals = false\n"
+    if settings.proxy:
+        text += f"proxy = {json.dumps(settings.proxy, ensure_ascii=False)}\n"
+    config.write_text(text, encoding="utf-8")
+    env = {key: value for key, value in os.environ.items() if not key.upper().startswith("SHOTWRIGHT_")}
+    env.update(SHOTWRIGHT_STORAGE=str(storage), PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
+    server_log = storage.parent / "server.log"
+    with server_log.open("w", encoding="utf-8") as log_file:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "shotwright", "--config", str(config), "serve", "--port", "0"],
+            cwd=ROOT,
+            env=env,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
+    try:
+        deadline = time.monotonic() + 60
+        while proc.poll() is None and time.monotonic() < deadline:
+            ready = re.search(
+                r"Shotwright 已启动：(http://127[.]0[.]0[.]1:[0-9]+)",
+                server_log.read_text(encoding="utf-8", errors="replace"),
+            )
+            if ready:
+                base = ready[1]
+                try:
+                    with urllib.request.urlopen(f"{base}/api/v2/health", timeout=1):
+                        return proc, base
+                except OSError:
+                    pass
+            time.sleep(0.25)
+        raise SystemExit(f"宣传片服务没有就绪，请查看 {server_log}")
+    except BaseException:
+        stop_server(proc)
+        raise
+    finally:
+        config.unlink()
 
 
 def grid_clip(
-    left: Path, right: Path, labels: tuple[str, str], seconds: float, out: Path, font: Path
+    left: Path,
+    right: Path,
+    labels: tuple[str, str],
+    seconds: float,
+    out: Path,
+    font: Path,
+    *,
+    vertical: bool = False,
 ) -> Path:
-    """两条成片左右并排（各带语言标签），时长不够就循环。"""
+    """各自等比缩放到同尺寸的格子，时长不够就循环。"""
     label = (
         "drawtext=fontfile='{font}':text='{text}':x=(w-tw)/2:y=24:fontsize=40:fontcolor=white:"
         "box=1:boxcolor=black@0.55:boxborderw=14"
     )
+    width, height = (980, 660) if vertical else (920, 760)
+    fit = (
+        f"scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
+        f"setsar=1,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=#0B1020,fps=30"
+    )
+    layout = (
+        "vstack=inputs=2,pad=1080:1920:(ow-iw)/2:240"
+        if vertical
+        else "hstack=inputs=2,pad=1920:1080:(ow-iw)/2:150"
+    )
     chain = (
-        # 横屏、竖屏都放得下：缩进 920×760 的框里，上面留给小标题、底部留给宣传片自己的字幕，
-        # 免得和成片里原有的字幕叠在一起
-        "[0:v]scale=920:760:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2,"
-        f"{label.format(font=font.as_posix(), text=labels[0])}[a];"
-        "[1:v]scale=920:760:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2,"
-        f"{label.format(font=font.as_posix(), text=labels[1])}[b];"
-        "[a][b]hstack=inputs=2,pad=1920:1080:(ow-iw)/2:150:color=#0B1020,fps=30[v]"
+        f"[0:v]{fit},{label.format(font=font.as_posix(), text=labels[0])}[a];"
+        f"[1:v]{fit},{label.format(font=font.as_posix(), text=labels[1])}[b];"
+        f"[a][b]{layout}:color=#0B1020[v]"
     )
     subprocess.run(
         [
@@ -311,12 +360,14 @@ def main() -> int:
         "--edition",
         choices=tuple(EDITIONS),
         default="short",
-        help="short：1–2 分钟宣传片；long：3–5 分钟功能讲解",
+        help="short：1–2 分钟宣传片；long：3–5 分钟功能讲解；vertical：约 30 秒竖屏版",
     )
     parser.add_argument("--cut-demo", help="演示剪辑页用的剪辑项目 id（默认自动找识别过原片、语言相同的）")
     parser.add_argument("--source", default="storage/projects", help="演示项目所在的数据目录")
-    parser.add_argument("--work", default="storage/promo", help="工作目录（每次运行会清空重建）")
-    parser.add_argument("--tts", choices=("edge", "silent"), default="edge", help="silent：离线试跑，不出声")
+    parser.add_argument("--work", default="storage/promo", help="输出根目录（每次运行创建一个子目录）")
+    parser.add_argument(
+        "--tts", choices=("edge", "silent"), default="edge", help="silent：离线试跑，不生成旁白"
+    )
     parser.add_argument("--voice", help="配音声音，默认按语言选")
     parser.add_argument("--quality", choices=("draft", "final"), default="final")
     parser.add_argument("--headed", action="store_true", help="显示浏览器窗口（调试用）")
@@ -325,8 +376,9 @@ def main() -> int:
 
     os.chdir(ROOT)
     source = Path(options.source).resolve()
-    work = Path(options.work).resolve()
-    storage = work / "projects"
+    output_root = Path(options.work).resolve()
+    if output_root.is_relative_to(source):
+        parser.error("--work 不能在 --source 的项目目录中")
     font = ROOT / "resources" / "fonts" / ("NotoSansSC-Bold.ttf")
     if not font.is_file():
         font = next((ROOT / "resources" / "fonts").glob("*.[ot]tf"))
@@ -334,20 +386,42 @@ def main() -> int:
     font = Path(os.path.relpath(font, ROOT))
 
     # 1. 复制演示项目和它的另一种语言版本
-    demo_id = options.demo
-    other_id = find_version(source, demo_id)
-    if other_id is None:
-        raise SystemExit("演示项目没有另一种语言的版本：先在「标题与文字 → 语言版本」里生成一个")
-    language = json.loads((source / demo_id / "project.json").read_text(encoding="utf-8"))["language"]
-    if not language.startswith(LANGUAGES[options.lang][:2]):
-        demo_id, other_id = other_id, demo_id  # 宣传片用哪种语言，就以那种语言的版本为主
-    if storage.exists():
-        shutil.rmtree(storage)
-    storage.mkdir(parents=True)
+    from shotwright.core.models import validate_id
+
+    try:
+        demo_id = validate_id(options.demo)
+        if options.cut_demo:
+            validate_id(options.cut_demo)
+    except ValueError as exc:
+        parser.error(str(exc))
+    demo_folder = (source / demo_id).resolve()
+    if demo_folder.parent != source or not (demo_folder / "project.json").is_file():
+        parser.error(f"找不到演示项目：{demo_id}")
+    language = json.loads((demo_folder / "project.json").read_text(encoding="utf-8"))["language"]
+    primary = options.lang
+    secondary = "en" if primary == "zh" else "zh"
+    demo_language = language.split("-")[0]
+    if demo_language == primary:
+        other_id = find_version(source, demo_id, secondary)
+    else:
+        other_id = demo_id if demo_language == secondary else find_version(source, demo_id, secondary)
+        demo_id = find_version(source, demo_id, primary)
+    if not demo_id or not other_id:
+        parser.error("演示项目需要同组的中文和英文版本")
+    output_root.mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix=f"{options.edition}-{options.lang}-", dir=output_root))
+    log(f"运行目录：{work}")
+    ensure_web_build()
+    if options.tts == "edge":
+        check_edge(options.voice or VOICES[options.lang], work)
+    storage = work / "projects"
+    storage.mkdir()
     for project_id in (demo_id, other_id):
-        link_tree(source / project_id, storage / project_id)
+        copy_demo(source / project_id, storage / project_id)
     log(f"演示项目 {demo_id}，另一种语言 {other_id}")
     shots = EDITIONS[options.edition][options.lang]
+    vertical = options.edition == "vertical"
+    only = set(options.only.split(",")) if options.only else None
     cut_id = cut_asset = ""
     if any(item.action == "cut" for item in shots):
         if options.cut_demo:
@@ -357,24 +431,37 @@ def main() -> int:
             cut_id, cut_asset = find_cut_demo(source, options.lang) or ("", "")
         if cut_id and cut_asset:
             if cut_id not in (demo_id, other_id):
-                link_tree(source / cut_id, storage / cut_id)
+                copy_demo(source / cut_id, storage / cut_id)
             log(f"剪辑页演示项目 {cut_id}（原片 {cut_asset}）")
         else:
             log("没找到识别过原片的剪辑项目，跳过剪辑页那一段（可以用 --cut-demo 指定）")
             shots = [item for item in shots if item.action != "cut"]
             cut_id = cut_asset = ""
 
-    ensure_web_build()
-    port = free_port()
-    if options.tts == "edge":
-        check_edge(options.voice or VOICES[options.lang], work)
-    server = start_server(storage, port, options.tts)
-    base = f"http://127.0.0.1:{port}"
+    server, base = start_server(storage)
     api = Api(base)
     recorder = None
     try:
         # 2. 演示「改一句」用的副本；宣传片项目
         edit_copy = api.call("POST", f"/projects/{demo_id}/duplicate", {})["id"]
+        if any(shot.action == "rerender" for shot in shots) and (only is None or "rerender" in only):
+            edit = api.call("GET", f"/projects/{edit_copy}")
+            changes = {}
+            if edit["bgm"]["beat_sync"]:
+                changes["bgm"] = {**edit["bgm"], "beat_sync": False}
+            if options.tts == "silent":
+                changes["voice"] = {**edit["voice"], "provider": "silent"}
+                for shot in edit["shots"]:
+                    if shot["voice"]:
+                        api.call(
+                            "PATCH",
+                            f"/projects/{edit_copy}/shots/{shot['id']}",
+                            {"voice": {**shot["voice"], "provider": "silent"}},
+                        )
+            if changes:
+                api.call("PATCH", f"/projects/{edit_copy}", changes)
+            log("预渲染演示副本，为单镜重渲准备缓存…")
+            api.render(edit_copy, "final")
         voice = options.voice or VOICES[options.lang]
         project = api.call(
             "POST",
@@ -387,7 +474,7 @@ def main() -> int:
                     else ("Shotwright walkthrough" if options.edition == "long" else "Shotwright promo")
                 ),
                 "language": LANGUAGES[options.lang],
-                "canvas": {"aspect": "16:9"},
+                "canvas": {"aspect": "9:16" if vertical else "16:9"},
                 "voice": {"provider": "silent" if options.tts == "silent" else "edge", "voice": voice},
             },
         )
@@ -399,7 +486,11 @@ def main() -> int:
             api.call(
                 "PATCH",
                 f"/projects/{pid}/shots/{shot_id}",
-                {"title": item.title[:60], "visual": {"mode": "color", "color": "#0B1020"}},
+                {
+                    "title": item.title[:60],
+                    "duration": item.seconds,
+                    "visual": {"mode": "color", "color": "#0B1020"},
+                },
             )
         titles = project["titles"]
         # 小标题和字幕都加半透明底：叠在界面录屏上也看得清。
@@ -421,9 +512,15 @@ def main() -> int:
 
         # 3. 先出一版纯色草稿，拿到每个镜头的配音时长
         log("生成配音、量每个镜头的时长…")
-        api.render(pid, "draft")
-        render = api.call("GET", f"/projects/{pid}/renders")["renders"][0]
-        seconds = {t["shot_id"]: t["duration"] for t in render["timings"]}
+        render = api.render(pid, "draft")
+        seconds = {}
+        for timing in render["timings"]:
+            shot_id = timing["shot_id"]
+            length = timing["duration"]
+            if vertical and options.tts != "silent" and timing["voice_duration"] + 0.2 > length:
+                length = round(timing["voice_duration"] + 0.25, 3)
+                api.call("PATCH", f"/projects/{pid}/shots/{shot_id}", {"duration": length})
+            seconds[shot_id] = length
 
         # 4. 每个镜头的画面
         clips = work / "clips"
@@ -438,7 +535,6 @@ def main() -> int:
             cut_project=cut_id,
             cut_asset=cut_asset,
         )
-        only = set(options.only.split(",")) if options.only else None
         for index, (item, shot_id) in enumerate(zip(shots, ids, strict=True), start=1):
             length = seconds[shot_id]
             out = clips / f"{index:02d}-{item.action or item.kind}.mp4"
@@ -449,11 +545,19 @@ def main() -> int:
                 clip = recorder.record_scene(
                     item.action, length, ROOT / font, card=item.card, tag=f"-{index:02d}"
                 )
-                finish(clip, length, out, font=font)
+                finish(clip, length, out, font=font, vertical=vertical, crop=item.crop)
             elif item.kind == "grid":
                 names = ("中文", "English") if options.lang == "zh" else ("Chinese", "English")
                 left, right = (demo_id, other_id) if options.lang == "zh" else (other_id, demo_id)
-                grid_clip(latest_video(storage, left), latest_video(storage, right), names, length, out, font)
+                grid_clip(
+                    latest_video(storage, left),
+                    latest_video(storage, right),
+                    names,
+                    length,
+                    out,
+                    font,
+                    vertical=vertical,
+                )
             else:
                 if only is not None and item.action not in only:
                     continue
@@ -461,7 +565,7 @@ def main() -> int:
                     recorder = Recorder(demo, work / "raw", headless=not options.headed)
                 log(f"录屏 {index}/{len(shots)}：{item.action}（{length:.1f} 秒）")
                 clip = recorder.record(item.action, length)
-                finish(clip, length, out, font=font)
+                finish(clip, length, out, font=font, vertical=vertical, crop=item.crop)
             asset = api.upload(pid, out)
             api.call(
                 "PATCH",
@@ -471,21 +575,23 @@ def main() -> int:
 
         # 5. 成片
         log("渲染成片…")
-        api.render(pid, options.quality)
-        final = latest_video(storage, pid)
+        render = api.render(pid, options.quality)
+        final = storage / pid / "renders" / render["render_id"] / render["video"]
         target = work / f"promo-{options.edition}-{options.lang}.mp4"
-        shutil.copyfile(final, target)
+        partial = target.with_suffix(".tmp")
+        shutil.copyfile(final, partial)
+        partial.replace(target)
         if any(item.action == "chapter" for item in shots):
-            render = api.call("GET", f"/projects/{pid}/renders")["renders"][0]
             chapters = work / f"chapters-{options.edition}-{options.lang}.txt"
             write_chapters(chapters, shots, render["timings"], ids, options.lang)
             log(f"章节时间轴：{chapters}")
         log(f"完成：{target}")
     finally:
-        if recorder is not None:
-            recorder.close()
-        server.terminate()
-        server.wait(timeout=30)
+        try:
+            if recorder is not None:
+                recorder.close()
+        finally:
+            stop_server(server)
     return 0
 
 
