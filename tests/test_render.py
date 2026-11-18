@@ -1,5 +1,5 @@
 import pytest
-from conftest import FakeStock, make_clip
+from conftest import FakeStock, InlineExecutor, make_clip
 
 from shotwright.core.models import Project, Shot, ShotVisual, VoiceSettings
 from shotwright.media.ffmpeg import probe
@@ -42,7 +42,30 @@ def test_changing_one_shot_only_rerenders_that_shot(store, settings):
     store.save(project)
 
     result = Renderer(store, settings).render(project.id)
-    assert _executed(result) == {f"{second}:voice", f"{second}:shot", "assembly", "final"}
+    assert _executed(result) == {f"{second}:voice", f"{second}:shot", "assembly", "final-video", "final"}
+
+
+def test_render_and_cost_receipt_use_the_same_revision(store, settings, monkeypatch):
+    from shotwright.api.jobs import JobManager
+    from shotwright.core.store import read_json
+
+    project = _project(store)
+
+    def concurrent_edit(renderer, snapshot):
+        latest = store.load(snapshot.id)
+        latest.title = "渲染期间修改的标题"
+        latest.cost_credits = 5
+        store.save(latest)
+        snapshot.revision = latest.revision
+
+    monkeypatch.setattr(Renderer, "_prepare_visuals", concurrent_edit)
+    job = JobManager(store, settings, executor=InlineExecutor()).submit(project.id, quality="draft")
+    assert job.state == "done", job.error
+    assert job.result["revision"] == project.revision
+    assert "project_snapshot" not in job.result
+    receipt = read_json(store.render_dir(project.id, job.id) / "cost.json")
+    assert receipt["project_title"] == project.title
+    assert receipt["total"] == project.cost_credits
 
 
 def test_subtitle_style_change_reuses_all_shots(store, settings):
@@ -52,7 +75,7 @@ def test_subtitle_style_change_reuses_all_shots(store, settings):
     project.subtitle.size = 80
     store.save(project)
     result = Renderer(store, settings).render(project.id)
-    assert _executed(result) == {"final"}
+    assert _executed(result) == {"final-video", "final"}
 
 
 def test_rerender_without_changes_reuses_everything(store, settings):
@@ -98,6 +121,12 @@ def test_uploaded_clip_and_image_and_bgm(store, settings, tmp_path):
     # 1 秒的素材被循环到镜头时长，背景音乐被循环到整片时长。
     assert info.duration > 4
 
+    project.bgm.volume = 0.1
+    store.save(project)
+    remixed = Renderer(store, settings).render(project.id)
+    assert _executed(remixed) == {"final"}
+    assert probe(store.render_dir(project.id, remixed.render_id) / remixed.video).has_audio
+
 
 def test_auto_fetch_fills_missing_visuals_and_skips_locked(store, settings):
     settings.auto_fetch_visuals = True
@@ -112,6 +141,7 @@ def test_auto_fetch_fills_missing_visuals_and_skips_locked(store, settings):
     saved = store.load(project.id)
     assert saved.shots[0].visual.selected in saved.assets
     assert saved.shots[1].visual.selected is None
+    assert result.revision == saved.revision
     assert not result.warnings
 
 

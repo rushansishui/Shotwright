@@ -368,7 +368,7 @@ def format_report(data: dict) -> str:
         f"准备示例项目（现画 {data['shots']} 张插画）用了 {data['build_seconds']:.1f} 秒，"
         "不计入上面两行。",
         "",
-        "改一个镜头仍要整片重做一次字幕合成与拼接（见「重做的阶段」里的 final / assembly），",
+        "改一个镜头仍要整片重做一次字幕合成与拼接（见「重做的阶段」里的 final-video / assembly），",
         "所以耗时不是 0；镜头越多，省下的比例越大。",
         "",
         "## 怎么复现",

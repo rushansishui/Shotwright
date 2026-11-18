@@ -484,6 +484,35 @@ def test_keyframes_do_not_use_up_the_take_limit(store, settings):
         visuals.check_budget(settings, project, shot, "video_gen", "seedance")
 
 
+def test_in_flight_spend_counts_towards_project_budget(store, settings):
+    import pytest
+
+    from shotwright.providers.base import BudgetExceeded
+    from shotwright.services import cost, visuals
+
+    first, second = Shot(text="First"), Shot(text="Second")
+    project = Project(shots=[first, second])
+    charge = cost.generation_cost(settings, project, first, "video_gen", "seedance", seconds=5)
+    assert charge > 0
+    project.budget = charge
+    store.create(project)
+    other = store.load(project.id)
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        with visuals._reserve_spend(store, settings, project, first, "video_gen", "seedance", seconds=5):
+            with pytest.raises(BudgetExceeded, match="超出项目费用上限"):
+                with visuals._reserve_spend(
+                    store, settings, other, other.shot(second.id), "video_gen", "seedance", seconds=5
+                ):
+                    pytest.fail("the second request exceeded the available budget")
+            raise RuntimeError("provider failed")
+
+    with visuals._reserve_spend(
+        store, settings, other, other.shot(second.id), "video_gen", "seedance", seconds=5
+    ):
+        assert store.load(project.id).cost_credits == 0
+
+
 def test_take_limit_applies_without_pricing(settings):
     """没配单价时（例如 fal 要自己填 price）金额算出来是 0，次数上限不能因此失效。"""
     import pytest
@@ -986,7 +1015,7 @@ def test_grade_presets_render_and_change_fingerprint(store, settings):
     project.look.grade = "bw"
     store.save(project)
     graded = Renderer(store, settings).render(project.id)
-    assert {s.key for s in graded.stages if not s.reused} == {"final"}
+    assert {s.key for s in graded.stages if not s.reused} == {"final-video"}
 
     for name in GRADES:  # 每个预设的滤镜都能被 ffmpeg 接受
         project = store.load(project.id)

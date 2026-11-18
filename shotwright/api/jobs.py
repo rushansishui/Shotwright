@@ -135,7 +135,8 @@ class JobManager:
         else:
             job.state, job.progress, job.message, job.result = "done", 1.0, "完成", result.to_dict()
             try:
-                spend.write_receipt(self.store, self.store.load(job.project_id), result.render_id)
+                if result.project_snapshot is not None:
+                    spend.write_receipt(self.store, result.project_snapshot, result.render_id)
             except Exception:  # noqa: BLE001 - 回执写不出来不影响成片
                 log.exception("渲染任务 %s 写花费回执失败", job.id)
             reused = sum(1 for s in result.stages if s.reused)

@@ -63,7 +63,7 @@ def test_render_with_titles(store, settings):
     project.titles.headline.text = "换个标题"
     store.save(project)
     again = Renderer(store, settings).render(project.id)
-    assert {s.key for s in again.stages if not s.reused} == {"final"}
+    assert {s.key for s in again.stages if not s.reused} == {"final-video"}
 
 
 def test_suggest_titles_api(client, settings):

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+
+from shotwright.core.models import Project
 
 AUDIO_ARGS = ["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"]
 
@@ -60,8 +62,18 @@ class RenderResult:
     warnings: list[str] = field(default_factory=list)
     inspection: list[dict] = field(default_factory=list)
     """成片抽帧检查发现的问题：[{"shot": 镜头序号, "issues": [...]}]。"""
+    project_snapshot: Project | None = field(default=None, repr=False, compare=False)
 
     def to_dict(self) -> dict:
-        from dataclasses import asdict
-
-        return asdict(self)
+        return {
+            "render_id": self.render_id,
+            "project_id": self.project_id,
+            "revision": self.revision,
+            "video": self.video,
+            "subtitles": self.subtitles,
+            "duration": self.duration,
+            "timings": [asdict(timing) for timing in self.timings],
+            "stages": [asdict(stage) for stage in self.stages],
+            "warnings": self.warnings,
+            "inspection": self.inspection,
+        }
