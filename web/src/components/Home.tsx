@@ -8,6 +8,7 @@ import type { Aspect, LanguageInfo, ProjectSummary, Providers, VideoType } from 
 import { Icon, Segmented } from "./Controls";
 import { MaterialsPicker, type PendingMaterial } from "./MaterialsPicker";
 import { SetupCard } from "./SetupCard";
+import { ProductBrief } from "./ProductBrief";
 import { DRAFT_KEY, loadDraft, saveDraft, type Step } from "../draft";
 
 /** 视频诉求的上限，和后端 schemas.MAX_SUBJECT_BYTES 一致。 */
@@ -366,6 +367,16 @@ export function Home() {
                 onChange={(e) => setIdea(e.target.value)}
               />
             </div>
+            <ProductBrief disabled={working} onApply={(brief) => {
+              if (subject.trim() && !window.confirm(t("home.templateReplace"))) return false;
+              setSubject(brief);
+              setIdea(brief);
+              setVideoType("product_ad");
+              setCustomized(true);
+              setWarned(null);
+              setStep(2);
+              return true;
+            }} />
             <MaterialsPicker items={materials} onChange={setMaterials} videoType={videoType} disabled={working} />
             {error && <p className="hint error">{error}</p>}
             <div className="flow-actions">
