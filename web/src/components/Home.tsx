@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { ProjectList } from "./ProjectList";
-import { BRIEF_TEMPLATES, VIDEO_TYPES, checkBrief, hasIssues } from "../briefs";
+import { BRIEF_TEMPLATES, VIDEO_TYPES, checkBrief, hasIssues, MAX_SUBJECT_BYTES, utf8Bytes } from "../briefs";
 import { useI18n } from "../i18n";
 import type { MessageKey } from "../messages";
 import type { Aspect, LanguageInfo, ProjectSummary, Providers, VideoType } from "../types";
@@ -10,14 +10,6 @@ import { MaterialsPicker, type PendingMaterial } from "./MaterialsPicker";
 import { SetupCard } from "./SetupCard";
 import { ProductBrief } from "./ProductBrief";
 import { DRAFT_KEY, loadDraft, saveDraft, type Step } from "../draft";
-
-/** 视频诉求的上限，和后端 schemas.MAX_SUBJECT_BYTES 一致。 */
-const MAX_SUBJECT_BYTES = 4096;
-
-/** 按 UTF-8 计算字节数：中文一个字 3 字节，emoji 4 字节。 */
-function utf8Bytes(text: string): number {
-  return new TextEncoder().encode(text).length;
-}
 
 /** 估算朗读秒数（和后端 silent.estimate_seconds 一致：中文每秒约 4.5 字）。 */
 function speakSeconds(text: string): number {
@@ -55,6 +47,19 @@ export function Home() {
   const { t, lang } = useI18n();
   const [language, setLanguage] = useState(initial.language ?? (lang === "zh" ? "zh-CN" : "en-US"));
 
+  const settingsKey = JSON.stringify([videoType, aspect, duration, language]);
+  const [briefSettings, setBriefSettings] = useState<string | null>(
+    initial.briefSettings !== undefined ? initial.briefSettings : initial.settingsChanged ? null : settingsKey,
+  );
+  const scriptKey = JSON.stringify([settingsKey, subject]);
+  const [scriptSource, setScriptSource] = useState<string | null>(
+    initial.scriptSource !== undefined ? initial.scriptSource : initial.settingsChanged ? null : scriptKey,
+  );
+  const settingsChanged = briefSettings !== settingsKey;
+  const scriptChanged = lines.some((line) => line.trim()) && scriptSource !== scriptKey;
+  const latestInput = useRef({ idea, subject });
+  latestInput.current = { idea, subject };
+
   useEffect(() => {
     api.listProjects().then(setProjects).catch(() => setProjects([]));
     api.providers().then(setProviders).catch(() => setProviders(null));
@@ -62,8 +67,8 @@ export function Home() {
   }, []);
 
   useEffect(
-    () => saveDraft({ step, idea, subject, title, lines, videoType, aspect, duration, language, customized }),
-    [step, idea, subject, title, lines, videoType, aspect, duration, language, customized],
+    () => saveDraft({ step, idea, subject, title, lines, videoType, aspect, duration, language, customized, briefSettings, scriptSource }),
+    [step, idea, subject, title, lines, videoType, aspect, duration, language, customized, briefSettings, scriptSource],
   );
 
   const llmReady = providers?.llm?.some((p) => p.default && p.configured) ?? false;
@@ -89,7 +94,7 @@ export function Home() {
       let kind = videoType;
       let seconds = duration;
       let ratio = aspect;
-      if (!customized) {
+      if (!customized && !subject.trim()) {
         try {
           const decided = await api.decideSettings({
             idea: idea.trim(),
@@ -110,7 +115,8 @@ export function Home() {
         }
       }
       const result = await api.normalizeBrief({
-        idea: idea.trim(),
+        idea: idea.trim() || subject.trim(),
+        current_brief: subject.trim() || undefined,
         template: BRIEF_TEMPLATES[lang === "zh" ? "zh" : "en"][kind].template,
         video_type: kind,
         language,
@@ -118,8 +124,13 @@ export function Home() {
         duration: seconds,
         materials: notes,
       });
+      if (latestInput.current.subject !== subject || latestInput.current.idea !== idea) {
+        setError(t("flow.briefEditedDuringUpdate"));
+        return;
+      }
       if (subject.trim() && subject.trim() !== result.brief.trim() && !window.confirm(t("flow.replaceBrief"))) return;
       setSubject(result.brief);
+      setBriefSettings(JSON.stringify([kind, ratio, seconds, language]));
       setWarned(null);
       setStep(2);
     } catch (e) {
@@ -139,6 +150,7 @@ export function Home() {
     setError("");
     try {
       const result = await api.writeScript({ brief: subject.trim(), video_type: videoType, language, aspect, duration, materials: notes });
+      setScriptSource(scriptKey);
       setLines(result.lines);
       setTitle(result.title);
       setWarned(null);
@@ -202,6 +214,7 @@ export function Home() {
   /** 不用大模型：自己写口播脚本。想法里已经写了几句话时，按句拆成初稿。 */
   function writeOwn() {
     if (!cleanLines.length) {
+      setScriptSource(scriptKey);
       const drafted = idea
         .split(/(?<=[。！？!?；;\n])/)
         .map((part) => part.trim())
@@ -257,6 +270,7 @@ export function Home() {
               label={t("home.videoType")}
               value={videoType}
               onChange={(value) => {
+
                 setVideoType(value);
                 setCustomized(true);
                 setDecision("");
@@ -271,7 +285,10 @@ export function Home() {
               <label htmlFor="language" title={t("home.languageHint")}>
                 {t("home.language")}
               </label>
-              <select id="language" className="input" value={language} onChange={(e) => setLanguage(e.target.value)}>
+              <select id="language" className="input" value={language} onChange={(e) => {
+
+                setLanguage(e.target.value);
+              }}>
                 {languages.map((l) => (
                   <option key={l.code} value={l.code}>
                     {lang === "zh" && l.name_zh !== l.name ? `${l.name_zh} · ${l.name}` : l.name}
@@ -285,6 +302,7 @@ export function Home() {
                 label={t("home.aspect")}
                 value={aspect}
                 onChange={(value) => {
+
                   setAspect(value);
                   setCustomized(true);
                   setDecision("");
@@ -311,6 +329,7 @@ export function Home() {
                 step={5}
                 value={duration}
                 onChange={(e) => {
+
                   setDuration(Number(e.target.value));
                   setCustomized(true);
                   setDecision("");
@@ -348,7 +367,25 @@ export function Home() {
           ))}
         </ol>
 
-        {settings}
+        <fieldset disabled={working} className="settings-fieldset">{settings}</fieldset>
+        {settingsChanged && subject.trim() && (
+          <div className="hint" role="status">
+            <p>{t("flow.settingsChanged")}</p>
+            <div className="row">
+              {llmReady && <button type="button" className="btn" disabled={working || tooLong} onClick={normalize}>
+                {busy === "normalize" ? t("flow.normalizing") : t("flow.updateBrief")}
+              </button>}
+              <button type="button" className="btn ghost" disabled={working} onClick={() => setBriefSettings(settingsKey)}>{t("flow.confirmBriefSettings")}</button>
+            </div>
+          </div>
+        )}
+
+        {scriptChanged && (
+          <div className="hint" role="status">
+            <p>{t("flow.scriptSettingsChanged")}</p>
+            <button type="button" className="btn ghost" disabled={working} onClick={() => setScriptSource(scriptKey)}>{t("flow.confirmScriptSettings")}</button>
+          </div>
+        )}
 
         {step === 1 && (
           <div className="flow-body">
@@ -368,7 +405,8 @@ export function Home() {
               />
             </div>
             <ProductBrief disabled={working} onApply={(brief) => {
-              if (subject.trim() && !window.confirm(t("home.templateReplace"))) return false;
+              if ((subject.trim() || idea.trim()) && !window.confirm(t("home.productBriefReplace"))) return false;
+              setBriefSettings(JSON.stringify(["product_ad", aspect, duration, language]));
               setSubject(brief);
               setIdea(brief);
               setVideoType("product_ad");
@@ -440,7 +478,7 @@ export function Home() {
                 >
                   {t("home.useExample")}
                 </button>
-                {idea.trim() && llmReady && (
+                {(idea.trim() || subject.trim()) && llmReady && (
                   <button type="button" className="btn small ghost" disabled={working} onClick={normalize}>
                     {busy === "normalize" ? t("flow.normalizing") : t("flow.renormalize")}
                   </button>

@@ -91,3 +91,7 @@ export function checkBrief(text: string, type: VideoType | null): BriefIssues {
 export function hasIssues(issues: BriefIssues): boolean {
   return issues.unfilled > 0 || issues.tooShort || issues.noAppearance;
 }
+
+/** UTF-8 limit shared by brief editors. */
+export const MAX_SUBJECT_BYTES = 4096;
+export const utf8Bytes = (text: string): number => new TextEncoder().encode(text).length;

@@ -80,23 +80,6 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
 
     # ---- 发布包 -------------------------------------------------------------
 
-    def _latest_render(project_id: str) -> dict | None:
-        """最近一次渲染的结果（render.json），按成片文件的修改时间取最新的。"""
-        directory = store.project_dir(project_id) / "renders"
-        best: dict | None = None
-        if directory.is_dir():
-            for child in directory.iterdir():
-                video = child / "video.mp4"
-                if not video.is_file():
-                    continue
-                created = video.stat().st_mtime
-                if best is not None and created <= best["created_at"]:
-                    continue
-                data = read_json(child / "render.json")
-                if data and data.get("render_id"):
-                    best = {**data, "created_at": created}
-        return best
-
     def _text_llm():
         """配了文字模型就用它拟标题和话题；没配时发布包用兜底文案。"""
         try:
@@ -108,7 +91,7 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
     def get_publish(project_id: str):
         """发布包里会用到的文字（标题、简介、话题标签），先给界面看一眼，不打包。"""
         project = store.load(_id(project_id))
-        latest = _latest_render(project.id)
+        latest = publish.latest_render(store, project.id)
         duration = float((latest or {}).get("duration") or 0.0)
         return publish.plan_pack(project, llm=_text_llm(), duration=duration).to_dict()
 
@@ -116,7 +99,7 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
     def download_publish(project_id: str):
         """发布包：成片、封面、字幕和 publish.json 打成一个 zip。用最近一次成片。"""
         project = store.load(_id(project_id))
-        latest = _latest_render(project.id)
+        latest = publish.latest_render(store, project.id)
         if latest is None:
             raise HTTPException(404, "还没有成片，先渲染一次")
         directory = store.project_dir(project.id) / "renders" / latest["render_id"]

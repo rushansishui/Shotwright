@@ -13,6 +13,9 @@ export interface Draft {
   language?: string;
   /** 用户自己改过类型 / 比例 / 时长：刷新后仍然按用户选的来，不再让 AI 判断。 */
   customized?: boolean;
+  settingsChanged?: boolean;
+  briefSettings?: string | null;
+  scriptSource?: string | null;
 }
 
 export type Step = 1 | 2 | 3;
