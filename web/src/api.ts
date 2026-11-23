@@ -175,6 +175,7 @@ export const api = {
     request<Project>(`/projects/${id}/titles/suggest`, json("POST", options)),
   /** 把随手写的想法按视频类型的模板整理成完整诉求（不建项目、不收费）。 */
   normalizeBrief: (body: {
+    current_brief?: string;
     idea: string;
     template: string;
     video_type: VideoType;

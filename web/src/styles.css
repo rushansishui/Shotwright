@@ -3906,3 +3906,23 @@ li.missing .readiness-mark {
   margin-top: 6px;
   align-items: center;
 }
+
+.product-brief fieldset {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 12px 0 0;
+  padding: 0;
+  border: 0;
+}
+.product-brief .field {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}

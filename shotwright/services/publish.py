@@ -26,6 +26,7 @@ from pathlib import Path
 
 from shotwright.core import platforms, speech
 from shotwright.core.models import Project
+from shotwright.core.store import ProjectStore, read_json
 from shotwright.services.archive import safe_name
 
 log = logging.getLogger("shotwright.publish")
@@ -180,3 +181,20 @@ def pack_name(pack: PublishPack) -> str:
 
 
 __all__ = ["PublishPack", "build_pack", "pack_name", "plan_pack"]
+
+
+def latest_render(store: ProjectStore, project_id: str) -> dict | None:
+    directory = store.project_dir(project_id) / "renders"
+    best: dict | None = None
+    if directory.is_dir():
+        for child in directory.iterdir():
+            video = child / "video.mp4"
+            if not video.is_file():
+                continue
+            created = video.stat().st_mtime
+            if best is not None and created <= best["created_at"]:
+                continue
+            data = read_json(child / "render.json")
+            if data and data.get("render_id"):
+                best = {**data, "created_at": created}
+    return best

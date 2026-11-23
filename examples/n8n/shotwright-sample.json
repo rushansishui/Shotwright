@@ -1,0 +1,268 @@
+{
+  "name": "Shotwright 免费样片演示",
+  "nodes": [
+    {
+      "id": "838a7850-5f56-4184-ae12-f8a3b700dba1",
+      "name": "手动开始",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "100f75b5-7bde-4fd2-a4fa-e99ece837389",
+      "name": "连接设置",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "return [{json: {baseUrl: 'http://127.0.0.1:8000', language: 'zh-CN'}}];"
+      }
+    },
+    {
+      "id": "eb33d133-ef10-4769-b23c-db341668da6f",
+      "name": "创建示例项目",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('连接设置').first().json.baseUrl + '/api/v2/projects/sample' }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "language",
+              "value": "={{ $('连接设置').first().json.language }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "ed190c25-d4c7-4196-b6d0-aa3206f561eb",
+      "name": "提交样片渲染",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('连接设置').first().json.baseUrl + '/api/v2/projects/' + $json.id + '/renders' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"sample\":true,\"confirm_charge\":false,\"quality\":\"draft\"}",
+        "options": {
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "id": "7a245aea-1969-4ea3-a83e-90c95fcefa66",
+      "name": "等待五秒",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 5,
+        "unit": "seconds"
+      },
+      "webhookId": "7b795975-0b2b-4b58-91ec-3ffa5f70d2da"
+    },
+    {
+      "id": "906e85da-421f-4676-a615-26b556b7b852",
+      "name": "查询渲染进度",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "url": "={{ $('连接设置').first().json.baseUrl + '/api/v2/renders/' + $('提交样片渲染').first().json.id }}",
+        "options": {
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "id": "d69109b0-74fc-4549-839b-716aefc6335e",
+      "name": "检查任务状态",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const job = $input.first().json;\nif (job.state === 'failed' || job.state === 'cancelled') {\n  throw new Error(`渲染${job.state}，任务 ${job.id}，原因 ${job.error || job.message}`);\n}\nif (job.state !== 'done' && $runIndex >= 119) {\n  throw new Error(`已查询120次，请在Shotwright中查看任务 ${job.id}。渲染可能仍在进行，请勿重复提交。`);\n}\nif (!['queued', 'running', 'done'].includes(job.state)) {\n  throw new Error(`无法识别任务状态 ${job.state}`);\n}\nreturn [{json: job}];"
+      }
+    },
+    {
+      "id": "e100c3be-7f5f-4eb9-a047-3cab59d9e642",
+      "name": "是否完成",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "571f9be5-ddca-4f6b-bc31-ce1a6b19cb67",
+              "leftValue": "={{ $json.state }}",
+              "rightValue": "done",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b01d2b0d-34bd-49bb-8192-5b89fe1fb014",
+      "name": "成片地址",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const job = $input.first().json;\nconst base = $('连接设置').first().json.baseUrl.replace(/\\/$/, '');\nconst path = `${base}/api/v2/projects/${job.project_id}/renders/${job.id}`;\nreturn [{json: {projectId: job.project_id, jobId: job.id, state: job.state,\n projectUrl: `${base}/#/p/${job.project_id}`, videoUrl: `${path}/video.mp4`, subtitlesUrl: `${path}/subtitles.srt`, result: job.result}}];"
+      }
+    }
+  ],
+  "connections": {
+    "手动开始": {
+      "main": [
+        [
+          {
+            "node": "连接设置",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "连接设置": {
+      "main": [
+        [
+          {
+            "node": "创建示例项目",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "创建示例项目": {
+      "main": [
+        [
+          {
+            "node": "提交样片渲染",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "提交样片渲染": {
+      "main": [
+        [
+          {
+            "node": "等待五秒",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "等待五秒": {
+      "main": [
+        [
+          {
+            "node": "查询渲染进度",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "查询渲染进度": {
+      "main": [
+        [
+          {
+            "node": "检查任务状态",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "检查任务状态": {
+      "main": [
+        [
+          {
+            "node": "是否完成",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "是否完成": {
+      "main": [
+        [
+          {
+            "node": "成片地址",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "等待五秒",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

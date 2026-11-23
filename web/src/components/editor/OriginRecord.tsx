@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api";
-import { BRIEF_TEMPLATES } from "../../briefs";
+import { BRIEF_TEMPLATES, MAX_SUBJECT_BYTES, utf8Bytes } from "../../briefs";
 import { useI18n } from "../../i18n";
 import type { MessageKey } from "../../messages";
 import type { Project } from "../../types";
@@ -24,9 +24,6 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-/** 视频诉求的上限（UTF-8 字节），和后端一致。 */
-const MAX_SUBJECT_BYTES = 4096;
-const bytes = (text: string) => new TextEncoder().encode(text).length;
 
 type Field = "idea" | "subject" | "script";
 
@@ -150,7 +147,7 @@ export function OriginRecord({ project, run }: OriginRecordProps) {
     window.location.hash = "#/";
   }
 
-  const tooLong = editing === "subject" && bytes(draft) > MAX_SUBJECT_BYTES;
+  const tooLong = editing === "subject" && utf8Bytes(draft) > MAX_SUBJECT_BYTES;
   const draftLines = editing === "script" ? draft.split("\n").filter((line) => line.trim()).length : 0;
 
   const block = (field: Field, label: MessageKey, hint?: string) => {
@@ -163,7 +160,7 @@ export function OriginRecord({ project, run }: OriginRecordProps) {
           {isEditing && field === "script" && <span className="muted small">{t("origin.scriptEditHint", { n: draftLines })}</span>}
           {isEditing && field === "subject" && (
             <span className={`muted small ${tooLong ? "bad" : ""}`}>
-              {bytes(draft)} / {MAX_SUBJECT_BYTES} {t("home.subjectBytes")}
+              {utf8Bytes(draft)} / {MAX_SUBJECT_BYTES} {t("home.subjectBytes")}
             </span>
           )}
           {!isEditing && hint && <span className="muted small">{hint}</span>}

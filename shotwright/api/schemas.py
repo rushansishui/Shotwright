@@ -301,6 +301,7 @@ class MaterialNote(_Body):
 
 
 class NormalizeBrief(_Body):
+    current_brief: str | None = Field(None, max_length=4096)
     idea: str = Field(min_length=1, max_length=4000)
     """用户随手写的想法。"""
     template: str = Field("", max_length=6000)

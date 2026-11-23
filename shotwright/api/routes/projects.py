@@ -28,7 +28,6 @@ from shotwright.api.schemas import (
 )
 from shotwright.core import languages
 from shotwright.core.models import Project, VoiceSettings
-from shotwright.core.store import read_json
 from shotwright.media import ffmpeg
 from shotwright.pipeline import voice as voice_stage
 from shotwright.pipeline.render_types import RenderError
@@ -41,6 +40,7 @@ from shotwright.services import (
     localize,
     prompting,
     pronounce,
+    publish,
     readiness,
     remedy,
     spend,
@@ -66,7 +66,7 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
     def list_projects():
         result = []
         for p in store.list():
-            latest = _latest_render(p.id)
+            latest = publish.latest_render(store, p.id)
             source = _cover_source(p)
             result.append(
                 {
@@ -111,25 +111,9 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
             return "cut"
         return "create"
 
-    def _latest_render(project_id: str) -> dict | None:
-        directory = store.project_dir(project_id) / "renders"
-        best: dict | None = None
-        if directory.is_dir():
-            for child in directory.iterdir():
-                video = child / "video.mp4"
-                if not video.is_file():
-                    continue
-                created = video.stat().st_mtime
-                if best is not None and created <= best["created_at"]:
-                    continue
-                data = read_json(child / "render.json")
-                if data and data.get("render_id"):
-                    best = {**data, "created_at": created}
-        return best
-
     def _cover_source(project: Project) -> tuple[Path, str] | None:
         """封面取自哪个文件：最近的成片，没有成片时用第一个有画面的镜头。返回（文件, 缓存键）。"""
-        latest = _latest_render(project.id)
+        latest = publish.latest_render(store, project.id)
         if latest:
             video = store.project_dir(project.id) / "renders" / latest["render_id"] / "video.mp4"
             return video, f"r{latest['render_id']}"
@@ -267,6 +251,7 @@ def register(api: APIRouter, ctx: ApiContext) -> None:
         text = brief_service.normalize_brief(
             llm,  # type: ignore[arg-type]
             body.idea,
+            current_brief=body.current_brief,
             template=body.template,
             video_type=body.video_type,
             language=lang.prompt_name,

@@ -105,6 +105,7 @@ def normalize_brief(
     idea: str,
     *,
     template: str,
+    current_brief: str | None = None,
     video_type: str | None = None,
     language: str = "简体中文",
     aspect: str | None = None,
@@ -119,6 +120,9 @@ def normalize_brief(
     user = "\n".join(
         [*_context(video_type, aspect, duration, materials or []), f"用户的想法：\n{idea.strip()[:4000]}"]
     )
+    if current_brief:
+        user += "\n当前诉求（用户可能已修改）：\n" + current_brief
+        user += "\n请基于当前诉求更新。保留用户补充的商品事实、参数、价格、卖点和限制，不得虚构。当前诉求与原始想法冲突时，以当前诉求中的用户修订为准。视频类型、语言、画面比例和目标时长以本次设置为准，修正旧诉求中冲突的要求，并按新时长调整内容结构和节奏。"
     reply = llm.complete([{"role": "system", "content": system}, {"role": "user", "content": user}]).strip()
     if reply.startswith("```"):
         reply = reply.strip("`").split("\n", 1)[-1].strip()
