@@ -822,6 +822,11 @@ def generate_ai_candidate(
 
     拿到远端任务 id 后立刻写进项目，进程重启后还能继续轮询，避免重复扣费。
     """
+    pending = store.load(project.id).shot(shot.id).visual.pending
+    if pending is not None:
+        raise ProviderError(
+            f"这个镜头有尚未取回结果的任务（{pending.task_id}）。请重启 Shotwright 恢复任务。"
+        )
     if not shot.visual.prompt.strip():
         raise ProviderError("这个镜头没有画面提示词")
     provider_id = _provider_id(settings, "video_gen", shot)
@@ -1318,7 +1323,7 @@ def _refresh(
 def resume_pending(store: ProjectStore, settings: Settings, project: Project, shot: Shot) -> list[str]:
     """继续轮询一个已提交但没取回结果的 AI 视频任务（重启后恢复用）。
 
-    成功时把结果登记为素材并清掉 pending；失败时也清掉，让用户可以重新提交。
+    成功时准备素材和费用记录，由调用方与 pending 一起保存。
     """
     pending = shot.visual.pending
     if pending is None:
@@ -1336,8 +1341,12 @@ def resume_pending(store: ProjectStore, settings: Settings, project: Project, sh
         path = provider.resume(pending.task_id, output=Path(temp) / "gen")
         asset = _register_media(store, project, path, source=provider_id, folder="ai-video", meta=meta)
     shot.visual.pending = None
-    record_spend(store, settings, project, shot, "video_gen", provider_id)
     _attach(shot, [asset.id], select=True, take="video")
+    from shotwright.services import cost
+
+    take = shot.visual.take(asset.id)
+    if take is not None:
+        take.cost = cost.generation_cost(settings, project, shot, "video_gen", provider_id)
     return [asset.id]
 
 

@@ -2,6 +2,20 @@
 
 Shotwright 以**镜头（Shot）**为基本单位：一个视频是一个项目（Project），项目由有序的镜头组成，每个镜头引用素材（Asset）。渲染按镜头增量进行，改一个镜头只重做这个镜头和最后的拼接导出。
 
+## 系统概览
+
+| 入口或组件 | 职责 | 代码入口 |
+| --- | --- | --- |
+| Web 与桌面 | 创建项目、按文字剪辑、编辑分镜、审片和导出。Windows 桌面窗口承载同一套 Web 界面 | [React 应用](../web/src/App.tsx)、[桌面入口](../shotwright/desktop.py) |
+| FastAPI 与 CLI | 接收项目操作和渲染请求，调用服务层和渲染引擎 | [FastAPI 应用](../shotwright/api/app.py)、[CLI](../shotwright/cli.py) |
+| 本地项目存储 | 原子写入项目 JSON，按内容哈希登记素材，维护项目和渲染缓存路径 | [ProjectStore](../shotwright/core/store.py) |
+| 外部服务 | 按配置提供大模型、图像与视频生成、语音和素材检索，部分能力可用本地 Provider | [Provider 注册表](../shotwright/providers/registry.py) |
+| 本地媒体引擎 | 处理选段、配音、字幕、混音、拼接和编码 | [渲染调度](../shotwright/pipeline/render.py)、[FFmpeg 封装](../shotwright/media/ffmpeg.py) |
+
+从想法或脚本创建项目时，分镜服务把文案、画面描述和主体设定写入项目。从原片开始时，剪辑服务根据文稿编辑或画面切点创建原声镜头，通过入出点引用原文件。两个入口共用分镜编辑、素材选择、审片和渲染流程。
+
+项目、素材和成片存放在本地。启用云端 Provider 时，调用所需的文案、参考图或音频按服务能力发送给对应 Provider。部署和配置入口见 [README](../README.md)。
+
 ## 分层
 
 ```text
@@ -179,6 +193,14 @@ storage/projects/<项目id>/
 | 拼接 | 整片 | 所有镜头渲染指纹及顺序、转场类型与时长 |
 | 字幕与声音 | 整片 | 拼接指纹、字幕条目与样式、叠加文字与图形、AI 角标、字体文件、背景音乐及其设置、音效层与切点、导出响度、统一调色、交付平台、草稿 / 成片 |
 
+最终合成会单独为画面计算指纹，并在适用时复用 `final-video` 缓存。仅改混音时，可以复用已合成文字层的画面。改动镜头画面后，整片字幕、转场和叠加层仍可能需要重新合成。耗时分布与基准复现方式见 [BENCHMARK.md](../BENCHMARK.md)。
+
+### 渲染任务生命周期
+
+API 渲染任务由 [JobManager](../shotwright/api/jobs.py) 在进程内管理，默认单工作线程。任务从排队进入运行，最终变为完成、失败或取消。取消排队任务会立即更新状态，取消运行中的任务通过取消事件传递给渲染器。执行器启动回调时在锁内读取任务，已取消或已被历史清理移除的任务会直接退出。
+
+渲染任务队列与云端生成任务有各自的生命周期。进程重启后可根据项目保存的远端任务 ID 恢复生成结果，渲染队列本身保存在内存中。
+
 规则：
 
 1. **画面准备**：渲染时，没有画面且未锁定的镜头会自动检索或生成一次。`ai` / `image` 镜头只有在提交渲染时确认了收费（`confirm_charge`）才会调用 AI；未确认、未配置或生成失败时，有检索词就改用素材检索，仍拿不到素材才使用纯色画面。每种情况都在结果里给出提示，不中断渲染。
@@ -262,10 +284,43 @@ AI 视频和 AI 图片按次计费，处理规则沿用 MoneyPrinterTurbo 的做
 | 提交时超时、5xx、重定向、响应无法解析 | 远端可能已经建好任务并扣费：抛 `UnconfirmedTaskError`，**不自动重试**，提示到控制台核对 |
 | 提交返回 4xx | 远端明确拒绝、没有扣费，直接报错 |
 | 轮询状态时网络抖动、429、5xx | 查询不收费，线性退避重试；超过次数或总时长后报"无法确认"并附任务 id |
-| 任务 `failed` / `cancelled` / `expired` | 报错并附服务商给出的原因 |
+| 远端明确报告任务失败、取消或过期 | 共享轮询逻辑抛出 `RemoteTaskFailed`，附服务商给出的原因 |
 | 成功 | 立即下载结果（Seedance 的地址约 24 小时失效），按 SHA-256 入库并选中 |
 
 AI 视频镜头已选中一张图片时（例如先用 AI 图片生成、或上传了一张图），会把这张图作为首帧走图生视频。
+
+#### 跨进程恢复
+
+```mermaid
+sequenceDiagram
+    participant API as Shotwright
+    participant Remote as 视频 Provider
+    participant Store as 项目存储
+    API->>Remote: 提交已确认的生成请求
+    Remote-->>API: 返回远端任务 ID
+    API->>Store: 持久化 pending
+    API->>Remote: 查询任务并尝试下载
+    Remote-->>API: 暂时无法取回结果
+    Note over API,Store: 保留 pending
+    API->>Store: 下次启动时读取 pending
+    API->>Remote: 按原任务 ID 查询
+    alt 下载成功
+        API->>Store: 登记候选和参考费用，清除 pending
+    else 远端明确失败
+        API->>Store: 清除匹配的 pending
+    else 暂时仍不可用
+        Note over API,Store: 保留 pending 供后续恢复
+    end
+```
+
+1. 支持异步任务的 AI 视频 Provider 返回任务 ID 后，画面服务将 Provider 和任务 ID 写入镜头的 `pending` 字段。
+2. FastAPI 启动时扫描项目的待恢复任务，通过原 Provider 的 `resume` 查询该任务和下载结果。
+3. 轮询超时、下载失败等暂时性错误保留任务记录，后续启动继续尝试。镜头有待恢复任务时，生成入口会拦住再次提交。远端明确失败后，启动恢复流程清除对应记录。
+4. 下载成功后，服务在项目锁内重新读取项目并核对待恢复任务。匹配时，将素材、候选版本、参考费用和清除待恢复记录一并写入项目。
+
+实现入口见 [API 启动恢复](../shotwright/api/app.py)、[画面服务](../shotwright/services/visuals.py)和[共享付费任务逻辑](../shotwright/providers/paid_task.py)。
+
+手动恢复、异常退出验证及其他工程优化的进度与验收条件见 [产品路线图](ROADMAP.md#本轮工程检查)。
 
 新增一家服务的步骤见 [PROVIDERS.md](PROVIDERS.md)。
 
