@@ -5,6 +5,7 @@ from concurrent.futures import Executor
 
 import pytest
 
+from shotwright.api import jobs as job_queue
 from shotwright.api.jobs import MAX_FINISHED_JOBS, JobManager
 from shotwright.media import ffmpeg
 
@@ -44,6 +45,26 @@ def test_running_jobs_are_never_pruned(store, settings):
         job.state = "done"
         job.created_at = float(index + 1)
     assert jobs.get(important.id) is not None
+
+
+def test_pruned_cancelled_job_callback_returns_without_rendering(store, settings, monkeypatch):
+    callbacks = []
+    executor = _NoopExecutor()
+    monkeypatch.setattr(executor, "submit", lambda fn, job_id: callbacks.append((fn, job_id)))
+    monkeypatch.setattr(job_queue, "MAX_FINISHED_JOBS", 0)
+    jobs = JobManager(store, settings, executor=executor)
+    cancelled = jobs.submit("p")
+    assert jobs.cancel(cancelled.id)
+    jobs.submit("p")
+    assert jobs.get(cancelled.id) is None
+
+    def unexpected_render(*args, **kwargs):
+        pytest.fail("A cancelled task must not start rendering")
+
+    monkeypatch.setattr(job_queue, "Renderer", unexpected_render)
+    callback, job_id = callbacks[0]
+    callback(job_id)
+    assert cancelled.state == "cancelled"
 
 
 def test_ffmpeg_cancel_terminates_quickly(tmp_path):

@@ -35,7 +35,7 @@ from shotwright.core import limits
 from shotwright.core.store import ProjectNotFound, ProjectStore
 from shotwright.logs import setup_logging
 from shotwright.media import ffmpeg
-from shotwright.providers.base import ChargeConfirmationRequired, ProviderError
+from shotwright.providers.base import ChargeConfirmationRequired, ProviderError, RemoteTaskFailed
 from shotwright.services import batch as batch_service
 from shotwright.services import visuals
 
@@ -112,17 +112,22 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
         """扫描所有项目里带 pending 的镜头，逐个继续轮询。
 
         恢复成功的素材要一并写回项目，否则登记到内存里的结果会随进程丢失。
-        失败时只清掉 pending，让用户可以重新提交。
+        只有远端明确失败时才清掉 pending，暂时取不到结果时保留任务以便继续恢复。
         """
         for project in store.list():
             pending_shots = [s for s in project.shots if s.visual.pending is not None]
             if not pending_shots:
                 continue
             for shot in pending_shots:
-                task_id = shot.visual.pending.task_id if shot.visual.pending else ""
+                pending = shot.visual.pending
+                if pending is None:
+                    continue
+                task_id = pending.task_id
                 recovered: list[str] = []
                 try:
                     recovered = visuals.resume_pending(store, settings, project, shot)
+                except RemoteTaskFailed as exc:
+                    log.warning("收费任务 %s 已在远端失败：%s", task_id, exc)
                 except ProviderError as exc:
                     log.warning(
                         "项目 %s 镜头 %s 的收费任务 %s 恢复失败：%s",
@@ -131,14 +136,18 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                         task_id,
                         exc,
                     )
+                    continue
                 except Exception as exc:  # noqa: BLE001 - 后台线程不能因单个镜头崩掉
                     log.exception("恢复收费任务时出错：%s", exc)
+                    continue
                 try:
                     with store.lock(project.id):
                         latest = store.load(project.id)
                         try:
                             target = latest.shot(shot.id)
                         except KeyError:
+                            continue
+                        if target.visual.pending != pending:
                             continue
                         for asset_id in recovered:
                             if asset_id in project.assets:
@@ -160,6 +169,11 @@ def create_app(settings: Settings | None = None, *, job_manager: JobManager | No
                                 for item in shot.visual.takes
                                 if item.asset_id in recovered and item.asset_id not in known
                             ]
+                            latest.cost_credits = round(
+                                latest.cost_credits
+                                + sum(item.cost for item in shot.visual.takes if item.asset_id in recovered),
+                                4,
+                            )
                         target.visual.pending = None
                         store.save(latest)
                 except OSError as exc:

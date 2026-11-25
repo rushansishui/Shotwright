@@ -40,6 +40,10 @@ class UnconfirmedTaskError(ProviderError):
     """收费任务可能已在远端创建，但本地无法确认结果。不要自动重试，以免重复扣费。"""
 
 
+class RemoteTaskFailed(ProviderError):
+    """远端明确报告任务已失败或取消。"""
+
+
 class ReferenceImagesUnsupported(ProviderError):
     """生成服务不接受参考图（4xx，远端已明确拒绝、没有扣费）。
 

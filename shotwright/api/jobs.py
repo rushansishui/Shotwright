@@ -94,19 +94,21 @@ class JobManager:
         with self._lock:
             event = self._cancel.get(job_id)
             job = self._jobs.get(job_id)
-        if event is None or job is None or job.state in ("done", "failed", "cancelled"):
-            return False
-        event.set()
-        if job.state == "queued":
-            job.state, job.message, job.finished_at = "cancelled", "已取消", time.time()
+            if event is None or job is None or job.state in ("done", "failed", "cancelled"):
+                return False
+            event.set()
+            if job.state == "queued":
+                job.state, job.message, job.finished_at = "cancelled", "已取消", time.time()
         return True
 
     def _run(self, job_id: str) -> None:
-        job = self._jobs[job_id]
-        cancel = self._cancel[job_id]
-        if cancel.is_set():
-            return
-        job.state, job.message = "running", "开始渲染"
+        with self._lock:
+            # 已取消的排队任务可能在回调启动前被历史清理移除。
+            job = self._jobs.get(job_id)
+            cancel = self._cancel.get(job_id)
+            if job is None or cancel is None or cancel.is_set():
+                return
+            job.state, job.message = "running", "开始渲染"
         log.info(
             "渲染任务 %s 开始：项目 %s，允许收费生成 %s",
             job.id,

@@ -22,7 +22,7 @@ from typing import Any
 
 import httpx
 
-from shotwright.providers.base import ProviderError, UnconfirmedTaskError
+from shotwright.providers.base import ProviderError, RemoteTaskFailed, UnconfirmedTaskError
 
 log = logging.getLogger(__name__)
 
@@ -201,7 +201,7 @@ def _poll(
             return body
         if status in settings.failure:
             detail = redact(settings.error_of(body) or "", secret)[:300]
-            raise ProviderError(f"{label} 任务失败（{status}）：{detail}，任务 id：{task_id}")
+            raise RemoteTaskFailed(f"{label} 任务失败（{status}）：{detail}，任务 id：{task_id}")
         if status not in settings.active:
             raise UnconfirmedTaskError(f"{label} 返回了未知状态 {status!r}，任务 id：{task_id}")
         sleep(min(settings.interval, max(deadline - clock(), 0)))

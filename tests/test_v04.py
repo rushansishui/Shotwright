@@ -2,11 +2,13 @@
 
 import json
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 from conftest import FakeVideoGen, make_clip
 from fastapi.testclient import TestClient
 
+from shotwright.api import app as api_app
 from shotwright.api.app import create_app
 from shotwright.api.jobs import JobManager
 from shotwright.core.models import (
@@ -22,7 +24,7 @@ from shotwright.media.ffmpeg import probe
 from shotwright.pipeline.metadata import AI_LABEL
 from shotwright.pipeline.render import Renderer
 from shotwright.providers import registry
-from shotwright.providers.base import ProviderError, ProviderSpec
+from shotwright.providers.base import ProviderError, ProviderSpec, RemoteTaskFailed, UnconfirmedTaskError
 from shotwright.services import cost, visuals
 
 # ---- 测试用的服务 -----------------------------------------------------------
@@ -320,6 +322,69 @@ def test_pending_task_is_resumed_without_resubmitting(store, settings):
     assert FakeResumable.resumed == ["task-42"]
     assert len(FakeVideoGen.calls) == before
     assert project.shots[0].visual.pending is None and project.shots[0].visual.selected == added[0]
+
+
+@pytest.mark.parametrize("temporary_error", [UnconfirmedTaskError, ProviderError])
+def test_startup_retries_original_task_after_temporary_failure(store, settings, monkeypatch, temporary_error):
+    pending = PendingTask(provider="fakeresume", task_id="task-42", kind="video_gen")
+    project = _project(store, shots=[Shot(text="一句。", visual=ShotVisual(mode="ai", pending=pending))])
+    shot_id = project.shots[0].id
+    resume = FakeResumable.resume
+    calls = []
+
+    def resume_after_failure(self, task_id, *, output):
+        calls.append(task_id)
+        if len(calls) == 1:
+            raise temporary_error("暂时无法取回结果")
+        return resume(self, task_id, output=output)
+
+    monkeypatch.setattr(FakeResumable, "resume", resume_after_failure)
+    monkeypatch.setattr(cost, "generation_cost", lambda *args, **kwargs: 1.25)
+    monkeypatch.setattr(
+        api_app,
+        "threading",
+        SimpleNamespace(
+            Thread=lambda *, target, **kwargs: SimpleNamespace(start=target),
+        ),
+    )
+    before = len(FakeVideoGen.calls)
+    with _client(settings, store):
+        saved = store.load(project.id)
+        assert saved.shot(shot_id).visual.pending == pending
+        assert saved.cost_credits == 0
+        with pytest.raises(ProviderError, match="task-42"):
+            visuals.generate_ai_candidate(store, settings, saved, saved.shot(shot_id))
+    with _client(settings, store):
+        saved = store.load(project.id)
+        visual = saved.shot(shot_id).visual
+        assert visual.pending is None
+        assert visual.selected in saved.assets
+        assert visual.take(visual.selected).cost == saved.cost_credits == 1.25
+    with _client(settings, store):
+        assert store.load(project.id).cost_credits == 1.25
+    assert calls == ["task-42", "task-42"]
+    assert len(FakeVideoGen.calls) == before
+
+
+def test_startup_clears_task_after_confirmed_remote_failure(store, settings, monkeypatch):
+    pending = PendingTask(provider="fakeresume", task_id="task-42", kind="video_gen")
+    project = _project(store, shots=[Shot(text="一句。", visual=ShotVisual(mode="ai", pending=pending))])
+
+    def failed_resume(self, task_id, *, output):
+        raise RemoteTaskFailed(task_id)
+
+    monkeypatch.setattr(FakeResumable, "resume", failed_resume)
+    monkeypatch.setattr(
+        api_app,
+        "threading",
+        SimpleNamespace(
+            Thread=lambda *, target, **kwargs: SimpleNamespace(start=target),
+        ),
+    )
+    with _client(settings, store):
+        saved = store.load(project.id)
+        assert saved.shots[0].visual.pending is None
+        assert saved.cost_credits == 0
 
 
 # ---- AI 标识与署名 ----------------------------------------------------------
